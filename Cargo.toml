@@ -1,0 +1,43 @@
+[workspace]
+resolver = "2"
+members = ["crates/protocol", "crates/terminal-engine", "crates/desktop-cli", "crates/desktop-agent", "crates/mobile-core", "crates/bindgen", "crates/transport", "crates/device-security", "crates/remote", "crates/server"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+anyhow = "1.0"
+thiserror = "2.0"
+prost = "0.14"
+blake3 = "1.8"
+alacritty_terminal = "=0.26.0"
+portable-pty = "=0.9.0"
+crossterm = "0.29"
+clap = { version = "4.5", features = ["derive"] }
+uniffi = "=0.32.1"
+datachannel = { version = "=0.16.1", default-features = false, features = ["vendored", "log"] }
+ai-terminal-protocol = { path = "crates/protocol" }
+ai-terminal-engine = { path = "crates/terminal-engine" }
+ai-terminal-transport = { path = "crates/transport" }
+ai-terminal-agent = { path = "crates/desktop-agent" }
+getrandom = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
+futures-util = { version = "0.3", features = ["sink"] }
+base64 = "0.22"
+snow = "0.10"
+ai-terminal-security = { path = "crates/device-security" }
+ai-terminal-remote = { path = "crates/remote" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

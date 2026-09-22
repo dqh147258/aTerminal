@@ -1,0 +1,383 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 46;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		35F18A14752B7144866C03FA /* TerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 907E6EABCDB6D1F4CBDDD6C9 /* TerminalView.swift */; };
+		463263EE470524BC379F8941 /* ai_terminal_mobile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61755E5491772A4DBDE6AECB /* ai_terminal_mobile.swift */; };
+		61657C3ADB284DE314771D24 /* PairingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6AE163B2FCA3046FA19CFEA /* PairingStore.swift */; };
+		77D8E995138A39C40A9B99E2 /* screen.pb in Resources */ = {isa = PBXBuildFile; fileRef = E8C89ABDC01F8217E7774795 /* screen.pb */; };
+		994C1B1B866DFDA3644B3F09 /* AITerminalCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 775FA7E799FB1D6CE1A1A4C7 /* AITerminalCore.xcframework */; };
+		99D0B7BFCDE46CC7EE3C6036 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F6692C8E1B00C5281C2EA7EA /* Foundation.framework */; };
+		BCDD60CB2B924C39F32959F7 /* AITerminalApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E61A9D47D7F9A3E562878563 /* AITerminalApp.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		61755E5491772A4DBDE6AECB /* ai_terminal_mobile.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ai_terminal_mobile.swift; path = ../../build/bindings/ai_terminal_mobile.swift; sourceTree = "<group>"; };
+		775FA7E799FB1D6CE1A1A4C7 /* AITerminalCore.xcframework */ = {isa = PBXFileReference; includeInIndex = 1; name = AITerminalCore.xcframework; path = ../../build/AITerminalCore.xcframework; sourceTree = "<group>"; };
+		8B426614BE9F4E8D712529B8 /* AITerminal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AITerminal.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		907E6EABCDB6D1F4CBDDD6C9 /* TerminalView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TerminalView.swift; sourceTree = "<group>"; };
+		C6AE163B2FCA3046FA19CFEA /* PairingStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PairingStore.swift; sourceTree = "<group>"; };
+		E61A9D47D7F9A3E562878563 /* AITerminalApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AITerminalApp.swift; sourceTree = "<group>"; };
+		E8C89ABDC01F8217E7774795 /* screen.pb */ = {isa = PBXFileReference; includeInIndex = 1; name = screen.pb; path = ../../build/fixtures/screen.pb; sourceTree = "<group>"; };
+		F6692C8E1B00C5281C2EA7EA /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		E8D2D8EBA10061BFD2EAB8C2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				99D0B7BFCDE46CC7EE3C6036 /* Foundation.framework in Frameworks */,
+				994C1B1B866DFDA3644B3F09 /* AITerminalCore.xcframework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1095BC25BBF1355B6982987F /* Rust Bindings */ = {
+			isa = PBXGroup;
+			children = (
+				61755E5491772A4DBDE6AECB /* ai_terminal_mobile.swift */,
+			);
+			name = "Rust Bindings";
+			sourceTree = "<group>";
+		};
+		151E30FCC47E75936A5CD7FA /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				F6692C8E1B00C5281C2EA7EA /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
+		9775A9E0C779A73B41BB77AC = {
+			isa = PBXGroup;
+			children = (
+				DE7652F0A809344784C6793D /* Products */,
+				F237E9ED0528496B51926266 /* Frameworks */,
+				BA87ED45B9F295883E96DB8F /* AITerminal */,
+				1095BC25BBF1355B6982987F /* Rust Bindings */,
+				E8C89ABDC01F8217E7774795 /* screen.pb */,
+			);
+			sourceTree = "<group>";
+		};
+		BA87ED45B9F295883E96DB8F /* AITerminal */ = {
+			isa = PBXGroup;
+			children = (
+				E61A9D47D7F9A3E562878563 /* AITerminalApp.swift */,
+				C6AE163B2FCA3046FA19CFEA /* PairingStore.swift */,
+				907E6EABCDB6D1F4CBDDD6C9 /* TerminalView.swift */,
+			);
+			name = AITerminal;
+			path = AITerminal;
+			sourceTree = "<group>";
+		};
+		DE7652F0A809344784C6793D /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				8B426614BE9F4E8D712529B8 /* AITerminal.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		F237E9ED0528496B51926266 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				151E30FCC47E75936A5CD7FA /* iOS */,
+				775FA7E799FB1D6CE1A1A4C7 /* AITerminalCore.xcframework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		F2A5B55D1F67A87A847D6649 /* AITerminal */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 84742A3FD492A6C2FB5FAC3C /* Build configuration list for PBXNativeTarget "AITerminal" */;
+			buildPhases = (
+				24FF5D3872BDEB9CF76EA913 /* Sources */,
+				E8D2D8EBA10061BFD2EAB8C2 /* Frameworks */,
+				8113973422A7E96B645D6FDB /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = AITerminal;
+			productName = AITerminal;
+			productReference = 8B426614BE9F4E8D712529B8 /* AITerminal.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		80940F1C73564AEDD4B9917C /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+			};
+			buildConfigurationList = 3119B6264979F4441D938792 /* Build configuration list for PBXProject "AITerminal" */;
+			compatibilityVersion = "Xcode 3.2";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 9775A9E0C779A73B41BB77AC;
+			minimizedProjectReferenceProxies = 0;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = DE7652F0A809344784C6793D /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				F2A5B55D1F67A87A847D6649 /* AITerminal */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		8113973422A7E96B645D6FDB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				77D8E995138A39C40A9B99E2 /* screen.pb in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		24FF5D3872BDEB9CF76EA913 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BCDD60CB2B924C39F32959F7 /* AITerminalApp.swift in Sources */,
+				61657C3ADB284DE314771D24 /* PairingStore.swift in Sources */,
+				35F18A14752B7144866C03FA /* TerminalView.swift in Sources */,
+				463263EE470524BC379F8941 /* ai_terminal_mobile.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		131F19B01D5A837F196F34AB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		609F2BB3E1FCCAD0B6873290 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/../../build/bindings",
+				);
+				INFOPLIST_KEY_CFBundleDisplayName = "AI Terminal";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lc++",
+					"-framework",
+					Security,
+				);
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -fmodule-map-file=$(SRCROOT)/../../build/bindings/ai_terminal_mobileFFI.modulemap";
+				PRODUCT_BUNDLE_IDENTIFIER = dev.aiterminal.app;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG";
+				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/../../build/bindings";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		BB8AC95C3F727CA8327AA1AF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/../../build/bindings",
+				);
+				INFOPLIST_KEY_CFBundleDisplayName = "AI Terminal";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lc++",
+					"-framework",
+					Security,
+				);
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -fmodule-map-file=$(SRCROOT)/../../build/bindings/ai_terminal_mobileFFI.modulemap";
+				PRODUCT_BUNDLE_IDENTIFIER = dev.aiterminal.app;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited)";
+				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/../../build/bindings";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		C45215FDB0E4C07381E86520 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		3119B6264979F4441D938792 /* Build configuration list for PBXProject "AITerminal" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C45215FDB0E4C07381E86520 /* Debug */,
+				131F19B01D5A837F196F34AB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		84742A3FD492A6C2FB5FAC3C /* Build configuration list for PBXNativeTarget "AITerminal" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BB8AC95C3F727CA8327AA1AF /* Release */,
+				609F2BB3E1FCCAD0B6873290 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 80940F1C73564AEDD4B9917C /* Project object */;
+}

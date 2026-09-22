@@ -1,0 +1,29 @@
+[package]
+name = "ai-terminal-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum = { version = "0.8", features = ["ws"] }
+tokio.workspace = true
+futures-util.workspace = true
+rusqlite = { version = "0.40", features = ["bundled"] }
+serde.workspace = true
+serde_json.workspace = true
+blake3.workspace = true
+ai-terminal-security.workspace = true
+getrandom.workspace = true
+
+argon2 = "0.5"
+clap.workspace = true
+rpassword = "7"
+ai-terminal-protocol.workspace = true
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tempfile = "3"
+
+[lints]
+workspace = true

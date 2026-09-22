@@ -1,0 +1,6 @@
+# Local verification override for hosts whose default Docker pools are exhausted.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${AI_TERMINAL_TEST_SUBNET:-10.253.77.0/24}

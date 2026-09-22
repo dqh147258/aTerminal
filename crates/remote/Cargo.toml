@@ -1,0 +1,32 @@
+[package]
+name = "ai-terminal-remote"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+webrtc = ["dep:ai-terminal-transport"]
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+prost.workspace = true
+snow.workspace = true
+ai-terminal-security.workspace = true
+ai-terminal-protocol.workspace = true
+ai-terminal-transport = { workspace = true, optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+ai-terminal-server = { path = "../server" }
+axum = "0.8"
+tempfile = "3"

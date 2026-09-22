@@ -1,0 +1,23 @@
+[package]
+name = "ai-terminal-mobile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[features]
+webrtc = ["dep:ai-terminal-transport", "ai-terminal-remote/webrtc"]
+
+[dependencies]
+ai-terminal-protocol.workspace = true
+ai-terminal-transport = { workspace = true, optional = true }
+uniffi.workspace = true
+thiserror.workspace = true
+prost.workspace = true
+anyhow.workspace = true
+ai-terminal-remote.workspace = true
+ai-terminal-security.workspace = true
+tokio.workspace = true
+serde_json.workspace = true

@@ -1,0 +1,22 @@
+# Optional overlay. Rotate credentials with the deployment secret manager.
+services:
+  turn:
+    image: coturn/coturn:4.6.3
+    restart: unless-stopped
+    command:
+      - --no-cli
+      - --no-tls
+      - --no-dtls
+      - --fingerprint
+      - --lt-cred-mech
+      - --realm=${DOMAIN}
+      - --user=${TURN_USER:-terminal}:${TURN_PASSWORD:?Set TURN_PASSWORD}
+      - --external-ip=${TURN_PUBLIC_IP:?Set TURN_PUBLIC_IP}
+      - --min-port=49160
+      - --max-port=49200
+      - --no-multicast-peers
+      - --no-loopback-peers
+      - --total-quota=64
+      - --user-quota=8
+    ports: ['3478:3478/udp', '49160-49200:49160-49200/udp']
+    mem_limit: 96m

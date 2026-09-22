@@ -1,0 +1,35 @@
+[package]
+name = "ai-terminal-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["webrtc"]
+webrtc = ["ai-terminal-remote/webrtc"]
+
+[dependencies]
+anyhow.workspace = true
+ai-terminal-protocol.workspace = true
+ai-terminal-engine.workspace = true
+portable-pty.workspace = true
+getrandom.workspace = true
+prost.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+fs2 = "0.4"
+blake3.workspace = true
+ai-terminal-remote.workspace = true
+ai-terminal-security.workspace = true
+tokio.workspace = true
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native-sync-persistent", "crypto-rust"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["process"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+axum = "0.8"
+tempfile = "3"

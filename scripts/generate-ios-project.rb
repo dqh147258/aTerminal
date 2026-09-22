@@ -1,0 +1,45 @@
+#!/usr/bin/env ruby
+# Run once (or regenerate after source changes) with the xcodeproj gem available.
+require 'xcodeproj'
+require 'pathname'
+
+root = Pathname.new(__dir__).parent
+path = root.join('apps/ios/AITerminal.xcodeproj')
+abort 'Project already exists; preserve local signing changes instead of overwriting it' if path.exist?
+project = Xcodeproj::Project.new(path.to_s)
+target = project.new_target(:application, 'AITerminal', :ios, '15.0')
+group = project.main_group.new_group('AITerminal', 'AITerminal')
+root.join('apps/ios/AITerminal').glob('*.swift').sort.each do |file|
+  target.source_build_phase.add_file_reference(group.new_file(file.basename.to_s))
+end
+generated = project.main_group.new_group('Rust Bindings')
+target.source_build_phase.add_file_reference(generated.new_file('../../build/bindings/ai_terminal_mobile.swift'))
+core = project.frameworks_group.new_file('../../build/AITerminalCore.xcframework')
+target.frameworks_build_phase.add_file_reference(core)
+fixture = project.main_group.new_file('../../build/fixtures/screen.pb')
+target.resources_build_phase.add_file_reference(fixture)
+target.build_configurations.each do |config|
+  config.build_settings.merge!({
+    'PRODUCT_BUNDLE_IDENTIFIER' => 'dev.aiterminal.app',
+    'SWIFT_VERSION' => '5.0',
+    'GENERATE_INFOPLIST_FILE' => 'YES',
+    'INFOPLIST_KEY_CFBundleDisplayName' => 'AI Terminal',
+    'INFOPLIST_KEY_UILaunchScreen_Generation' => 'YES',
+    'INFOPLIST_KEY_UIApplicationSceneManifest_Generation' => 'YES',
+    'TARGETED_DEVICE_FAMILY' => '1,2',
+    'CODE_SIGN_STYLE' => 'Automatic',
+    'CURRENT_PROJECT_VERSION' => '1',
+    'MARKETING_VERSION' => '0.1.0',
+    'OTHER_LDFLAGS' => ['$(inherited)', '-lc++', '-framework', 'Security'],
+    'SWIFT_ACTIVE_COMPILATION_CONDITIONS' => config.name == 'Debug' ? ['$(inherited)', 'DEBUG'] : ['$(inherited)'],
+    'HEADER_SEARCH_PATHS' => ['$(inherited)', '$(SRCROOT)/../../build/bindings'],
+    'SWIFT_INCLUDE_PATHS' => ['$(inherited)', '$(SRCROOT)/../../build/bindings'],
+    'OTHER_SWIFT_FLAGS' => ['$(inherited)', '-Xcc', '-fmodule-map-file=$(SRCROOT)/../../build/bindings/ai_terminal_mobileFFI.modulemap']
+  })
+end
+project.save
+scheme = Xcodeproj::XCScheme.new
+scheme.add_build_target(target)
+scheme.set_launch_target(target)
+scheme.save_as(path.to_s, 'AITerminal', true)
+puts path

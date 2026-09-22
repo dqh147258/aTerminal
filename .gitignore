@@ -1,0 +1,64 @@
+# Rust builds, generated bindings, benchmarks, and local test state.
+/target/
+/build/
+/.local/
+
+# Local configuration and credentials; keep documented templates versioned.
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+/deploy/secrets/
+*.key
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.mobileprovision
+
+# Runtime databases and logs (including SQLite journals).
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
+*.log
+
+# Android local SDK configuration and build caches. Keep gradle-wrapper.jar.
+/apps/android/local.properties
+/apps/android/.gradle/
+/apps/android/.kotlin/
+/apps/android/**/build/
+/apps/android/**/.cxx/
+/apps/android/**/.externalNativeBuild/
+/apps/android/captures/
+*.apk
+*.aab
+*.ap_
+
+# Xcode per-user state and generated artifacts. Keep shared schemes/projects.
+/apps/ios/**/xcuserdata/
+/apps/ios/**/DerivedData/
+/apps/ios/**/build/
+/apps/ios/**/.build/
+*.xcuserstate
+*.ipa
+*.dSYM/
+
+# Python helpers, local IDE state, and OS/editor temporary files.
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.idea/
+*.iml
+.DS_Store
+._*
+*.swp
+*.swo
+*~

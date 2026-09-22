@@ -1,0 +1,26 @@
+# Development on this machine only; never expose plaintext HTTP outside loopback.
+services:
+  server:
+    image: ai-terminal-server:development
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports: ['127.0.0.1:${AI_TERMINAL_LOCAL_PORT:-8787}:8787']
+    environment:
+      AI_TERMINAL_ADMIN_TOKEN_FILE: /run/secrets/admin_token
+    secrets: [admin_token]
+    volumes: [server_data:/data]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    healthcheck:
+      test: [CMD, /usr/local/bin/ai-terminal-server, --healthcheck]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+secrets:
+  admin_token:
+    file: ./secrets/admin-token
+volumes:
+  server_data:

@@ -1,0 +1,10 @@
+{
+  "server": "https://192.168.0.36:7200",
+  "health": "http://127.0.0.1:7201/healthz",
+  "ca_file": "deploy/secrets/lan-ca.crt",
+  "admin_token_file": "deploy/secrets/admin-token",
+  "state_dir": ".local/ios-lan",
+  "simulator_id": "A04FFCA0-1F31-4851-86E6-160D8D6A81C6",
+  "bundle_id": "dev.aiterminal.app",
+  "app": "build/xcode/Build/Products/Debug-iphonesimulator/AITerminal.app"
+}

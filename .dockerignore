@@ -1,0 +1,9 @@
+target
+build
+.git
+.local
+deploy/secrets
+apps/android/.gradle
+apps/android/.kotlin
+apps/android/**/build
+*.log

@@ -1,0 +1,210 @@
+import UIKit
+import SwiftUI
+import os.signpost
+
+struct TerminalSurface: UIViewRepresentable {
+    let frame: RenderFrame
+    var zoom: Double = 1
+    var generation: Int = 0
+    var core: RemoteTerminal? = nil
+    var onStatus: ((RenderFrame?, String, Bool, String?) -> Void)? = nil
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeUIView(context: Context) -> UIScrollView {
+        let scroll = UIScrollView()
+        scroll.backgroundColor = UIColor(red: 16/255, green: 16/255, blue: 20/255, alpha: 1)
+        let terminal = TerminalView(frame: .zero); terminal.tag = 10
+        scroll.addSubview(terminal)
+        context.coordinator.view = terminal
+        context.coordinator.scroll = scroll
+        context.coordinator.start()
+        return scroll
+    }
+    func updateUIView(_ scroll: UIScrollView, context: Context) {
+        guard let view = scroll.viewWithTag(10) as? TerminalView else { return }
+        context.coordinator.core = core; context.coordinator.onStatus = onStatus
+        if view.generation != generation { view.generation = generation; view.screen = frame }
+        if view.zoom != zoom { view.zoom = zoom }
+        let size = view.intrinsicContentSize
+        if view.frame.size != size { view.frame = CGRect(origin: .zero, size: size); scroll.contentSize = size }
+    }
+    static func dismantleUIView(_ view: UIScrollView, coordinator: Coordinator) { coordinator.link?.invalidate(); coordinator.link = nil }
+    final class Coordinator: NSObject {
+        weak var view: TerminalView?
+        weak var scroll: UIScrollView?
+        var core: RemoteTerminal?
+        var onStatus: ((RenderFrame?, String, Bool, String?) -> Void)?
+        var link: CADisplayLink?
+        private var lastPath = ""
+        private var lastControl = false
+        func start() { link = CADisplayLink(target: self, selector: #selector(tick)); link?.preferredFramesPerSecond = 60; link?.add(to: .main, forMode: .common) }
+        @objc func tick() {
+            guard let core, let view else { return }
+            do {
+                let update = try core.drainUpdate()
+                if let update { view.apply(update) }
+                let size = view.intrinsicContentSize
+                if view.frame.size != size { view.frame.size = size; scroll?.contentSize = size }
+                let path = core.connectionPath(); let control = core.hasControl()
+                if update != nil || path != lastPath || control != lastControl { lastPath = path; lastControl = control; onStatus?(view.screen, path, control, nil) }
+            } catch { onStatus?(nil, "offline", false, terminalError(error)); link?.invalidate() }
+        }
+    }
+}
+
+final class TerminalView: UIView, UIContextMenuInteractionDelegate {
+    private let performanceLog = OSLog(subsystem: "dev.aiterminal", category: .pointsOfInterest)
+    var generation = -1
+    private var dirtyRows: Set<Int>?
+    var screen: RenderFrame? { didSet {
+        if oldValue?.rows != screen?.rows || oldValue?.cols != screen?.cols { invalidateIntrinsicContentSize() }
+        if let dirtyRows { for row in dirtyRows { setNeedsDisplay(CGRect(x: 0, y: CGFloat(row) * font.lineHeight, width: intrinsicContentSize.width, height: font.lineHeight)) } }
+        else { setNeedsDisplay() }
+    } }
+    func apply(_ update: RenderUpdate) {
+        guard update.full || (screen?.rows == update.rows && screen?.cols == update.cols) else { return }
+        var cells: [RenderCell]
+        var rows = Set<Int>()
+        if update.full { cells = update.patches.map(\.cell) }
+        else {
+            guard let old = screen else { return }
+            cells = old.cells
+            rows.insert(Int(old.cursorRow)); rows.insert(Int(update.cursorRow))
+            for patch in update.patches { let index = Int(patch.index); guard index < cells.count else { return }; cells[index] = patch.cell; rows.insert(index / Int(update.cols)) }
+        }
+        dirtyRows = update.full ? nil : rows
+        screen = RenderFrame(rows: update.rows, cols: update.cols, revision: update.revision, cells: cells, cursorRow: update.cursorRow, cursorCol: update.cursorCol, cursorVisible: update.cursorVisible, cursorShape: update.cursorShape)
+        dirtyRows = nil
+    }
+    var zoom: Double = 1 { didSet { if oldValue != zoom { rebuildFont(); invalidateIntrinsicContentSize(); setNeedsDisplay() } } }
+    private var font = UIFont.monospacedSystemFont(ofSize: 15, weight: .regular)
+    private var fonts: [UIFont] = []
+    private var cellWidth: CGFloat = 0
+    private var attributes: [UInt64: [NSAttributedString.Key: Any]] = [:]
+    private var colors: [UInt32: UIColor] = [:]
+    override init(frame: CGRect) { super.init(frame: frame); contentMode = .redraw; rebuildFont(); addInteraction(UIContextMenuInteraction(delegate: self)) }
+    required init?(coder: NSCoder) { super.init(coder: coder); rebuildFont() }
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
+        UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+            UIMenu(children: [UIAction(title: "复制屏幕") { _ in
+                guard let screen = self?.screen else { return }
+                UIPasteboard.general.string = (0..<Int(screen.rows)).map { row in screen.cells[(row * Int(screen.cols))..<((row + 1) * Int(screen.cols))].filter { $0.width > 0 }.map(\.text).joined() }.joined(separator: "\n")
+            }])
+        }
+    }
+    private func rebuildFont() {
+        font = UIFont.monospacedSystemFont(ofSize: 15 * zoom, weight: .regular)
+        cellWidth = ("M" as NSString).size(withAttributes: [.font: font]).width
+        fonts = (0..<4).map { style in
+            var traits: UIFontDescriptor.SymbolicTraits = []
+            if style & 1 != 0 { traits.insert(.traitBold) }
+            if style & 2 != 0 { traits.insert(.traitItalic) }
+            return font.fontDescriptor.withSymbolicTraits(traits).map { UIFont(descriptor: $0, size: font.pointSize) } ?? font
+        }
+        attributes.removeAll()
+    }
+    private func textAttributes(_ cell: RenderCell) -> [NSAttributedString.Key: Any] {
+        let key = UInt64(cell.foreground) << 32 | UInt64(cell.style)
+        if let value = attributes[key] { return value }
+        var value: [NSAttributedString.Key: Any] = [.font: fonts[Int(cell.style & 3)], .ligature: 0, .kern: 0, .foregroundColor: color(cell.foreground).withAlphaComponent(cell.style & 16 != 0 ? 0.67 : 1)]
+        if cell.style & 4 != 0 { value[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+        if cell.style & 8 != 0 { value[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+        if attributes.count >= 4096 { attributes.removeAll(keepingCapacity: true) }
+        attributes[key] = value
+        return value
+    }
+    override var intrinsicContentSize: CGSize {
+        guard let screen else { return .zero }
+        return CGSize(width: CGFloat(screen.cols) * cellWidth, height: CGFloat(screen.rows) * font.lineHeight)
+    }
+    override func draw(_ rect: CGRect) {
+        os_signpost(.begin, log: performanceLog, name: "TerminalDraw")
+        defer { os_signpost(.end, log: performanceLog, name: "TerminalDraw") }
+        guard let screen, let context = UIGraphicsGetCurrentContext() else { return }
+        let cols = Int(screen.cols)
+        let firstRow = max(0, Int(floor(rect.minY / font.lineHeight)))
+        let lastRow = min(Int(screen.rows), Int(ceil(rect.maxY / font.lineHeight)))
+        guard firstRow < lastRow else { return }
+        for row in firstRow..<lastRow {
+            var col = 0
+            context.setShouldAntialias(false)
+            while col < cols {
+                let start = col; let background = screen.cells[row * cols + col].background
+                while col < cols && screen.cells[row * cols + col].background == background { col += 1 }
+                color(background).setFill()
+                context.fill(CGRect(x: CGFloat(start) * cellWidth, y: CGFloat(row) * font.lineHeight, width: CGFloat(col - start) * cellWidth, height: font.lineHeight))
+            }
+            context.setShouldAntialias(true); col = 0
+            while col < cols {
+                let cell = screen.cells[row * cols + col]
+                if cell.width == 0 { col += 1; continue }
+                let start = col; var text = cell.text; col += Int(cell.width)
+                // Combine fixed-width ASCII runs; preserve per-cell clipping for wide/complex glyphs.
+                if cell.width == 1 && cell.text.utf8.count == 1 {
+                    while col < cols {
+                        let next = screen.cells[row * cols + col]
+                        if next.width != 1 || next.text.utf8.count != 1 || next.foreground != cell.foreground || next.style != cell.style { break }
+                        text += next.text; col += 1
+                    }
+                }
+                if cell.style & 12 == 0 && text.allSatisfy({ $0 == " " }) { continue }
+                let box = CGRect(x: CGFloat(start) * cellWidth, y: CGFloat(row) * font.lineHeight, width: cellWidth * CGFloat(col - start), height: font.lineHeight)
+                context.saveGState(); context.clip(to: box)
+                (text as NSString).draw(at: box.origin, withAttributes: textAttributes(cell))
+                context.restoreGState()
+            }
+        }
+        if screen.cursorVisible {
+            let x = CGFloat(screen.cursorCol) * cellWidth
+            let y = CGFloat(screen.cursorRow) * font.lineHeight
+            let box = CGRect(x: x, y: y, width: cellWidth, height: font.lineHeight)
+            UIColor.white.withAlphaComponent(0.47).setFill()
+            switch screen.cursorShape {
+            case 1: context.fill(CGRect(x: x, y: y, width: 2, height: font.lineHeight))
+            case 2: context.fill(CGRect(x: x, y: y + font.lineHeight - 2, width: cellWidth, height: 2))
+            case 3: UIColor.white.setStroke(); context.stroke(box)
+            default: context.fill(box)
+            }
+        }
+    }
+    private func color(_ value: UInt32) -> UIColor {
+        if let cached = colors[value] { return cached }
+        let result = UIColor(red: CGFloat((value >> 16) & 255) / 255, green: CGFloat((value >> 8) & 255) / 255, blue: CGFloat(value & 255) / 255, alpha: 1)
+        if colors.count >= 1024 { colors.removeAll(keepingCapacity: true) }
+        colors[value] = result
+        return result
+    }
+}
+
+#if DEBUG
+enum TerminalBenchmark {
+    static func run(_ source: RenderFrame) {
+        guard let path = ProcessInfo.processInfo.environment["AI_TERMINAL_RENDER_BENCHMARK"] else { return }
+        DispatchQueue.main.async {
+            var results: [[String: Any]] = []
+            for (rows, cols) in [(24, 80), (40, 120)] {
+                let screen = RenderFrame(rows: UInt32(rows), cols: UInt32(cols), revision: source.revision,
+                    cells: (0..<(rows * cols)).map { source.cells[$0 % source.cells.count] },
+                    cursorRow: 0, cursorCol: 0, cursorVisible: true, cursorShape: 0)
+                let view = TerminalView(frame: .zero)
+                view.screen = screen
+                view.frame.size = view.intrinsicContentSize
+                let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = true
+                let renderer = UIGraphicsImageRenderer(size: view.bounds.size, format: format)
+                var samples: [Double] = []
+                let count = min(2000, max(100, Int(ProcessInfo.processInfo.environment["AI_TERMINAL_RENDER_SAMPLES"] ?? "100") ?? 100))
+                for index in 0..<(count + 10) {
+                    let start = CACurrentMediaTime()
+                    _ = renderer.image { _ in view.draw(view.bounds) }
+                    if index >= 10 { samples.append((CACurrentMediaTime() - start) * 1000) }
+                }
+                samples.sort()
+                results.append(["rows": rows, "cols": cols, "samples": samples.count,
+                    "p50_ms": samples[count / 2], "p95_ms": samples[(count * 95 + 99) / 100 - 1], "p99_ms": samples[(count * 99 + 99) / 100 - 1]])
+            }
+            if let data = try? JSONSerialization.data(withJSONObject: results, options: [.prettyPrinted, .sortedKeys]) {
+                try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+            }
+        }
+    }
+}
+#endif

@@ -1,0 +1,3 @@
+# Normalize repository text while preserving Windows batch-file checkouts.
+* text=auto eol=lf
+*.bat text eol=crlf
