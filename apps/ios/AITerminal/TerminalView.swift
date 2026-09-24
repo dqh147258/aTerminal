@@ -2,37 +2,65 @@ import UIKit
 import SwiftUI
 import os.signpost
 
+
 struct TerminalSurface: UIViewRepresentable {
     let frame: RenderFrame
     var zoom: Double = 1
     var generation: Int = 0
     var core: RemoteTerminal? = nil
     var onStatus: ((RenderFrame?, String, Bool, String?) -> Void)? = nil
+    var onOpenWorkspace: (() -> Void)? = nil
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> UIScrollView {
         let scroll = UIScrollView()
+        scroll.alwaysBounceHorizontal = true
+        scroll.showsHorizontalScrollIndicator = true
+        scroll.isDirectionalLockEnabled = true
+        scroll.accessibilityIdentifier = "terminal.scroll"
         scroll.backgroundColor = UIColor(red: 16/255, green: 16/255, blue: 20/255, alpha: 1)
         let terminal = TerminalView(frame: .zero); terminal.tag = 10
         scroll.addSubview(terminal)
         context.coordinator.view = terminal
         context.coordinator.scroll = scroll
+        scroll.delegate = context.coordinator
+        scroll.panGestureRecognizer.addTarget(context.coordinator, action: #selector(Coordinator.panned(_:)))
         context.coordinator.start()
         return scroll
     }
     func updateUIView(_ scroll: UIScrollView, context: Context) {
         guard let view = scroll.viewWithTag(10) as? TerminalView else { return }
         context.coordinator.core = core; context.coordinator.onStatus = onStatus
+        context.coordinator.onOpenWorkspace = onOpenWorkspace
         if view.generation != generation { view.generation = generation; view.screen = frame }
         if view.zoom != zoom { view.zoom = zoom }
         let size = view.intrinsicContentSize
         if view.frame.size != size { view.frame = CGRect(origin: .zero, size: size); scroll.contentSize = size }
+        context.coordinator.updateTestMetrics()
     }
     static func dismantleUIView(_ view: UIScrollView, coordinator: Coordinator) { coordinator.link?.invalidate(); coordinator.link = nil }
-    final class Coordinator: NSObject {
+    final class Coordinator: NSObject, UIScrollViewDelegate {
         weak var view: TerminalView?
         weak var scroll: UIScrollView?
         var core: RemoteTerminal?
         var onStatus: ((RenderFrame?, String, Bool, String?) -> Void)?
+        var onOpenWorkspace: (() -> Void)?
+        private var edgeStart: CGFloat?
+        func scrollViewDidScroll(_ scrollView: UIScrollView) { updateTestMetrics() }
+        func updateTestMetrics() {
+            #if DEBUG
+            guard WorkspacePreferences.serviceTest, let scroll, let view, let screen = view.screen else { return }
+            let metrics: [String: Any] = ["columns": screen.cols, "font": Int(15 * view.zoom), "offset": Int(scroll.contentOffset.x)]
+            if let data = try? JSONSerialization.data(withJSONObject: metrics) { scroll.accessibilityValue = String(decoding: data, as: UTF8.self) }
+            #endif
+        }
+        @objc func panned(_ gesture: UIPanGestureRecognizer) {
+            guard let window = scroll?.window else { return }
+            if gesture.state == .began { edgeStart = gesture.location(in: window).x - gesture.translation(in: window).x }
+            if gesture.state == .ended {
+                if let start = edgeStart, start < 24, gesture.translation(in: window).x > 60 { onOpenWorkspace?() }
+                edgeStart = nil
+            }
+        }
         var link: CADisplayLink?
         private var lastPath = ""
         private var lastControl = false
@@ -44,6 +72,7 @@ struct TerminalSurface: UIViewRepresentable {
                 if let update { view.apply(update) }
                 let size = view.intrinsicContentSize
                 if view.frame.size != size { view.frame.size = size; scroll?.contentSize = size }
+                updateTestMetrics()
                 let path = core.connectionPath(); let control = core.hasControl()
                 if update != nil || path != lastPath || control != lastControl { lastPath = path; lastControl = control; onStatus?(view.screen, path, control, nil) }
             } catch { onStatus?(nil, "offline", false, terminalError(error)); link?.invalidate() }
@@ -56,6 +85,11 @@ final class TerminalView: UIView, UIContextMenuInteractionDelegate {
     var generation = -1
     private var dirtyRows: Set<Int>?
     var screen: RenderFrame? { didSet {
+        if UIAccessibility.isVoiceOverRunning || WorkspacePreferences.serviceTest, let screen {
+            accessibilityValue = (0..<Int(screen.rows)).map { row in
+                screen.cells[(row * Int(screen.cols))..<((row + 1) * Int(screen.cols))].filter { $0.width > 0 }.map(\.text).joined().trimmingCharacters(in: .whitespaces)
+            }.joined(separator: "\n")
+        }
         if oldValue?.rows != screen?.rows || oldValue?.cols != screen?.cols { invalidateIntrinsicContentSize() }
         if let dirtyRows { for row in dirtyRows { setNeedsDisplay(CGRect(x: 0, y: CGFloat(row) * font.lineHeight, width: intrinsicContentSize.width, height: font.lineHeight)) } }
         else { setNeedsDisplay() }
@@ -81,7 +115,7 @@ final class TerminalView: UIView, UIContextMenuInteractionDelegate {
     private var cellWidth: CGFloat = 0
     private var attributes: [UInt64: [NSAttributedString.Key: Any]] = [:]
     private var colors: [UInt32: UIColor] = [:]
-    override init(frame: CGRect) { super.init(frame: frame); contentMode = .redraw; rebuildFont(); addInteraction(UIContextMenuInteraction(delegate: self)) }
+    override init(frame: CGRect) { super.init(frame: frame); contentMode = .redraw; rebuildFont(); addInteraction(UIContextMenuInteraction(delegate: self)); isAccessibilityElement = true; accessibilityLabel = "终端画面"; accessibilityIdentifier = "terminal.screen"; accessibilityTraits = .staticText }
     required init?(coder: NSCoder) { super.init(coder: coder); rebuildFont() }
     func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
         UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in

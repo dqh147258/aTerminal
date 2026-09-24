@@ -5,7 +5,7 @@ enum PairingStore {
     private static let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
                                               kSecAttrService as String: "dev.aiterminal.pairing",
                                               kSecAttrAccount as String: "desktop"]
-    private static var accountQuery: [String: Any] { var value = query; value[kSecAttrService as String] = "dev.aiterminal.account"; value[kSecAttrAccount as String] = "session"; return value }
+    private static var accountQuery: [String: Any] { var value = query; value[kSecAttrService as String] = WorkspacePreferences.serviceTest ? "dev.aiterminal.account.integration" : "dev.aiterminal.account"; value[kSecAttrAccount as String] = "session"; return value }
     static func saveAccount(_ value: String) throws { try save(value, query: accountQuery) }
     static func loadAccount() -> String? { load(query: accountQuery) }
     static func clearAccount() throws { let status = SecItemDelete(accountQuery as CFDictionary); if status != errSecSuccess && status != errSecItemNotFound { throw CocoaError(.fileWriteNoPermission) } }
