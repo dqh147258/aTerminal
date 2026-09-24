@@ -46,6 +46,8 @@ target/debug/ai-terminal --state-dir "$PWD/.local/local-dev/agent" auth status
 
 CLI 创建会话时使用当前终端窗口的行列数；测试 120 列横向滚动时，先把终端窗口调到至少 120 列。Agent、Shell 与用户登录分别是不同状态：关闭 CLI 窗口不等于关闭 Shell 或退出账号。`--list` 能确认会话仍为 `running`。
 
+重新编译 `ai-terminal` 不会替换正在运行的 Agent。旧 Shell 的 PTY 状态只在旧 Agent 进程内，不能无损迁移；有未完成会话时不要用 `--agent-stop` 升级。可用另一个私有 `--state-dir` 启动新版 Agent、按上面的账号命令登录并在手机设备列表选择新 Desktop，待旧 Shell 不再需要后再停止旧 Agent。当前工作区保留的新版测试 Agent 位于 `.local/shared-input-test/agent`，设备名为 `Terminal Fix Desktop`，可直接运行 `target/debug/ai-terminal --state-dir "$PWD/.local/shared-input-test/agent"` 创建新版 Shell；原 `.local/local-dev/agent` 的两条旧会话仍保持运行。
+
 只调试单机 Desktop 终端时，不必启动 Server 或登录账号：
 
 ```sh
@@ -73,7 +75,7 @@ adb -s 127.0.0.1:62001 shell am start -W -n dev.aiterminal.app/.MainActivity --e
 adb -s 127.0.0.1:62001 reverse --list
 ```
 
-反向映射列表应为空。App 登录页填服务地址 `https://192.168.0.36:7200`、测试用户名和 `show` 输出的密码；连接在线的 `Local Desktop`，选择 Shell。先开启“接管输入”，点击终端画面打开系统键盘，直接输入 `printf 'LOCAL_DEBUG_OK\n'` 并按回车，确认终端显示独立输出。特殊键工具栏的 Tab 应作用于当前 Shell 的补全，Ctrl-C 应中断当前前台命令；再检查会话抽屉、设置浮窗、AI 占位和后台恢复。`acceptance_test` 使用独立的 App 偏好与账号存储，不覆盖普通 App 登录数据。
+反向映射列表应为空。App 登录页填服务地址 `https://192.168.0.36:7200`、测试用户名和 `show` 输出的密码；连接在线的 `Local Desktop`，选择 Shell。有写权限的设备打开会话后即可点击终端画面输入，直接输入 `printf 'LOCAL_DEBUG_OK\n'` 并按回车，确认终端显示独立输出。Desktop CLI 与手机可以同时输入并同步看到同一 PTY 画面，无需切换控制权。再执行 `git status`，确认客户端不退出、状态输出持续显示；特殊键工具栏的 Tab 应作用于当前 Shell 的补全，Ctrl-C 应中断当前前台命令。`acceptance_test` 使用独立的 App 偏好与账号存储，不覆盖普通 App 登录数据。
 
 这台机器的本地证书由私有 CA 签发。Debug 验收模式会读取上述 App 私有 CA 文件，让 Rust TLS 验证证书链及 IP 主机名；它**不会跳过 TLS 校验**。普通登录模式不读取该文件，当前 UI 也没有私有 CA 导入入口，因此不能把 Debug 测试通过解释为普通用户能直接登录这套自签证书服务。验收结束删除测试 CA：
 
@@ -142,3 +144,5 @@ lsof -nP -iTCP:7200-7201 -sTCP:LISTEN
 ```
 
 `--agent-stop` 会结束该 Agent 的所有 Shell；如果只想暂停手机远程访问而保留本地 Shell，执行 `auth logout` 后停在这里即可。Admin 与 Server 是同一服务，Compose `stop` 后 Admin 页面也会关闭。确认 `ps -a` 中两个容器均为 `Exited`，且 `lsof` 没有 7200/7201 监听；再次启动从第 1 步开始。Compose `stop` 保留测试账号、数据库卷、证书和管理员令牌；不要对持久的 `ai-terminal-dev` 项目执行 `down -v`。测试账号密码或 Admin 令牌如需轮换，应在 Admin 页面操作，并同步更新本机私有账号文件。若另外运行了 `scripts/run-ios-lan.py`，其模拟器和独立 Agent 可用 `python3 scripts/stop-local.py` 一并关闭；该脚本也会停止同一组 Docker 容器。
+
+若使用上文的 `Terminal Fix Desktop` 独立 Agent，确认其中的 Shell 都不再需要后，另行运行 `target/debug/ai-terminal --state-dir "$PWD/.local/shared-input-test/agent" auth logout` 和同一路径的 `--agent-stop`；不要把它与原 `.local/local-dev/agent` 的关闭命令混用。

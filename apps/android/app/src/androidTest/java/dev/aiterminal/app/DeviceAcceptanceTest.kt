@@ -52,7 +52,7 @@ class DeviceAcceptanceTest {
         main { views().filterIsInstance<Button>().first { it.text.toString().startsWith(sessions[index].cwd + "\n") && it.isShown }.performClick() }
         waitFor("selected session") { get("selected") == id }
         if (!main { (get("inputBox") as View).isShown }) clickDescription("显示或隐藏终端键盘")
-        if (!main { core().hasControl() }) { main { (get("takeControl") as CheckBox).performClick() }; waitFor("input control") { get("selected") == id && get("controlled") == true && core().hasControl() } }
+        waitFor("input availability") { get("selected") == id && get("controlled") == true && core().hasControl() }
     }
     private fun send(text: String) { main { assertForeground(); val terminal = terminal()!!; assertTrue(terminal.focusKeyboard()); assertTrue(terminal.onCreateInputConnection(EditorInfo()).commitText(text, 1)) } }
     private fun connectDesktop() {

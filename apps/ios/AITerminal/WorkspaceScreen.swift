@@ -133,7 +133,7 @@ struct WorkspaceScreen: View {
                     TerminalSurface(frame: frame, zoom: min(24, max(12, fontSize)) / 15, generation: model.generation, core: model.displayCore,
                         canInput: model.hasControl && model.connected && !model.busy, keyboardRequested: inputVisible,
                         onText: model.text, onKey: model.key, onKeyboardChange: { inputVisible = $0 },
-                        onReadOnly: { model.status = "请先接管输入" },
+                        onReadOnly: { model.status = "当前设备只有只读权限" },
                         onStatus: model.displayStatus, onOpenWorkspace: { drawer = true })
                 } else {
                     VStack {
@@ -157,9 +157,8 @@ struct WorkspaceScreen: View {
             VStack(spacing: 0) {
                 HStack(spacing: 4) {
                     ToolButton(symbol: inputVisible ? "keyboard.chevron.compact.down" : "keyboard", label: inputVisible ? "隐藏键盘" : "打开终端键盘") {
-                        if model.hasControl { inputVisible.toggle() } else { model.status = "请先接管输入" }
+                        if model.hasControl { inputVisible.toggle() } else { model.status = "当前会话不可输入，请检查设备权限或连接" }
                     }
-                    Toggle("接管输入", isOn: Binding(get: { model.hasControl }, set: model.control)).font(.caption).fixedSize().disabled(model.selected == nil || !model.connected || model.busy)
                     Spacer(minLength: 4)
                     ToolButton(symbol: "clock", label: "终端历史") { model.readHistory(); panel = .terminalHistory }.disabled(model.selected == nil)
                     ToolButton(symbol: "xmark.square", label: "关闭会话") { closing = true }.disabled(model.selected == nil || !model.connected || model.busy)
@@ -209,7 +208,7 @@ struct WorkspaceScreen: View {
                         if sessions.isEmpty { EmptyWorkspace(symbol: "terminal", title: search.isEmpty ? "暂无终端会话" : "没有匹配的会话") }
                         ForEach(sessions, id: \.id) { session in
                             Button {
-                                model.select(session.id, control: false); drawer = false
+                                model.select(session.id, control: true); drawer = false
                             } label: {
                                 HStack(alignment: .top, spacing: 12) {
                                     Image(systemName: "terminal").foregroundColor(session.id == model.selected ? WorkspaceStyle.accent : WorkspaceStyle.muted).padding(.top, 2)
@@ -268,7 +267,7 @@ struct WorkspaceScreen: View {
                         PrimaryButton(title: "继续对话") {
                             continueScope = archive.scope
                             if model.chatScope == archive.scope { continueScope = nil; panel = .chat }
-                            else if model.connected && model.deviceID == archive.scope.device { model.select(archive.scope.session, control: false) }
+                            else if model.connected && model.deviceID == archive.scope.device { model.select(archive.scope.session, control: true) }
                             else { panel = .devices }
                         }.disabled(model.busy || (model.deviceID == archive.scope.device && model.sessions.first(where: { $0.id == archive.scope.session })?.exited == true))
                     }.padding(16)

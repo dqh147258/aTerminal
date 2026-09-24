@@ -224,13 +224,17 @@ impl Engine {
                 {
                     " ".into()
                 } else {
-                    c.c.to_string()
+                    if c.c.is_control() {
+                        " ".into()
+                    } else {
+                        c.c.to_string()
+                    }
                 };
                 if !c.flags.contains(Flags::HIDDEN)
                     && width != 0
                     && let Some(chars) = c.zerowidth()
                 {
-                    text.extend(chars)
+                    text.extend(chars.iter().copied().filter(|ch| !ch.is_control()))
                 }
                 let mut style = 0;
                 for (flag, bit) in [
@@ -347,6 +351,25 @@ mod tests {
             s.validate().unwrap();
             assert_eq!(s.cells, expected.cells);
             assert_eq!(s.cursor, expected.cursor);
+        }
+    }
+    #[test]
+    fn git_status_tab_cells_are_safe_in_every_intermediate_frame() {
+        let mut e = Engine::new(8, 32, 1).unwrap();
+        for chunk in [
+            b"On branch main\r\n".as_slice(),
+            b"\tmodified: file\r\n",
+            b"$ ",
+        ] {
+            e.feed(chunk);
+            let frame = e.snapshot();
+            frame.validate().unwrap();
+            assert!(
+                frame
+                    .cells
+                    .iter()
+                    .all(|c| !c.text.chars().any(char::is_control))
+            );
         }
     }
     #[test]

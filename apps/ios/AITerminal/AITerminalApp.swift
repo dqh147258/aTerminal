@@ -166,10 +166,10 @@ final class TerminalModel: ObservableObject {
                     guard self.generation == version else { return }
                     self.sessions = sessions; self.sessionSnapshots[id] = sessions; self.busy = false; self.connected = true; self.status = "已连接 · 选择会话"
                     if let sessionID, sessions.contains(where: { $0.id == sessionID && !$0.exited }) {
-                        self.select(sessionID, control: false)
+                        self.select(sessionID, control: true)
                     } else if let first = sessions.first(where: { !$0.exited }) {
                         if sessionID != nil { self.status = "上次会话已关闭，已恢复在线终端" }
-                        self.select(first.id, control: false)
+                        self.select(first.id, control: true)
                     } else if sessionID != nil {
                         self.error = "历史对应的终端已关闭，对话仅供查阅"
                     }
@@ -238,7 +238,6 @@ final class TerminalModel: ObservableObject {
     // These FFI methods only enqueue bounded work; they never wait for a network acknowledgement.
     func text(_ value: String) -> Bool { os_signpost(.event, log: performanceLog, name: "InputEnqueue"); do { try core.sendText(text: value, submit: false); return true } catch { status = terminalError(error); return false } }
     func key(_ value: String) { os_signpost(.event, log: performanceLog, name: "InputEnqueue"); do { try core.sendKey(key: value) } catch { status = terminalError(error) } }
-    func control(_ value: Bool) { if let id = selected { select(id, control: value) } }
     func displayStatus(_ frame: RenderFrame?, _ path: String, _ controlled: Bool, _ error: String?) {
         if hasControl != controlled { hasControl = controlled }
         if error != nil { connected = false; hasControl = false }

@@ -86,6 +86,7 @@ final class LiveServiceUITests: XCTestCase {
         let session: String
         let benchmarks: [Benchmark]
         let caPem: String?
+        let desktopName: String?
         let createCommand: String?
         let closeCommandPrefix: String?
         struct Benchmark: Decodable { let id: String; let cols: Int }
@@ -116,10 +117,7 @@ final class LiveServiceUITests: XCTestCase {
         XCTAssertTrue(terminal(app).waitForExistence(timeout: 20))
     }
     private func command(_ command: String, app: XCUIApplication, hideInput: Bool = true) {
-        let control = app.switches["接管输入"]
-        wait { control.exists && control.isEnabled }
-        if control.value as? String == "0" { control.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap() }
-        wait { control.value as? String == "1" }
+        XCTAssertFalse(app.switches["接管输入"].exists)
         let screen = terminal(app); screen.tap()
         XCTAssertTrue(app.buttons["隐藏键盘"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.textFields["terminal.input"].exists)
@@ -145,10 +143,12 @@ final class LiveServiceUITests: XCTestCase {
         app.textFields["login.username"].tap(); app.textFields["login.username"].typeText(fixture.username)
         app.secureTextFields["login.password"].tap(); app.secureTextFields["login.password"].typeText(fixture.password)
         app.buttons["login.submit"].tap()
-        let desktop = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Local Desktop")).firstMatch
+        let desktop = app.buttons.matching(NSPredicate(format: "label CONTAINS %@ AND enabled == true", fixture.desktopName ?? "Local Desktop")).firstMatch
         wait { self.terminal(app).exists || desktop.exists || app.staticTexts["login.error"].exists }
         XCTAssertFalse(app.staticTexts["login.error"].exists, app.staticTexts["login.error"].exists ? app.staticTexts["login.error"].label : "")
-        if !terminal(app).exists { desktop.tap() }
+        if !desktop.exists { app.buttons["选择设备"].tap() }
+        XCTAssertTrue(desktop.waitForExistence(timeout: 15))
+        desktop.tap()
         XCTAssertTrue(terminal(app).waitForExistence(timeout: 20))
         select(fixture.session, app: app)
         wait { self.metrics(app)["columns"] == 120 }
@@ -156,6 +156,9 @@ final class LiveServiceUITests: XCTestCase {
         wait { !self.hasLine(app, "AI_DEVICE_OK") && !self.hasLine(app, "AI_DEVICE_DONE") }
         command("printf '\\nIOS_PTY_OK\\n'", app: app)
         wait { self.hasLine(app, "IOS_PTY_OK") }
+        command("git status", app: app)
+        command("printf '\\nIOS_GIT_STATUS_OK\\n'", app: app)
+        wait { self.hasLine(app, "IOS_GIT_STATUS_OK") }
         let tabDirectory = "/private/tmp/i" + String(fixture.session.prefix(8))
         command("mkdir -p \(tabDirectory)", app: app)
         command("echo IOS_TAB_OK > \(tabDirectory)/complete_marker", app: app)

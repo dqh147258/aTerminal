@@ -429,6 +429,7 @@ fn dispatch(host: &Host, request: Request) -> Result<Reply> {
                     Request {
                         operation: Operation::Poll as i32,
                         revision: u64::MAX,
+                        client: request.client,
                         ..Request::default()
                     },
                 ) && let Some(info) = r.info
@@ -481,6 +482,7 @@ fn dispatch(host: &Host, request: Request) -> Result<Reply> {
                 &tx,
                 Request {
                     operation: Operation::Poll as i32,
+                    client,
                     ..Request::default()
                 },
             )
@@ -517,7 +519,6 @@ fn session_loop(
 ) {
     let mut control = Control::default();
     control.acquire(client).unwrap();
-    pty.set_fence(control.epoch);
     let mut info = SessionInfo {
         id,
         epoch: engine.snapshot().epoch,
@@ -580,7 +581,7 @@ fn session_loop(
         while index < watchers.len() {
             let (req, _, deadline) = &watchers[index];
             if req.revision != snapshots.back().unwrap().revision
-                || req.control_epoch != control.epoch
+                || req.control_epoch != control.metadata(req.client).1
                 || info.exited
                 || Instant::now() >= *deadline
             {
@@ -608,7 +609,7 @@ fn session_loop(
                     }
                     if req.session_epoch == info.epoch
                         && req.revision == snapshots.back().unwrap().revision
-                        && req.control_epoch == control.epoch
+                        && req.control_epoch == control.metadata(req.client).1
                         && !info.exited
                     {
                         watchers.push((req, reply_tx, Instant::now() + Duration::from_secs(1)));
@@ -656,22 +657,20 @@ fn handle_session(
                 bail!("session exited")
             }
             control.acquire(req.client)?;
-            pty.set_fence(control.epoch);
         }
         Operation::Detach => {
             control.release(req.client);
-            pty.set_fence(control.epoch);
         }
         Operation::AssistantInput => {
             if info.exited {
                 bail!("session exited");
             }
             control.check(req.client, req.control_epoch)?;
-            if req.input_seq != control.next {
+            if req.input_seq != control.metadata(req.client).2 {
                 bail!("manual input occurred; stale AI input cancelled");
             }
             let bytes = encode_input(&req, engine)?;
-            pty.write_controlled(control.epoch, bytes)?;
+            pty.write(bytes)?;
         }
         Operation::Input => {
             let started = Instant::now();
@@ -681,8 +680,8 @@ fn handle_session(
             let signature = req.encode_to_vec();
             if !control.input(req.client, req.control_epoch, req.input_seq, &signature)? {
                 let bytes = encode_input(&req, engine)?;
-                pty.write_controlled(control.epoch, bytes)?;
-                control.commit(req.input_seq, signature);
+                pty.write(bytes)?;
+                control.commit(req.client, req.input_seq, signature);
             }
             reply.accepted_input_seq = req.input_seq;
             if std::env::var_os("AI_TERMINAL_PERF").is_some() {
@@ -728,9 +727,7 @@ fn handle_session(
         }
         _ => bail!("invalid session operation"),
     }
-    info.controller = control.owner;
-    info.control_epoch = control.epoch;
-    info.next_input_seq = control.next;
+    (info.controller, info.control_epoch, info.next_input_seq) = control.metadata(req.client);
     reply.info = Some(info.clone());
     Ok(reply)
 }

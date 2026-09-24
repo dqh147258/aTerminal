@@ -53,7 +53,6 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private lateinit var dimensions: TextView
     private lateinit var empty: LinearLayout
     private lateinit var surface: HorizontalScrollView
-    private lateinit var takeControl: CheckBox
     private lateinit var inputBox: LinearLayout
     private lateinit var store: PairingStore
     private lateinit var display: DisplayPreferences
@@ -234,12 +233,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         region.addView(tools, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.CENTER_VERTICAL).apply { marginEnd = dp(12) })
         workspace.grow(region)
         inputBox = column(8).apply { visibility = View.GONE; setBackgroundColor(Palette.surface) }
-        takeControl = CheckBox(this).apply {
-            text = "接管输入"; setTextColor(Palette.text); buttonTintList = ColorStateList.valueOf(Palette.accent)
-            setOnClickListener { selected?.let { select(it, isChecked) } ?: run { isChecked = false; notice("请先选择会话") } }
-        }
         inputBox.addView(row().apply {
-            fill(takeControl)
             addView(actionButton("历史") { terminalHistory() })
             addView(iconButton(R.drawable.ic_x, "隐藏终端键盘") { toggleInput(false) })
         })
@@ -294,7 +288,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 post { if (active && generation == version && epoch == accountEpoch) {
                     connecting = false; connected = true; sessions = list; uncertainSessions.removeAll { it.first == id }; memory?.record(id, list.associate { it.id to it.exited }); connection.text = "已连接"; connection.setTextColor(Palette.green)
                     val target = list.firstOrNull { it.id == resumeSession && !it.exited } ?: if (resumeSession == null) list.firstOrNull { !it.exited } else null
-                    if (target != null) select(target.id, false, resumeChat)
+                    if (target != null) select(target.id, true, resumeChat)
                     else { status.text = if (resumeSession == null) "已连接，创建或选择会话" else "原会话已关闭，历史仍可查阅"; openDrawer() }
                 } }
             } catch (e: Exception) { post { if (generation == version) { connecting = false; connection.text = "未连接"; notice(e.message ?: "连接失败") } } }
@@ -330,14 +324,14 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private fun select(id: String, control: Boolean, chat: Boolean = false) {
         val reopenKeyboard = control && inputBox.visibility == View.VISIBLE
         closeOverlay(); toggleInput(false); generation++; val version = generation
-        selected = null; controlled = false; takeControl.isChecked = false
+        selected = null; controlled = false
         surface.removeAllViews(); terminal = null
         status.text = "打开会话…"
         work {
             if (generation == version) {
                 val frame = remote.select(id, control); val hasControl = remote.hasControl()
                 post { if (generation == version && active) {
-                    selected = id; controlled = hasControl; takeControl.isChecked = controlled
+                    selected = id; controlled = hasControl
                     memory?.remember(deviceId, id)
                     updateSessionHeader()
                     if (sessions.none { it.id == id }) { sessionTitle.text = "终端"; sessionMeta.text = "$deviceName · $id" }
@@ -355,14 +349,14 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             sendText = { text -> enqueue { remote.sendText(text, false) } }
             sendKey = { key -> enqueue { remote.sendKey(key) } }
             keyboardOpened = { inputBox.visibility = View.VISIBLE }
-            readOnlyTapped = { inputBox.visibility = View.VISIBLE; notice("请先接管输入") }
+            readOnlyTapped = { inputBox.visibility = View.VISIBLE; notice("当前设备只有只读权限") }
             zoom(this@MainActivity.display.fontSize / 15f)
         }; surface.addView(terminal) }
         else terminal!!.update(frame)
         dimensions.text = "${frame.cols} 列 × ${frame.rows} 行 · UTF-8"
     }
     private fun enqueue(action: () -> Unit): Boolean {
-        if (!controlled || selected == null) { notice("请先接管输入"); return false }
+        if (!controlled || selected == null) { notice("当前会话不可输入，请检查设备权限或连接"); return false }
         return try { action(); true } catch (e: Exception) { notice(e.message ?: "输入失败"); false }
     }
     private fun toggleInput(show: Boolean = inputBox.visibility != View.VISIBLE) {
@@ -383,7 +377,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             worker.execute {
                 try { if (generation == version) {
                     val created = remote.createSession(path); val list = remote.sessions()
-                    post { if (generation == version) { dialog.dismiss(); sessions = list; select(created.id, false) } }
+                    post { if (generation == version) { dialog.dismiss(); sessions = list; select(created.id, true) } }
                 } } catch (e: Exception) { post { cwd.error = e.message; dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true } }
             }
         } }; dialog.show()
@@ -395,7 +389,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 sessionBusy = true; val version = ++generation
                 val closingDevice = deviceId
                 uncertainSessions.add(closingDevice to session.id)
-                selected = null; controlled = false; takeControl.isChecked = false; toggleInput(false)
+                selected = null; controlled = false; toggleInput(false)
                 closeOverlay(); surface.removeAllViews(); terminal = null; empty.visibility = View.VISIBLE
                 status.text = "正在关闭会话"
                 worker.execute {
@@ -468,7 +462,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 if (matches.isEmpty()) list.addView(label(if (connected) "暂无匹配会话" else "连接 Desktop 后查看终端", 14f, Palette.muted))
                 for (session in matches) {
                     list.addView(row().apply {
-                        fill(actionButton(session.cwd + "\n" + sessionAvailability(deviceId, session.id) + " · ${session.id.take(8)}" + if (selected == session.id) " · 当前会话" else "") { select(session.id, false) }.apply { tag = session.id; gravity = Gravity.START; maxLines = 4; isEnabled = !session.exited && (deviceId to session.id) !in uncertainSessions })
+                        fill(actionButton(session.cwd + "\n" + sessionAvailability(deviceId, session.id) + " · ${session.id.take(8)}" + if (selected == session.id) " · 当前会话" else "") { select(session.id, true) }.apply { tag = session.id; gravity = Gravity.START; maxLines = 4; isEnabled = !session.exited && (deviceId to session.id) !in uncertainSessions })
                         addView(iconButton(R.drawable.ic_x, "关闭 ${session.cwd} (${session.id})") { closeSession(session) }.apply { tag = "close-${session.id}"; isEnabled = !session.exited && !sessionBusy && (deviceId to session.id) !in uncertainSessions })
                     }); list.gap(8)
                 }
@@ -661,7 +655,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             remote.pollDisplay()?.let { batch ->
                 batch.update?.let { terminal?.apply(it); dimensions.text = "${it.cols} 列 × ${it.rows} 行 · UTF-8" }
                 val lostControl = controlled && !batch.controlled
-                controlled = batch.controlled; takeControl.isChecked = controlled
+                controlled = batch.controlled
                 if (lostControl) toggleInput(false)
                 val next = (if (batch.path == "direct") "直连" else "中转") + if (controlled) " · 可输入" else " · 只读"
                 if (status.text.toString() != next) status.text = next
@@ -673,7 +667,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         generation++; selected = null; controlled = false; connected = false; connecting = false; sessions = emptyList()
         sessionRefreshBusy = false
         aiStatus.visibility = View.GONE
-        takeControl.isChecked = false; connection.text = "未连接"; connection.setTextColor(Palette.muted)
+        connection.text = "未连接"; connection.setTextColor(Palette.muted)
         toggleInput(false); surface.removeAllViews(); terminal = null; empty.visibility = View.VISIBLE
         sessionTitle.text = "AI Terminal"; sessionMeta.text = deviceName.ifEmpty { "选择 Desktop" }
         work { remote.disconnect() }

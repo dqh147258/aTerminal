@@ -326,12 +326,19 @@ impl RemoteTerminal {
             s.last_frame = 0;
         }
         let acquired = if take_control {
-            self.call(Request {
+            match self.call(Request {
                 session: id.clone(),
                 operation: Operation::Acquire as i32,
                 ..Request::default()
-            })?
-            .info
+            }) {
+                Ok(reply) => reply.info,
+                Err(CoreError::InvalidFrame { reason })
+                    if reason.contains("read-only permission") =>
+                {
+                    None
+                }
+                Err(error) => return Err(error),
+            }
         } else {
             None
         };

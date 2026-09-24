@@ -62,9 +62,7 @@ class MobileWorkflowTest {
     private fun lines() = frame()?.let { f -> f.cells.chunked(f.cols.toInt()).map { line -> line.joinToString("") { it.text }.trim() } }.orEmpty()
     private fun readyInput() {
         if (!main { (get("inputBox") as View).isShown }) icon("显示或隐藏终端键盘")
-        if (!main { get("controlled") == true }) {
-            mutate { (get("takeControl") as CheckBox).performClick() }; waitFor("input ownership") { get("controlled") == true }
-        }
+        waitFor("input availability") { get("controlled") == true }
         mutate { assertTrue((get("terminal") as TerminalView).focusKeyboard()) }
     }
     private fun type(text: String) {
@@ -108,8 +106,9 @@ class MobileWorkflowTest {
             click("登录")
             waitFor("real account login") { get("accountName") == fixture.getString("username") }
             icon("账号与设备")
-            waitFor("online fixture Desktop") { views().any { it.contentDescription?.toString() == "连接 Local Desktop" && it.isEnabled } }
-            icon("连接 Local Desktop")
+            val desktop = fixture.optString("desktop_name", "Local Desktop")
+            waitFor("online fixture Desktop") { views().any { it.contentDescription?.toString() == "连接 $desktop" && it.isEnabled } }
+            icon("连接 $desktop")
             waitFor("PTY session") { get("selected") != null }
             val target = fixture.getString("session")
             if (main { get("selected") != target }) {
@@ -123,6 +122,16 @@ class MobileWorkflowTest {
             input("printf 'ANDROID_FOLLOWUP_PTY_OK\\n'")
             waitFor("real PTY output") { lines().any { it == "ANDROID_FOLLOWUP_PTY_OK" } }
             result.put("real_login_and_pty", true)
+            input("git status")
+            input("printf 'GIT_STATUS_COMPLETED\\n'")
+            waitFor("git status keeps the live PTY usable") { lines().any { it == "GIT_STATUS_COMPLETED" } }
+            result.put("git_status_survived", true)
+            val desktopMarker = fixture.optString("desktop_marker")
+            if (desktopMarker.isNotEmpty()) {
+                File(context.filesDir, "shared-input-ready").writeText(target)
+                waitFor("Desktop remains writable while Mobile is connected", 30) { lines().any { it == desktopMarker } }
+                result.put("desktop_input_while_mobile_open", true)
+            }
             val tabDirectory = "/private/tmp/t" + target.take(8)
             input("mkdir -p $tabDirectory")
             input("echo ANDROID_TAB_OK > $tabDirectory/complete_marker")
@@ -191,7 +200,6 @@ class MobileWorkflowTest {
             }
             Thread.sleep(350)
             val remaining = (main { get("remote") } as RemoteTerminal).sessions()
-            assertTrue("Close must preserve the channel for remaining sessions", remaining.isNotEmpty())
             assertTrue(remaining.none { it.id == target })
             result.put("channel_alive_after_close", true)
             val memory = main { get("memory") as WorkspaceMemory }

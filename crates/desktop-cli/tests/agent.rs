@@ -167,6 +167,82 @@ fn detach_retains_process_and_control_fences_duplicate_input() {
     assert!(host.child.wait().unwrap().success());
 }
 
+#[cfg(unix)]
+#[test]
+fn git_status_keeps_publishing_valid_intermediate_frames() {
+    let (host, client) = host();
+    let repo = host.dir.join("status-repo");
+    std::fs::create_dir(&repo).unwrap();
+    let git = |args: &[&str]| {
+        assert!(
+            Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .status()
+                .unwrap()
+                .success()
+        );
+    };
+    git(&["init", "-q"]);
+    std::fs::write(repo.join("tracked.txt"), "before\n").unwrap();
+    git(&["add", "tracked.txt"]);
+    git(&[
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        "initial",
+    ]);
+    std::fs::write(repo.join("tracked.txt"), "after\n").unwrap();
+    let reply = client
+        .call(Request {
+            operation: Operation::Create as i32,
+            cwd: repo.to_string_lossy().into_owned(),
+            command: vec!["/bin/sh".into(), "-c".into(), "git status; sleep 1".into()],
+            rows: 24,
+            cols: 80,
+            ..Request::default()
+        })
+        .unwrap();
+    let info = reply.info.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        let reply = client
+            .call(Request {
+                operation: Operation::Poll as i32,
+                session: info.id.clone(),
+                ..Request::default()
+            })
+            .unwrap();
+        let state = reply.info.unwrap();
+        assert!(
+            state.error.is_empty(),
+            "Agent rejected git status frame: {}",
+            state.error
+        );
+        let frame = reply.snapshot.unwrap();
+        frame.validate().unwrap();
+        let screen: String = frame.cells.iter().map(|c| c.text.as_str()).collect();
+        if screen.contains("modified:   tracked.txt") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "git status output did not appear: {screen:?}"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    client
+        .call(Request {
+            operation: Operation::Close as i32,
+            session: info.id,
+            ..Request::default()
+        })
+        .unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn encrypted_relay_reaches_the_same_pty_and_revocation_closes_it() {
     let (mut host, local) = host();
@@ -377,8 +453,7 @@ async fn mobile_core_reads_types_and_cannot_override_readonly_pair() {
     tokio::task::spawn_blocking(move || {
         let mobile = ai_terminal_mobile::RemoteTerminal::new();
         mobile.connect(invitation).unwrap();
-        assert!(mobile.select(selected.clone(), true).is_err());
-        mobile.select(selected.clone(), false).unwrap();
+        mobile.select(selected.clone(), true).unwrap();
         assert!(
             mobile
                 .assistant(
@@ -513,7 +588,8 @@ async fn assistant_inputs_once_monitors_real_pty_and_fences_stale_writes() {
         assert_output("MANUAL_WINS");
         call(send("lost", "lost-control"));
         mobile.select(session.id.clone(), false).unwrap();
-        assert!(poll("lost", "failed")["message"].as_str().unwrap().contains("control lost"));
+        let message = poll("lost", "failed")["message"].as_str().unwrap().to_owned();
+        assert!(message.contains("input stream expired") || message.contains("terminal control changed"), "{message}");
         call(send("cancel", "cancel-before"));
         call(serde_json::json!({"action":"cancel","request_id":"cancel"}).to_string());
         poll("cancel", "stopped");
@@ -770,10 +846,22 @@ async fn stream_reorders_window_replays_ack_and_fences_stale_input() {
             .trim(),
         "xy"
     );
-    local
+    let local_info = local
         .call(Request {
             operation: Operation::Acquire as i32,
             session: info.id.clone(),
+            ..Request::default()
+        })
+        .unwrap()
+        .info
+        .unwrap();
+    local
+        .call(Request {
+            operation: Operation::Input as i32,
+            session: info.id.clone(),
+            control_epoch: local_info.control_epoch,
+            input_seq: 1,
+            input: b"w".to_vec(),
             ..Request::default()
         })
         .unwrap();
@@ -793,9 +881,40 @@ async fn stream_reorders_window_replays_ack_and_fences_stale_input() {
         if let Some(StreamEvent::Reply(4, reply)) =
             channel.stream_next(Duration::from_secs(5)).await.unwrap()
         {
-            assert!(reply.error.contains("control"));
+            assert!(
+                reply.error.is_empty(),
+                "desktop attachment blocked mobile input: {}",
+                reply.error
+            );
             break;
         }
+    }
+    let until = Instant::now() + Duration::from_secs(5);
+    loop {
+        let frame = local
+            .call(Request {
+                operation: Operation::Poll as i32,
+                session: info.id.clone(),
+                ..Request::default()
+            })
+            .unwrap()
+            .snapshot
+            .unwrap();
+        if frame
+            .cells
+            .iter()
+            .map(|c| c.text.as_str())
+            .collect::<String>()
+            .trim()
+            == "xywz"
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "desktop and mobile input did not reach one PTY"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
     local
         .call(Request {

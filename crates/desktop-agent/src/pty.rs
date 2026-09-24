@@ -4,11 +4,7 @@ use std::{
     ffi::OsString,
     io::{Read, Write},
     path::Path,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-        mpsc::{self, Receiver, SyncSender},
-    },
+    sync::mpsc::{self, Receiver, SyncSender},
     thread,
 };
 
@@ -19,8 +15,7 @@ pub enum Output {
 }
 pub struct Session {
     pub output: Receiver<Output>,
-    writer: Option<SyncSender<(u64, Vec<u8>)>>,
-    fence: Arc<AtomicU64>,
+    writer: Option<SyncSender<Vec<u8>>>,
     writer_error: Receiver<String>,
     child: Box<dyn Child + Send + Sync>,
     master: Option<Box<dyn MasterPty + Send>>,
@@ -78,17 +73,12 @@ impl Session {
                     }
                 }
             })?;
-        let (input_tx, input_rx) = mpsc::sync_channel::<(u64, Vec<u8>)>(128);
+        let (input_tx, input_rx) = mpsc::sync_channel::<Vec<u8>>(128);
         let (err_tx, writer_error) = mpsc::channel();
-        let fence = Arc::new(AtomicU64::new(1));
-        let writer_fence = fence.clone();
         thread::Builder::new()
             .name("pty-write".into())
             .spawn(move || {
-                while let Ok((epoch, bytes)) = input_rx.recv() {
-                    if epoch != 0 && writer_fence.load(Ordering::Acquire) != epoch {
-                        continue;
-                    }
+                while let Ok(bytes) = input_rx.recv() {
                     if let Err(e) = writer.write_all(&bytes).and_then(|_| writer.flush()) {
                         let _ = err_tx.send(e.to_string());
                         break;
@@ -101,23 +91,16 @@ impl Session {
             writer_error,
             child,
             master: Some(pair.master),
-            fence,
         })
     }
     pub fn write(&self, bytes: Vec<u8>) -> Result<()> {
-        self.write_controlled(0, bytes)
-    }
-    pub fn set_fence(&self, epoch: u64) {
-        self.fence.store(epoch, Ordering::Release);
-    }
-    pub fn write_controlled(&self, epoch: u64, bytes: Vec<u8>) -> Result<()> {
         if bytes.len() > 1024 * 1024 {
             bail!("paste exceeds the prototype's 1 MiB limit")
         }
         self.writer
             .as_ref()
             .context("session closed")?
-            .try_send((epoch, bytes))
+            .try_send(bytes)
             .context("input queue full or closed; input was not accepted")
     }
     pub fn resize(&self, rows: u16, cols: u16) -> Result<()> {

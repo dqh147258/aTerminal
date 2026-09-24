@@ -62,7 +62,7 @@ adb -s dmronjvo9pwsbinf shell am start -W -n dev.aiterminal.app/.MainActivity
 
 测试代码位于 `apps/android/app/src/androidTest/.../DeviceAcceptanceTest.kt`，仅进入测试 APK，不进入用户 APK。测试读取 App 私有目录 `files/device-fixture.json`，密码不写入 APK、报告或命令参数。夹具由 `account_demo STATE CLI --bench` 创建，包含独立账号、Shell 和三种负载会话；不能把生产账号作为这个自动化夹具。
 
-测试覆盖真实登录按钮、会话选择、接管输入、按键事件、InputConnection 中文/Emoji 组合提交、Ctrl-C、各 1,000 字符回显、历史并发读取、Home 后恢复、中转与退出。`mode=smoke` 只运行功能流程。每次完整压力测试使用新的夹具，避免已有输出影响字符计数。
+测试覆盖真实登录按钮、会话选择后直接输入、按键事件、InputConnection 中文/Emoji 组合提交、Ctrl-C、各 1,000 字符回显、历史并发读取、Home 后恢复、中转与退出。`mode=smoke` 只运行功能流程。每次完整压力测试使用新的夹具，避免已有输出影响字符计数。
 
 MIUI 上测试进程从后台调用 `startActivitySync` 可能超时。当前测试通过 UiAutomation 的 `am start` 拉起真实 Activity 后，使用生命周期监视器取得实例，不修改系统后台启动权限。
 

@@ -7,7 +7,7 @@ mod service;
 mod stream;
 use anyhow::{Result, bail};
 pub use service::{Client, default_state_dir, run_agent};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 pub fn random_id() -> u64 {
     loop {
@@ -18,12 +18,15 @@ pub fn random_id() -> u64 {
     }
 }
 
-/// One controller and a contiguous, bounded idempotency window per control epoch.
+/// Independent ordered input streams for every attached client.
 #[derive(Default)]
 pub struct Control {
-    pub owner: u64,
-    pub epoch: u64,
-    pub next: u64,
+    generation: u64,
+    clients: HashMap<u64, ClientInput>,
+}
+struct ClientInput {
+    epoch: u64,
+    next: u64,
     recent: VecDeque<(u64, [u8; 32])>,
 }
 impl Control {
@@ -31,35 +34,38 @@ impl Control {
         if client == 0 {
             bail!("invalid client")
         }
-        if self.owner != client {
-            self.owner = client;
-            self.epoch += 1;
-            self.next = 1;
-            self.recent.clear();
-        }
+        self.clients.entry(client).or_insert_with(|| {
+            self.generation += 1;
+            ClientInput {
+                epoch: self.generation,
+                next: 1,
+                recent: VecDeque::new(),
+            }
+        });
         Ok(())
     }
     pub fn release(&mut self, client: u64) {
-        if self.owner == client {
-            self.owner = 0;
-            self.epoch += 1;
-            self.next = 1;
-            self.recent.clear();
-        }
+        self.clients.remove(&client);
+    }
+    pub fn metadata(&self, client: u64) -> (u64, u64, u64) {
+        self.clients
+            .get(&client)
+            .map_or((0, 0, 1), |s| (client, s.epoch, s.next))
     }
     pub fn check(&self, client: u64, epoch: u64) -> Result<()> {
-        if client == 0 || self.owner != client || self.epoch != epoch {
-            bail!("control lost; acquire again before writing")
+        if client == 0 || self.clients.get(&client).is_none_or(|s| s.epoch != epoch) {
+            bail!("input stream expired; reopen the session before writing")
         }
         Ok(())
     }
     /// true is a previously accepted identical request, false the next new input.
     pub fn input(&self, client: u64, epoch: u64, seq: u64, bytes: &[u8]) -> Result<bool> {
         self.check(client, epoch)?;
-        if seq == self.next {
+        let state = &self.clients[&client];
+        if seq == state.next {
             return Ok(false);
         }
-        if self
+        if state
             .recent
             .iter()
             .any(|(s, b)| *s == seq && b == blake3::hash(bytes).as_bytes())
@@ -69,12 +75,14 @@ impl Control {
         bail!("input sequence gap, expired dedup window, or conflicting retry")
     }
     /// Commit only after the bounded PTY writer accepts the request.
-    pub fn commit(&mut self, seq: u64, bytes: Vec<u8>) {
-        self.recent
+    pub fn commit(&mut self, client: u64, seq: u64, bytes: Vec<u8>) {
+        let state = self.clients.get_mut(&client).expect("checked input stream");
+        state
+            .recent
             .push_back((seq, *blake3::hash(&bytes).as_bytes()));
-        self.next += 1;
-        if self.recent.len() > 128 {
-            self.recent.pop_front();
+        state.next += 1;
+        if state.recent.len() > 128 {
+            state.recent.pop_front();
         }
     }
 }
@@ -83,17 +91,25 @@ impl Control {
 mod tests {
     use super::*;
     #[test]
-    fn duplicate_input_and_old_controller_cannot_reexecute() {
+    fn concurrent_clients_keep_independent_order_and_deduplication() {
         let mut c = Control::default();
         c.acquire(1).unwrap();
-        let epoch = c.epoch;
+        let epoch = c.metadata(1).1;
         assert!(!c.input(1, epoch, 1, b"x").unwrap());
-        c.commit(1, b"x".to_vec());
+        c.commit(1, 1, b"x".to_vec());
         assert!(c.input(1, epoch, 1, b"x").unwrap());
         assert!(c.input(1, epoch, 1, b"y").is_err());
         assert!(c.input(1, epoch, 3, b"x").is_err());
         c.acquire(2).unwrap();
+        let second_epoch = c.metadata(2).1;
+        assert!(!c.input(1, epoch, 2, b"x").unwrap());
+        assert!(!c.input(2, second_epoch, 1, b"z").unwrap());
+        c.commit(2, 1, b"z".to_vec());
+        c.release(1);
         assert!(c.input(1, epoch, 2, b"x").is_err());
-        assert!(!c.input(2, c.epoch, 1, b"z").unwrap());
+        c.acquire(1).unwrap();
+        assert_ne!(c.metadata(1).1, epoch);
+        assert!(c.input(1, epoch, 2, b"x").is_err());
+        assert!(c.input(2, second_epoch, 1, b"z").unwrap());
     }
 }

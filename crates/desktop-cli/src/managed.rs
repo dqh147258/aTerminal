@@ -237,9 +237,6 @@ pub fn run(args: Args) -> Result<u32> {
             if args.watch {
                 continue;
             }
-            if info.controller != client.id || info.control_epoch != control_epoch {
-                bail!("session control transferred; use --attach {id} to take control again")
-            }
             match event {
                 Event::Resize(cols, rows) => {
                     client.call(Request {

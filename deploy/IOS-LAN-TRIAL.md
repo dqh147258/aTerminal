@@ -2,7 +2,7 @@
 
 配置日期：2026-09-22。固定主机 IP：`192.168.0.36`。
 
-**当前状态：已按要求关闭 Docker 容器、试用 Agent/Shell 和 iOS 模拟器。** 数据卷、证书、配对、Keychain 和构建产物保留。以下命令均在 `/Volumes/Code/My/AITerminal` 项目根目录执行。
+本文是独立 iOS 试用环境的启动与关闭步骤；实时运行状态以本页的检查命令为准。数据卷、证书、配对、Keychain 和构建产物可跨重启保留。以下命令均在 `/Volumes/Code/My/AITerminal` 项目根目录执行。
 
 ## 已配置入口
 
@@ -26,16 +26,16 @@ python3 scripts/run-ios-lan.py --toolchain stable --restore --interactive
 
 `prepare-lan.py` 启动本项目 Docker 服务，复用证书和数据库，不更改其他服务。`run-ios-lan.py` 启动 Agent，沿用配对，在完整关闭后创建新的 Shell，会话 ID 随之更新。
 
-iPhone SE 模拟器已安装 AI Terminal，配对已保存到 Keychain。启动后为正常直连、只读视图；打开“接管输入”后点击终端画面即可用系统键盘直接输入并按 Return，Tab、Esc、方向键和 Ctrl-C 由特殊键工具栏或硬键盘提供。`--interactive` 不会自动发送测试命令。
+iPhone SE 模拟器已安装 AI Terminal，配对已保存到 Keychain。可写配对打开会话后即可点击终端画面输入并按 Return，Tab、Esc、方向键和 Ctrl-C 由特殊键工具栏或硬键盘提供；只读配对仅能观察。`--interactive` 不会自动发送测试命令。
 
-桌面观察同一会话，不抢走手机控制权：
+桌面只观察同一会话：
 
 ```sh
 SESSION_ID="$(python3 -c 'import json; print(json.load(open(".local/ios-lan/demo.json"))["session_id"])')"
 ./target/debug/ai-terminal --state-dir "$PWD/.local/ios-lan" --attach "$SESSION_ID" --watch
 ```
 
-去掉 `--watch` 即从桌面接管；Ctrl+] 脱离客户端，Shell 继续运行。当前会话 ID 和连接地址保存在 `.local/ios-lan/demo.json`。
+去掉 `--watch` 即可从桌面同时输入，手机输入仍然可用；Ctrl+] 脱离客户端，Shell 继续运行。当前会话 ID 和连接地址保存在 `.local/ios-lan/demo.json`。
 
 ## 环境与重建
 
@@ -106,7 +106,7 @@ python3 scripts/run-ios-lan.py --toolchain stable --restore --relay-only
 python3 scripts/run-ios-lan.py --toolchain stable --restore --interactive
 ```
 
-测试会发送一个带时间戳的 `printf` 命令，并同时核对桌面权威屏幕和 iOS 接收的屏幕，验证独立输出行、连接路径及控制权；不是仅检查命令回显。测试配置在 `deploy/ios-lan.json`，可重新指定可用模拟器 UUID。
+测试会发送一个带时间戳的 `printf` 命令，并同时核对桌面权威屏幕和 iOS 接收的屏幕，验证独立输出行、连接路径及输入能力；不是仅检查命令回显。测试配置在 `deploy/ios-lan.json`，可重新指定可用模拟器 UUID。
 
 ## 日志与断点
 
