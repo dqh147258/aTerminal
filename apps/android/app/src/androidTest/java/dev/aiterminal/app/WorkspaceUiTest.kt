@@ -4,6 +4,7 @@ import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.os.SystemClock
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
@@ -194,6 +195,33 @@ class WorkspaceUiTest {
             scenario.onActivity { activity ->
                 views(activity).first { it.contentDescription == "隐藏终端键盘" }.performClick()
                 assertFalse(views(activity).filterIsInstance<TerminalView>().first().hasFocus())
+            }
+        }
+    }
+
+    @Test fun hardwareReturnAndTabReachTerminalWhenHistoryButtonHasFocus() {
+        launch().use { scenario ->
+            scenario.onActivity { activity ->
+                val terminal = views(activity).filterIsInstance<TerminalView>().first()
+                val keys = mutableListOf<String>()
+                val text = mutableListOf<String>()
+                terminal.canType = { true }
+                terminal.sendKey = { keys.add(it); true }
+                terminal.sendText = { text.add(it); true }
+                assertTrue(terminal.focusKeyboard())
+                val selected = MainActivity::class.java.getDeclaredField("selected").apply { isAccessible = true }
+                selected.set(activity, "fixture-session")
+                val history = views(activity).filterIsInstance<Button>().first { it.text == "历史" }
+                assertTrue(history.requestFocus())
+                assertTrue(history.hasFocus())
+                for (code in listOf(KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_TAB, KeyEvent.KEYCODE_A)) {
+                    assertTrue(activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code)))
+                    assertTrue(activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code)))
+                }
+                assertEquals(listOf("enter", "tab"), keys)
+                assertEquals(listOf("a"), text)
+                assertTrue(history.hasFocus())
+                assertNull(MainActivity::class.java.getDeclaredField("overlay").apply { isAccessible = true }.get(activity))
             }
         }
     }

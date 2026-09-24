@@ -47,7 +47,8 @@ struct TerminalSurface: UIViewRepresentable {
         }
         view.onReadOnly = onReadOnly
         if keyboardRequested && canInput { view.focusKeyboard() }
-        else if !keyboardRequested || !canInput { view.hideKeyboard() }
+        else if canInput { view.hideKeyboard(); view.focusHardwareKeyboard() }
+        else { view.hideKeyboard(); view.resignFirstResponder() }
         if view.generation != generation { view.generation = generation; view.screen = frame }
         if view.zoom != zoom { view.zoom = zoom }
         let size = view.intrinsicContentSize
@@ -147,6 +148,38 @@ final class TerminalView: UIView, UIContextMenuInteractionDelegate, UITextFieldD
     var onKeyboardChange: ((Bool) -> Void)?
     var onReadOnly: (() -> Void)?
     private let inputField = TerminalInputField(frame: .zero)
+    override var canBecomeFirstResponder: Bool { canInput }
+    override var keyCommands: [UIKeyCommand]? {
+        guard canInput && !inputField.isFirstResponder else { return nil }
+        return [UIKeyCommand(input: "\r", modifierFlags: [], action: #selector(returnKey)),
+                UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(tabKey)),
+                UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(escapeKey)),
+                UIKeyCommand(input: UIKeyCommand.inputUpArrow, modifierFlags: [], action: #selector(upKey)),
+                UIKeyCommand(input: UIKeyCommand.inputDownArrow, modifierFlags: [], action: #selector(downKey)),
+                UIKeyCommand(input: UIKeyCommand.inputLeftArrow, modifierFlags: [], action: #selector(leftKey)),
+                UIKeyCommand(input: UIKeyCommand.inputRightArrow, modifierFlags: [], action: #selector(rightKey)),
+                UIKeyCommand(input: "c", modifierFlags: .control, action: #selector(ctrlCKey))]
+    }
+    @objc private func returnKey() { onKey?("enter") }
+    @objc private func tabKey() { onKey?("tab") }
+    @objc private func escapeKey() { onKey?("escape") }
+    @objc private func upKey() { onKey?("up") }
+    @objc private func downKey() { onKey?("down") }
+    @objc private func leftKey() { onKey?("left") }
+    @objc private func rightKey() { onKey?("right") }
+    @objc private func ctrlCKey() { onKey?("ctrl_c") }
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        var unhandled = Set<UIPress>()
+        for press in presses {
+            guard canInput, let key = press.key,
+                  !key.modifierFlags.contains(.command), !key.modifierFlags.contains(.control), !key.modifierFlags.contains(.alternate),
+                  !key.characters.isEmpty,
+                  key.characters.unicodeScalars.allSatisfy({ $0.value >= 32 && $0.value != 127 && !(0xF700...0xF8FF).contains($0.value) })
+            else { unhandled.insert(press); continue }
+            _ = onText?(key.characters)
+        }
+        if !unhandled.isEmpty { super.pressesBegan(unhandled, with: event) }
+    }
     private lazy var screenElement: UIAccessibilityElement = {
         let element = UIAccessibilityElement(accessibilityContainer: self)
         element.accessibilityIdentifier = "terminal.screen"
@@ -217,6 +250,9 @@ final class TerminalView: UIView, UIContextMenuInteractionDelegate, UITextFieldD
     func focusKeyboard() {
         guard canInput else { return }
         if !inputField.isFirstResponder && inputField.becomeFirstResponder() { onKeyboardChange?(true) }
+    }
+    func focusHardwareKeyboard() {
+        if canInput && !inputField.isFirstResponder && !isFirstResponder { becomeFirstResponder() }
     }
     func hideKeyboard() {
         if inputField.isFirstResponder { inputField.resignFirstResponder() }
@@ -310,7 +346,7 @@ final class TerminalView: UIView, UIContextMenuInteractionDelegate, UITextFieldD
             let stroke: CGFloat = 2
             UIColor.white.withAlphaComponent(0.92).setFill()
             switch screen.cursorShape {
-            case 1: context.fill(CGRect(x: x, y: y, width: stroke, height: font.lineHeight))
+            case 0, 1: context.fill(CGRect(x: x, y: y, width: stroke, height: font.lineHeight))
             case 2: context.fill(CGRect(x: x, y: box.maxY - stroke, width: cellWidth, height: stroke))
             case 3: UIColor.white.setStroke(); context.setLineWidth(stroke); context.stroke(box.insetBy(dx: stroke / 2, dy: stroke / 2))
             default:

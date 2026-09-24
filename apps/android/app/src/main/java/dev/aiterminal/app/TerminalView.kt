@@ -141,12 +141,13 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
             KeyEvent.KEYCODE_C -> if (event.isCtrlPressed) "ctrl_c" else null
             else -> null
         }
-        if (key != null) return sendKey(key)
+        if (key != null) { sendKey(key); return true }
         if (event.isCtrlPressed || event.isAltPressed) return false
         val codePoint = event.unicodeChar
-        if (codePoint > 0) return sendText(String(Character.toChars(codePoint)))
+        if (codePoint > 0) { sendText(String(Character.toChars(codePoint))); return true }
         return false
     }
+    fun handleHardwareKey(event: KeyEvent): Boolean = terminalKey(event)
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean = terminalKey(event) || super.onKeyDown(keyCode, event)
     private val rowNodes = mutableMapOf<Int, RenderNode>()
     private val changedRows = mutableSetOf<Int>()
@@ -247,7 +248,7 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
             val stroke = (2f * resources.displayMetrics.density).coerceAtLeast(2f)
             paint.color = 0xffe5e5e5.toInt(); paint.style = Paint.Style.FILL; paint.alpha = 255
             when (frame.cursorShape) {
-                1u -> canvas.drawRect(x, y, x + stroke, y + cellHeight, paint)
+                0u, 1u -> canvas.drawRect(x, y, x + stroke, y + cellHeight, paint)
                 2u -> canvas.drawRect(x, y + cellHeight - stroke, x + cellWidth, y + cellHeight, paint)
                 3u -> { paint.style = Paint.Style.STROKE; paint.strokeWidth = stroke; canvas.drawRect(x + stroke / 2, y + stroke / 2, x + cellWidth - stroke / 2, y + cellHeight - stroke / 2, paint) }
                 else -> {

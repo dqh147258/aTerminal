@@ -1,6 +1,6 @@
 use ai_terminal_protocol::{BOLD, Cell, DIM, ITALIC, STRIKE, Snapshot, UNDERLINE};
 use crossterm::{
-    cursor::{Hide, Show},
+    cursor::{Hide, SetCursorStyle, Show},
     event::{
         DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
         EnableFocusChange, EnableMouseCapture,
@@ -34,6 +34,7 @@ impl Drop for TerminalGuard {
             io::stdout(),
             ResetColor,
             Show,
+            SetCursorStyle::DefaultUserShape,
             DisableFocusChange,
             DisableMouseCapture,
             DisableBracketedPaste,
@@ -118,7 +119,7 @@ impl Renderer {
                 out.push_str(match c.shape {
                     1 => "\x1b[6 q",
                     2 => "\x1b[4 q",
-                    _ => "\x1b[2 q",
+                    _ => "\x1b[0 q",
                 });
                 out.push_str("\x1b[?25h");
             }
@@ -154,6 +155,13 @@ fn set_style(s: &mut String, c: &Cell) {
 mod tests {
     use super::*;
     use ai_terminal_engine::Engine;
+    #[test]
+    fn default_cursor_uses_host_terminal_preference() {
+        let snapshot = Engine::new(2, 8, 1).unwrap().snapshot();
+        let encoded = Renderer::default().encode(&snapshot);
+        assert!(encoded.windows(5).any(|chunk| chunk == b"\x1b[0 q"));
+        assert!(!encoded.windows(5).any(|chunk| chunk == b"\x1b[2 q"));
+    }
     #[test]
     fn emitted_ansi_reconstructs_authority_without_wide_ghosts() {
         let mut source = Engine::new(4, 12, 1).unwrap();

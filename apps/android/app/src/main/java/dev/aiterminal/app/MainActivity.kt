@@ -15,6 +15,7 @@ import android.text.TextWatcher
 import android.text.method.PasswordTransformationMethod
 import android.view.Choreographer
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.View
 import android.view.MotionEvent
 import android.view.WindowManager
@@ -40,6 +41,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private var connected = false
     private var accountName = ""
     private var lastHeartbeatAt = 0L
+    private val terminalKeyUps = mutableSetOf<Int>()
     private var serverUrl = ""
     private var deviceId = ""
     private var deviceName = ""
@@ -781,12 +783,23 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         if (accountName.isNotEmpty() && !connected) { restorePending = true; work { loadDevices() } }
     }
     override fun onStop() {
-        active = false; toast?.cancel(); closeOverlay(); Choreographer.getInstance().removeFrameCallback(this)
+        active = false; terminalKeyUps.clear(); toast?.cancel(); closeOverlay(); Choreographer.getInstance().removeFrameCallback(this)
         disconnect(); super.onStop()
     }
     override fun onDestroy() {
         assistant?.close(); worker.execute { remote.close(); account.close() }; worker.shutdown(); historyWorker.shutdown()
         super.onDestroy()
+    }
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_UP && terminalKeyUps.remove(event.keyCode)) return true
+        val view = terminal
+        if (event.action == KeyEvent.ACTION_DOWN && selected != null && view != null &&
+            overlay == null && workspace.visibility == View.VISIBLE && currentFocus !is EditText &&
+            view.handleHardwareKey(event)) {
+            terminalKeyUps.add(event.keyCode)
+            return true
+        }
+        return super.dispatchKeyEvent(event)
     }
     override fun onBackPressed() { if (overlay != null) closeOverlay() else if (inputBox.visibility == View.VISIBLE) toggleInput(false) else super.onBackPressed() }
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
