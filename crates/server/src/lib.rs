@@ -1,4 +1,5 @@
 pub mod account;
+mod admin;
 use anyhow::Result;
 use axum::{
     Json, Router,
@@ -63,6 +64,7 @@ pub fn router(path: &std::path::Path, token: &str) -> Result<Router> {
     };
     let router = Router::new()
         .merge(account::routes())
+        .merge(admin::routes(app.clone()))
         .route("/healthz", get(|| async { "ok" }))
         .route("/v1/pairs", post(create_pair))
         .route("/v1/pairs/{room}", delete(revoke_pair))

@@ -25,7 +25,7 @@ pub fn migrate(db: &Connection) -> Result<()> {
     CREATE INDEX IF NOT EXISTS session_device ON auth_sessions(device_id);")?;
     Ok(())
 }
-fn username(value: &str) -> Api<()> {
+pub(super) fn username(value: &str) -> Api<()> {
     if value.is_empty()
         || value.len() > 64
         || !value
@@ -36,7 +36,7 @@ fn username(value: &str) -> Api<()> {
     }
     Ok(())
 }
-fn password_hash(password: &str) -> Result<String> {
+pub(super) fn password_hash(password: &str) -> Result<String> {
     anyhow::ensure!(
         (12..=1024).contains(&password.len()),
         "password must contain 12 to 1024 bytes"
@@ -262,7 +262,7 @@ async fn logout(State(app): State<App>, headers: HeaderMap) -> Api<StatusCode> {
     })
     .await
 }
-fn revoke_sessions(db: &Connection, id: &str) -> Api<()> {
+pub(super) fn revoke_sessions(db: &Connection, id: &str) -> Api<()> {
     db.execute("DELETE FROM auth_sessions WHERE device_id=?1", [id])
         .map_err(internal)?;
     db.execute(

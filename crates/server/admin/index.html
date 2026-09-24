@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>AI Terminal · 管理控制台</title>
+  <link rel="stylesheet" href="/admin/app.css">
+  <script defer src="/admin/lucide.js"></script>
+  <script defer src="/admin/app.js"></script>
+</head>
+<body>
+  <section id="login-view">
+    <div class="login-brand"><i data-lucide="terminal"></i><span>AI Terminal</span></div>
+    <form id="login-form" class="login-form">
+      <div class="login-icon"><i data-lucide="shield-check"></i></div>
+      <h1>管理控制台</h1>
+      <label for="token">管理员令牌</label>
+      <input id="token" type="password" autocomplete="off" required maxlength="4096" placeholder="Admin token" spellcheck="false">
+      <p id="login-error" class="error" role="alert"></p>
+      <button type="submit" class="primary"><i data-lucide="log-in"></i><span>登录</span></button>
+    </form>
+    <div class="login-footer">AI Terminal / Administration</div>
+  </section>
+
+  <div id="app-view" hidden>
+    <aside>
+      <div class="brand"><i data-lucide="terminal"></i><strong>AI Terminal</strong></div>
+      <div class="aside-label">管理控制台</div>
+      <nav aria-label="主导航">
+        <button data-view="users" class="nav-button active"><i data-lucide="users"></i>用户</button>
+        <button data-view="devices" class="nav-button"><i data-lucide="monitor-smartphone"></i>设备</button>
+        <button data-view="connections" class="nav-button"><i data-lucide="cable"></i>连接</button>
+      </nav>
+      <div class="aside-bottom"><span class="status-dot"></span>管理员</div>
+    </aside>
+    <main>
+      <header>
+        <div><span class="eyebrow">ADMINISTRATION</span><h1>服务管理</h1></div>
+        <button id="logout" class="quiet"><i data-lucide="log-out"></i><span>退出登录</span></button>
+      </header>
+      <section class="overview" aria-label="服务概览">
+        <div><span><i data-lucide="users"></i>用户总数</span><strong id="count-users">-</strong></div>
+        <div><span><i data-lucide="monitor-smartphone"></i>有效设备</span><strong id="count-devices">-</strong></div>
+        <div><span><i data-lucide="radio"></i>在线设备</span><strong id="count-online">-</strong></div>
+        <div><span><i data-lucide="cable"></i>有效连接</span><strong id="count-connections">-</strong></div>
+      </section>
+      <div class="section-heading"><h2 id="view-title">用户</h2><span id="updated" class="muted"></span></div>
+      <form id="filters" class="toolbar">
+        <div class="search"><i data-lucide="search"></i><input id="search" type="search" aria-label="搜索" placeholder="搜索用户名" maxlength="128"></div>
+        <input id="user-filter" aria-label="按用户 ID 过滤" placeholder="用户 ID（可选）" maxlength="128" hidden>
+        <button type="submit" class="quiet" title="搜索" aria-label="搜索"><i data-lucide="arrow-right"></i></button>
+        <button type="button" id="clear-filter" class="quiet" title="清除筛选" aria-label="清除筛选"><i data-lucide="filter-x"></i></button>
+        <div class="toolbar-end">
+          <button type="button" id="refresh" class="quiet" title="刷新" aria-label="刷新"><i data-lucide="refresh-cw"></i></button>
+          <button type="button" id="create-user" class="primary"><i data-lucide="plus"></i><span>创建用户</span></button>
+        </div>
+      </form>
+      <p id="page-error" class="error banner" role="alert" hidden></p>
+      <p id="notice" class="notice" role="status" hidden></p>
+      <section id="results" aria-label="查询结果" aria-live="polite">
+        <div id="empty" class="empty" hidden><i data-lucide="inbox"></i><strong id="empty-title">暂无用户</strong></div>
+        <div class="table-scroll"><table><thead id="table-head"></thead><tbody id="table-body"></tbody></table></div>
+      </section>
+      <footer class="pagination"><span id="result-count" class="muted"></span><div><button id="previous" class="quiet" title="上一页" aria-label="上一页"><i data-lucide="chevron-left"></i></button><span id="page-number">1</span><button id="next" class="quiet" title="下一页" aria-label="下一页"><i data-lucide="chevron-right"></i></button></div></footer>
+    </main>
+  </div>
+
+  <dialog id="dialog" aria-labelledby="dialog-title">
+    <form id="dialog-form">
+      <div class="dialog-heading"><h2 id="dialog-title"></h2><button type="button" id="close-dialog" class="quiet" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button></div>
+      <p id="dialog-description" class="muted"></p>
+      <div id="username-field"><label for="username">用户名</label><input id="username" autocomplete="off" maxlength="64" pattern="[A-Za-z0-9_.@\-]+" title="1 至 64 位字母、数字、下划线、点、@ 或连字符"></div>
+      <div id="password-fields">
+        <label for="password">新密码</label><input id="password" type="password" autocomplete="new-password" maxlength="1024" placeholder="至少 12 字节">
+        <label for="confirm-password">确认密码</label><input id="confirm-password" type="password" autocomplete="new-password" maxlength="1024">
+      </div>
+      <p id="dialog-error" class="error" role="alert"></p>
+      <div class="dialog-actions"><button type="button" id="cancel-dialog" class="quiet">取消</button><button type="submit" id="confirm-dialog" class="primary"><i data-lucide="check"></i><span>确认</span></button></div>
+    </form>
+  </dialog>
+</body>
+</html>
