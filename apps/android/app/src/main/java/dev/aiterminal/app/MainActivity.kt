@@ -166,7 +166,11 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                     hideKeyboard(); val epoch = ++accountEpoch
                     worker.execute {
                         try {
-                            account.login(url, name, secret, android.os.Build.MODEL, "android", "")
+                            // The local deployment test pins its private CA without changing normal login trust.
+                            val testCa = if (testMode) {
+                                java.io.File(filesDir, "acceptance-ca.pem").takeIf { it.isFile }?.readText().orEmpty()
+                            } else ""
+                            account.login(url, name, secret, android.os.Build.MODEL, "android", testCa)
                             persist()
                             connectionPreferences.edit().putString("server", url).apply()
                             val actualName = account.username()
