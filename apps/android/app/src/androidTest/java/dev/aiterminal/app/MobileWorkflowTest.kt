@@ -6,7 +6,9 @@ import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import android.view.MotionEvent
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.inputmethod.EditorInfo
 import android.widget.*
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
@@ -45,7 +47,7 @@ class MobileWorkflowTest {
     private fun icon(description: String) = mutate { views().first { it.contentDescription?.toString() == description && it.isEnabled && it !is EditText }.performClick() }
     private fun field(hint: String) = views().filterIsInstance<EditText>().first { it.hint?.toString() == hint }
     private fun launch() {
-        instrumentation.uiAutomation.executeShellCommand("am start -W -n dev.aiterminal.app/.MainActivity --ez acceptance_test true")
+        instrumentation.uiAutomation.executeShellCommand("am start -W -n dev.aiterminal.app/.MainActivity --ez terminal_input_test true")
             .use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
         val deadline = SystemClock.elapsedRealtime() + 10000
         while (SystemClock.elapsedRealtime() < deadline) {
@@ -58,12 +60,27 @@ class MobileWorkflowTest {
         TerminalView::class.java.getDeclaredField("frame").apply { isAccessible = true }.get(it) as RenderFrame
     }
     private fun lines() = frame()?.let { f -> f.cells.chunked(f.cols.toInt()).map { line -> line.joinToString("") { it.text }.trim() } }.orEmpty()
-    private fun input(text: String) {
-        if (!main { (get("inputBox") as View).isShown }) icon("显示或隐藏终端输入")
+    private fun readyInput() {
+        if (!main { (get("inputBox") as View).isShown }) icon("显示或隐藏终端键盘")
         if (!main { get("controlled") == true }) {
             mutate { (get("takeControl") as CheckBox).performClick() }; waitFor("input ownership") { get("controlled") == true }
         }
-        mutate { field("输入文字").setText(text) }; click("发送"); click("回车")
+        mutate { assertTrue((get("terminal") as TerminalView).focusKeyboard()) }
+    }
+    private fun type(text: String) {
+        readyInput()
+        mutate {
+            val terminal = get("terminal") as TerminalView
+            val connection = terminal.onCreateInputConnection(EditorInfo())
+            assertTrue(connection.commitText(text, 1))
+        }
+    }
+    private fun input(text: String) {
+        type(text)
+        mutate {
+            val connection = (get("terminal") as TerminalView).onCreateInputConnection(EditorInfo())
+            assertTrue(connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER)))
+        }
     }
     private fun screenshot(name: String) {
         focus(); instrumentation.waitForIdleSync(); Thread.sleep(400); focus()
@@ -80,7 +97,7 @@ class MobileWorkflowTest {
     }
     @Test fun realTerminalWorkflowAndPlaceholder() {
         val fixture = JSONObject(File(context.filesDir, "followup-fixture.json").readText())
-        val preferences = DisplayPreferences(context, "acceptance-display"); val originalFont = preferences.fontSize; val originalOpacity = preferences.opacity
+        val preferences = DisplayPreferences(context, "terminal-input-display"); val originalFont = preferences.fontSize; val originalOpacity = preferences.opacity
         launch()
         try {
             waitFor("test login or restored temporary account") { (get("loginBox") as View).isShown || (get("accountName") as String).isNotEmpty() }
@@ -102,10 +119,21 @@ class MobileWorkflowTest {
                 }
                 waitFor("fixture selected") { get("selected") == target }
             }
+            readyInput(); click("Ctrl-C")
             input("printf 'ANDROID_FOLLOWUP_PTY_OK\\n'")
             waitFor("real PTY output") { lines().any { it == "ANDROID_FOLLOWUP_PTY_OK" } }
             result.put("real_login_and_pty", true)
-            if (main { (get("inputBox") as View).isShown }) icon("隐藏终端输入")
+            val tabDirectory = "/private/tmp/t" + target.take(8)
+            input("mkdir -p $tabDirectory")
+            input("echo ANDROID_TAB_OK > $tabDirectory/complete_marker")
+            input("echo ANDROID_TAB_READY")
+            waitFor("shell finished preparing Tab target") { lines().any { it == "ANDROID_TAB_READY" } }
+            type("cat $tabDirectory/comple")
+            click("Tab"); click("回车")
+            waitFor("Tab completes a real shell path") { lines().any { it == "ANDROID_TAB_OK" } }
+            input("rm -r $tabDirectory")
+            result.put("real_tab_completion", true)
+            if (main { (get("inputBox") as View).isShown }) icon("隐藏终端键盘")
             val columns = main { frame()!!.cols }
             mutate { val surface = get("surface") as HorizontalScrollView; surface.scrollTo(surface.getChildAt(0).width, 0); assertTrue(surface.scrollX > 0); surface.scrollTo(0, 0) }
             icon("终端设置")
@@ -151,7 +179,7 @@ class MobileWorkflowTest {
             waitFor("shell accepts input after Ctrl-C") { lines().any { it == "ANDROID_FOLLOWUP_CTRL_C_OK" } }
             result.put("real_ctrl_c_recovery", true)
             result.put("connection_path", main { (get("remote") as RemoteTerminal).connectionPath() })
-            icon("隐藏终端输入"); icon("打开工作空间")
+            icon("隐藏终端键盘"); icon("打开工作空间")
             mutate { views().first { it.tag == "close-$target" && it.isEnabled }.performClick() }
             instrumentation.waitForIdleSync(); focus()
             val closeDialog = instrumentation.uiAutomation.rootInActiveWindow
@@ -177,6 +205,7 @@ class MobileWorkflowTest {
             main {
                 result.put("last_status", (get("status") as TextView).text.toString())
                 result.put("session_busy", get("sessionBusy"))
+                result.put("screen_tail", org.json.JSONArray(lines().filter { it.isNotBlank() }.takeLast(8)))
                 @Suppress("UNCHECKED_CAST") val sessions = get("sessions") as List<RemoteSession>
                 result.put("remaining_sessions", org.json.JSONArray(sessions.map { JSONObject().put("id", it.id).put("exited", it.exited) }))
             }

@@ -54,8 +54,8 @@ data class Conversation(
 }
 
 /** The owner namespace is never selected from a visible session title or a device name. */
-class ChatStore(context: Context, server: String, username: String) {
-    private val prefs = context.getSharedPreferences("chats-" + digest(canonicalServer(server) + "\u0000" + username), Context.MODE_PRIVATE)
+class ChatStore @JvmOverloads constructor(context: Context, server: String, username: String, testNamespace: String = "") {
+    private val prefs = context.getSharedPreferences("chats-" + digest(canonicalServer(server) + "\u0000" + username + if (testNamespace.isEmpty()) "" else "\u0000$testNamespace"), Context.MODE_PRIVATE)
     fun get(device: String, session: String, title: String): Conversation = prefs.getString(key(device, session), null)?.let {
         Conversation.from(JSONObject(it))
     } ?: Conversation(device, session, title)
@@ -127,8 +127,8 @@ object AssistantRequest {
     }
 }
 
-class WorkspaceMemory(context: Context, server: String, username: String) {
-    private val prefs = context.getSharedPreferences("workspace-" + ChatStore.digest(ChatStore.canonicalServer(server) + "\u0000" + username), Context.MODE_PRIVATE)
+class WorkspaceMemory @JvmOverloads constructor(context: Context, server: String, username: String, testNamespace: String = "") {
+    private val prefs = context.getSharedPreferences("workspace-" + ChatStore.digest(ChatStore.canonicalServer(server) + "\u0000" + username + if (testNamespace.isEmpty()) "" else "\u0000$testNamespace"), Context.MODE_PRIVATE)
     fun remember(device: String, session: String) { prefs.edit().putString("device", device).putString("session", session).apply() }
     fun last(): Pair<String, String>? {
         val device = prefs.getString("device", null) ?: return null

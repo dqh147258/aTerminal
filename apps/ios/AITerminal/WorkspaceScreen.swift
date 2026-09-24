@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 private enum WorkspacePanel: String { case settings, chat, devices, account, terminalHistory, chatHistory }
 
@@ -20,7 +21,6 @@ struct WorkspaceScreen: View {
     @State private var selectedHistory: ChatArchive?
     @State private var revokeDevice: AccountDevice?
     @State private var logoutConfirm = false
-    @State private var terminalDraft = ""
     @State private var continueScope: ChatScope?
     private var workspace: Bool { !model.username.isEmpty || model.connected || model.screen != nil || model.fixture }
 
@@ -66,17 +66,23 @@ struct WorkspaceScreen: View {
         }
         .onChange(of: model.identity) { _ in
             syncChat()
-            if model.username.isEmpty { panel = nil; drawer = false; selectedHistory = nil; terminalDraft = ""; continueScope = nil }
+            if model.username.isEmpty { panel = nil; drawer = false; selectedHistory = nil; inputVisible = false; continueScope = nil }
             else if model.deviceID.isEmpty { panel = .devices }
         }
         .onChange(of: model.chatScope) { scope in
-            syncChat(); terminalDraft = ""
+            syncChat(); inputVisible = false
             if let scope, scope == continueScope { continueScope = nil; panel = .chat }
         }
         .onChange(of: model.connected) { connected in syncChat(); if connected && panel == .devices { panel = nil } }
-        .onChange(of: panel) { value in assistant.setVisible(value == .chat, core: model.core) }
+        .onChange(of: drawer) { value in if value && !historyTab { model.refreshSessions() } }
+        .onChange(of: historyTab) { value in if !value && drawer { model.refreshSessions() } }
+        .onChange(of: panel) { value in assistant.setVisible(value == .chat, core: model.core); if value != nil { inputVisible = false } }
+        .onChange(of: model.hasControl) { value in if !value { inputVisible = false } }
+        .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
+            if drawer && !historyTab { model.refreshSessions() }
+        }
         .onChange(of: phase) { value in
-            if value == .background { assistant.stop(); model.pause(); panel = nil; terminalDraft = "" }
+            if value == .background { assistant.stop(); model.pause(); panel = nil; inputVisible = false }
             if value == .active { model.resume() }
         }
         .onAppear {
@@ -124,7 +130,11 @@ struct WorkspaceScreen: View {
             }
             ZStack(alignment: .bottomTrailing) {
                 if let frame = model.screen {
-                    TerminalSurface(frame: frame, zoom: min(24, max(12, fontSize)) / 15, generation: model.generation, core: model.displayCore, onStatus: model.displayStatus, onOpenWorkspace: { drawer = true })
+                    TerminalSurface(frame: frame, zoom: min(24, max(12, fontSize)) / 15, generation: model.generation, core: model.displayCore,
+                        canInput: model.hasControl && model.connected && !model.busy, keyboardRequested: inputVisible,
+                        onText: model.text, onKey: model.key, onKeyboardChange: { inputVisible = $0 },
+                        onReadOnly: { model.status = "请先接管输入" },
+                        onStatus: model.displayStatus, onOpenWorkspace: { drawer = true })
                 } else {
                     VStack {
                         Spacer()
@@ -143,10 +153,12 @@ struct WorkspaceScreen: View {
                     ToolButton(symbol: "bubble.left", label: "AI 对话", active: true) { panel = .chat }.accessibilityIdentifier("workspace.chat")
                 }.padding(16).opacity(panel == nil ? 1 : 0)
             }
-            if inputVisible { TerminalComposer(draft: $terminalDraft, enabled: model.hasControl && model.connected && !model.busy, send: model.text, key: model.key) }
+            if inputVisible { TerminalComposer(enabled: model.hasControl && model.connected && !model.busy, key: model.key) }
             VStack(spacing: 0) {
                 HStack(spacing: 4) {
-                    ToolButton(symbol: inputVisible ? "keyboard.chevron.compact.down" : "keyboard", label: inputVisible ? "隐藏输入" : "显示输入") { inputVisible.toggle() }
+                    ToolButton(symbol: inputVisible ? "keyboard.chevron.compact.down" : "keyboard", label: inputVisible ? "隐藏键盘" : "打开终端键盘") {
+                        if model.hasControl { inputVisible.toggle() } else { model.status = "请先接管输入" }
+                    }
                     Toggle("接管输入", isOn: Binding(get: { model.hasControl }, set: model.control)).font(.caption).fixedSize().disabled(model.selected == nil || !model.connected || model.busy)
                     Spacer(minLength: 4)
                     ToolButton(symbol: "clock", label: "终端历史") { model.readHistory(); panel = .terminalHistory }.disabled(model.selected == nil)
@@ -323,24 +335,16 @@ struct WorkspaceScreen: View {
 }
 
 private struct TerminalComposer: View {
-    @Binding var draft: String
     let enabled: Bool
-    let send: (String) -> Bool
     let key: (String) -> Void
     var body: some View {
-        VStack(spacing: 4) {
-            HStack {
-                TextField(enabled ? "终端输入" : "接管输入后可发送", text: $draft).textInputAutocapitalization(.never).autocorrectionDisabled().font(.system(.body, design: .monospaced)).padding(.leading, 12).disabled(!enabled).accessibilityIdentifier("terminal.draft")
-                ToolButton(symbol: "arrow.up", label: "发送文字") { if send(draft) { draft = "" } }.disabled(!enabled || draft.isEmpty).accessibilityIdentifier("terminal.send")
-            }.background(WorkspaceStyle.control).cornerRadius(6)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
-                    ForEach([("return", "回车", "enter"), ("stop", "Ctrl-C", "ctrl_c"), ("arrow.right.to.line", "Tab", "tab"), ("escape", "Esc", "escape"), ("arrow.up", "向上", "up"), ("arrow.down", "向下", "down"), ("arrow.left", "向左", "left"), ("arrow.right", "向右", "right")], id: \.2) { symbol, label, value in
-                        ToolButton(symbol: symbol, label: label) { key(value) }.accessibilityIdentifier("terminal.key." + value)
-                    }
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                ForEach([("return", "回车", "enter"), ("arrow.right.to.line", "Tab", "tab"), ("delete.left", "退格", "backspace"), ("stop", "Ctrl-C", "ctrl_c"), ("escape", "Esc", "escape"), ("arrow.up", "向上", "up"), ("arrow.down", "向下", "down"), ("arrow.left", "向左", "left"), ("arrow.right", "向右", "right")], id: \.2) { symbol, label, value in
+                    ToolButton(symbol: symbol, label: label) { key(value) }.accessibilityIdentifier("terminal.key." + value)
                 }
-            }.disabled(!enabled)
-        }.padding(8).background(WorkspaceStyle.surface)
+            }
+        }.disabled(!enabled).padding(8).background(WorkspaceStyle.surface)
     }
 }
 

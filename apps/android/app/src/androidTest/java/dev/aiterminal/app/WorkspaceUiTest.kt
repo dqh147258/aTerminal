@@ -166,22 +166,34 @@ class WorkspaceUiTest {
         } finally { releaseSend.countDown(); instrumentation.runOnMainSync { oldPanel?.close(); newPanel?.close() }; storage.clear() }
     }
 
-    @Test fun nativeDraftAndFunctionKeysRemainReachableWithoutSendingWithoutControl() {
+    @Test fun terminalReceivesCommittedImeTextAndSpecialKeysWithoutAnInputBox() {
         launch().use { scenario ->
             scenario.onActivity { activity ->
-                views(activity).first { it.contentDescription == "显示或隐藏终端输入" }.performClick()
-                val input = views(activity).filterIsInstance<EditText>().first { it.hint == "输入文字" && it.isShown }
-                input.setText("draft-only")
-                views(activity).filterIsInstance<Button>().first { it.text == "发送" && it.isShown }.performClick()
-                assertEquals("draft-only", input.text.toString())
-                assertEquals(8, views(activity).filterIsInstance<Button>().count { it.text in listOf("回车", "Ctrl-C", "Tab", "Esc", "↑", "↓", "←", "→") })
-                input.requestFocus()
-                (activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).showSoftInput(input, 0)
+                val terminal = views(activity).filterIsInstance<TerminalView>().first()
+                assertFalse(terminal.focusKeyboard())
+                val text = mutableListOf<String>(); val keys = mutableListOf<String>()
+                terminal.canType = { true }
+                terminal.sendText = { value -> text.add(value); true }
+                terminal.sendKey = { value -> keys.add(value); true }
+                assertTrue(terminal.focusKeyboard())
+                val connection = terminal.onCreateInputConnection(android.view.inputmethod.EditorInfo())
+                connection.setComposingText("zhongwen", 1)
+                assertTrue(text.isEmpty())
+                connection.commitText("中文🙂", 1)
+                connection.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_TAB))
+                connection.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER))
+                connection.deleteSurroundingText(1, 0)
+                val pasted = "x".repeat(512)
+                connection.commitText(pasted, 1)
+                assertEquals(listOf("中文🙂", pasted), text)
+                assertEquals(listOf("tab", "enter", "backspace"), keys)
+                assertFalse(views(activity).filterIsInstance<EditText>().any { it.hint == "输入文字" })
+                assertEquals(9, views(activity).filterIsInstance<Button>().count { it.text in listOf("回车", "Tab", "退格", "Ctrl-C", "Esc", "↑", "↓", "←", "→") })
             }
             screenshot("workspace-terminal-keyboard")
             scenario.onActivity { activity ->
-                views(activity).first { it.contentDescription == "隐藏终端输入" }.performClick()
-                assertFalse(views(activity).filterIsInstance<EditText>().first { it.hint == "输入文字" }.isShown)
+                views(activity).first { it.contentDescription == "隐藏终端键盘" }.performClick()
+                assertFalse(views(activity).filterIsInstance<TerminalView>().first().hasFocus())
             }
         }
     }

@@ -8,6 +8,12 @@ struct TerminalSurface: UIViewRepresentable {
     var zoom: Double = 1
     var generation: Int = 0
     var core: RemoteTerminal? = nil
+    var canInput = false
+    var keyboardRequested = false
+    var onText: ((String) -> Bool)? = nil
+    var onKey: ((String) -> Void)? = nil
+    var onKeyboardChange: ((Bool) -> Void)? = nil
+    var onReadOnly: (() -> Void)? = nil
     var onStatus: ((RenderFrame?, String, Bool, String?) -> Void)? = nil
     var onOpenWorkspace: (() -> Void)? = nil
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -31,6 +37,10 @@ struct TerminalSurface: UIViewRepresentable {
         guard let view = scroll.viewWithTag(10) as? TerminalView else { return }
         context.coordinator.core = core; context.coordinator.onStatus = onStatus
         context.coordinator.onOpenWorkspace = onOpenWorkspace
+        view.canInput = canInput; view.onText = onText; view.onKey = onKey
+        view.onKeyboardChange = onKeyboardChange; view.onReadOnly = onReadOnly
+        if keyboardRequested && canInput { view.focusKeyboard() }
+        else if !keyboardRequested || !canInput { view.hideKeyboard() }
         if view.generation != generation { view.generation = generation; view.screen = frame }
         if view.zoom != zoom { view.zoom = zoom }
         let size = view.intrinsicContentSize
@@ -80,13 +90,57 @@ struct TerminalSurface: UIViewRepresentable {
     }
 }
 
-final class TerminalView: UIView, UIContextMenuInteractionDelegate {
+private final class TerminalInputField: UITextField {
+    var onSpecialKey: ((String) -> Void)?
+    override func deleteBackward() {
+        if markedTextRange == nil && (text ?? "").isEmpty { onSpecialKey?("backspace") }
+        else { super.deleteBackward() }
+    }
+    override var keyCommands: [UIKeyCommand]? {
+        [UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(tabKey)),
+         UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(escapeKey)),
+         UIKeyCommand(input: UIKeyCommand.inputUpArrow, modifierFlags: [], action: #selector(upKey)),
+         UIKeyCommand(input: UIKeyCommand.inputDownArrow, modifierFlags: [], action: #selector(downKey)),
+         UIKeyCommand(input: UIKeyCommand.inputLeftArrow, modifierFlags: [], action: #selector(leftKey)),
+         UIKeyCommand(input: UIKeyCommand.inputRightArrow, modifierFlags: [], action: #selector(rightKey)),
+         UIKeyCommand(input: "c", modifierFlags: .control, action: #selector(ctrlCKey))]
+    }
+    @objc private func tabKey() { onSpecialKey?("tab") }
+    @objc private func escapeKey() { onSpecialKey?("escape") }
+    @objc private func upKey() { onSpecialKey?("up") }
+    @objc private func downKey() { onSpecialKey?("down") }
+    @objc private func leftKey() { onSpecialKey?("left") }
+    @objc private func rightKey() { onSpecialKey?("right") }
+    @objc private func ctrlCKey() { onSpecialKey?("ctrl_c") }
+}
+
+final class TerminalView: UIView, UIContextMenuInteractionDelegate, UITextFieldDelegate {
     private let performanceLog = OSLog(subsystem: "dev.aiterminal", category: .pointsOfInterest)
+    var canInput = false
+    var onText: ((String) -> Bool)?
+    var onKey: ((String) -> Void)?
+    var onKeyboardChange: ((Bool) -> Void)?
+    var onReadOnly: (() -> Void)?
+    private let inputField = TerminalInputField(frame: .zero)
+    private lazy var screenElement: UIAccessibilityElement = {
+        let element = UIAccessibilityElement(accessibilityContainer: self)
+        element.accessibilityIdentifier = "terminal.screen"
+        element.accessibilityLabel = "终端画面，点击输入"
+        element.accessibilityTraits = .staticText
+        return element
+    }()
+    override var accessibilityElements: [Any]? {
+        get {
+            screenElement.accessibilityFrameInContainerSpace = bounds
+            return WorkspacePreferences.serviceTest ? [screenElement, inputField] : [screenElement]
+        }
+        set {}
+    }
     var generation = -1
     private var dirtyRows: Set<Int>?
     var screen: RenderFrame? { didSet {
         if UIAccessibility.isVoiceOverRunning || WorkspacePreferences.serviceTest, let screen {
-            accessibilityValue = (0..<Int(screen.rows)).map { row in
+            screenElement.accessibilityValue = (0..<Int(screen.rows)).map { row in
                 screen.cells[(row * Int(screen.cols))..<((row + 1) * Int(screen.cols))].filter { $0.width > 0 }.map(\.text).joined().trimmingCharacters(in: .whitespaces)
             }.joined(separator: "\n")
         }
@@ -115,8 +169,42 @@ final class TerminalView: UIView, UIContextMenuInteractionDelegate {
     private var cellWidth: CGFloat = 0
     private var attributes: [UInt64: [NSAttributedString.Key: Any]] = [:]
     private var colors: [UInt32: UIColor] = [:]
-    override init(frame: CGRect) { super.init(frame: frame); contentMode = .redraw; rebuildFont(); addInteraction(UIContextMenuInteraction(delegate: self)); isAccessibilityElement = true; accessibilityLabel = "终端画面"; accessibilityIdentifier = "terminal.screen"; accessibilityTraits = .staticText }
-    required init?(coder: NSCoder) { super.init(coder: coder); rebuildFont() }
+    override init(frame: CGRect) { super.init(frame: frame); contentMode = .redraw; rebuildFont(); setupInput(); addInteraction(UIContextMenuInteraction(delegate: self)); isAccessibilityElement = false }
+    required init?(coder: NSCoder) { super.init(coder: coder); rebuildFont(); setupInput() }
+    private func setupInput() {
+        inputField.frame = CGRect(x: 0, y: 0, width: 1, height: 1)
+        inputField.alpha = 0.01
+        inputField.textColor = .clear; inputField.tintColor = .clear
+        inputField.autocorrectionType = .no; inputField.spellCheckingType = .no
+        inputField.autocapitalizationType = .none; inputField.smartQuotesType = .no
+        inputField.smartDashesType = .no
+        inputField.isAccessibilityElement = WorkspacePreferences.serviceTest
+        inputField.accessibilityIdentifier = "terminal.input"
+        inputField.delegate = self
+        inputField.addTarget(self, action: #selector(inputChanged), for: .editingChanged)
+        inputField.onSpecialKey = { [weak self] key in self?.onKey?(key) }
+        addSubview(inputField)
+        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
+    }
+    @objc private func tapped() {
+        if canInput { focusKeyboard() } else { onReadOnly?() }
+    }
+    func focusKeyboard() {
+        guard canInput else { return }
+        if !inputField.isFirstResponder && inputField.becomeFirstResponder() { onKeyboardChange?(true) }
+    }
+    func hideKeyboard() {
+        if inputField.isFirstResponder { inputField.resignFirstResponder() }
+        inputField.text = ""
+    }
+    func textFieldDidEndEditing(_ textField: UITextField) { onKeyboardChange?(false) }
+    func textFieldDidChangeSelection(_ textField: UITextField) { inputChanged() }
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool { onKey?("enter"); return false }
+    @objc private func inputChanged() {
+        guard inputField.markedTextRange == nil, let text = inputField.text, !text.isEmpty else { return }
+        inputField.text = ""
+        _ = onText?(text)
+    }
     func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
         UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
             UIMenu(children: [UIAction(title: "复制屏幕") { _ in

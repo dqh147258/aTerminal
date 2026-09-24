@@ -1,8 +1,6 @@
 package dev.aiterminal.app
 
 import android.os.*
-import android.text.Editable
-import android.text.TextWatcher
 import android.view.*
 import android.view.inputmethod.EditorInfo
 import android.widget.*
@@ -53,10 +51,10 @@ class DeviceAcceptanceTest {
         clickDescription("打开工作空间")
         main { views().filterIsInstance<Button>().first { it.text.toString().startsWith(sessions[index].cwd + "\n") && it.isShown }.performClick() }
         waitFor("selected session") { get("selected") == id }
-        if (!main { (get("inputBox") as View).isShown }) clickDescription("显示或隐藏终端输入")
+        if (!main { (get("inputBox") as View).isShown }) clickDescription("显示或隐藏终端键盘")
         if (!main { core().hasControl() }) { main { (get("takeControl") as CheckBox).performClick() }; waitFor("input control") { get("selected") == id && get("controlled") == true && core().hasControl() } }
     }
-    private fun send(text: String) { main { field("输入文字").setText(text) }; click("发送") }
+    private fun send(text: String) { main { assertForeground(); val terminal = terminal()!!; assertTrue(terminal.focusKeyboard()); assertTrue(terminal.onCreateInputConnection(EditorInfo()).commitText(text, 1)) } }
     private fun connectDesktop() {
         waitFor("signed in") { (get("workspace") as View).isShown }
         clickDescription("账号与设备")
@@ -84,20 +82,24 @@ class DeviceAcceptanceTest {
             send("printf 'ANDROID_DEVICE_OK\\n'"); click("回车")
             waitFor("actual shell output") { val f = frame() ?: return@waitFor false; f.cells.chunked(f.cols.toInt()).any { line -> line.joinToString("") { it.text }.trim() == "ANDROID_DEVICE_OK" } }
             result.put("account_login_ui", true).put("direct_shell_output", true)
-            // Inject actual key events into the focused native EditText.
-            main { assertForeground(); field("输入文字").requestFocus(); field("输入文字").setText("") }
+            // Physical keys and composed IME text go directly to the real PTY through the screen.
+            main { assertForeground(); assertTrue(terminal()!!.focusKeyboard()) }
             instrumentation.sendStringSync("abc123")
-            assertEquals("abc123", main { field("输入文字").text.toString() })
+            waitFor("hardware text reaches PTY") { screenText().contains("abc123") }
             main { assertForeground() }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DEL)
-            assertEquals("abc12", main { field("输入文字").text.toString() })
-            main {
-                val edit = field("输入文字"); edit.setText("")
-                val connection = edit.onCreateInputConnection(EditorInfo())
-                connection.setComposingText("zhongwen", 1)
-                connection.commitText("中文🙂", 1); connection.finishComposingText()
-                assertEquals("中文🙂", edit.text.toString()); edit.setText("")
+            waitFor("hardware backspace edits PTY line") {
+                val f = frame() ?: return@waitFor false
+                f.cells.chunked(f.cols.toInt()).any { line -> line.joinToString("") { it.text }.trimEnd().endsWith("abc12") }
             }
+            main {
+                val connection = terminal()!!.onCreateInputConnection(EditorInfo())
+                connection.setComposingText("zhongwen", 1)
+                assertFalse(screenText().contains("zhongwen"))
+                connection.commitText("中文🙂", 1); connection.finishComposingText()
+            }
+            waitFor("committed IME text reaches PTY") { screenText().contains("中文🙂") }
+            click("Ctrl-C")
             result.put("native_key_edit_delete", true).put("input_connection_chinese_emoji", true)
             send("sleep 30"); click("回车"); Thread.sleep(200); click("Ctrl-C")
             send("printf 'CTRL_C_RECOVERED\\n'"); click("回车")
@@ -178,14 +180,15 @@ class DeviceAcceptanceTest {
             val inputDuration = SystemClock.elapsedRealtime() - started
             waitFor("1000 native-rendered characters: $name", 20) { seen.all { it>0 } }
             assertEquals(1000, main { frame()!!.cells.count { it.text=="x" } })
-            // Local editor receives real key events while this terminal remains active.
-            val editLatency=CopyOnWriteArrayList<Double>(); val inputAt=java.util.concurrent.atomic.AtomicLong()
-            val watcher=object:TextWatcher { override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int){};override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int){};override fun afterTextChanged(s:Editable?){val start=inputAt.get();if(start!=0L)editLatency.add((System.nanoTime()-start)/1_000_000.0)} }
-            main { field("输入文字").requestFocus(); field("输入文字").setText(""); field("输入文字").addTextChangedListener(watcher) }
-            repeat(60) { main { assertForeground() }; inputAt.set(System.nanoTime());instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_A);inputAt.set(0);Thread.sleep(10) }
-            main { field("输入文字").removeTextChangedListener(watcher); field("输入文字").setText("") }
+            val imeLatency=ArrayList<Double>()
+            val connection=main { assertTrue(terminal()!!.focusKeyboard()); terminal()!!.onCreateInputConnection(EditorInfo()) }
+            repeat(60) {
+                main { assertForeground(); val started=System.nanoTime(); assertTrue(connection.commitText("a",1)); imeLatency.add((System.nanoTime()-started)/1_000_000.0) }
+                Thread.sleep(10)
+            }
+            click("Ctrl-C")
             val memory=android.os.Debug.MemoryInfo();android.os.Debug.getMemoryInfo(memory)
-            return JSONObject().put("name",name).put("path",core().connectionPath()).put("input_interval_ms",inputIntervalMs).put("input_duration_ms",inputDuration).put("input_to_onDraw",stats(seen.toList())).put("window_frame_total",stats(frameTimes)).put("window_draw",stats(drawTimes)).put("window_layout",stats(layoutTimes)).put("window_delay",stats(delayTimes)).put("window_animation",stats(animationTimes)).put("window_input",stats(inputTimes)).put("enqueue_call",stats(enqueueTimes)).put("native_editor_event",stats(editLatency)).put("elapsed_ms",SystemClock.elapsedRealtime()-started).put("total_pss_kib",memory.totalPss).put("frames_over_16_7_ms",frameTimes.count { it>16.7 })
+            return JSONObject().put("name",name).put("path",core().connectionPath()).put("input_interval_ms",inputIntervalMs).put("input_duration_ms",inputDuration).put("input_to_onDraw",stats(seen.toList())).put("window_frame_total",stats(frameTimes)).put("window_draw",stats(drawTimes)).put("window_layout",stats(layoutTimes)).put("window_delay",stats(delayTimes)).put("window_animation",stats(animationTimes)).put("window_input",stats(inputTimes)).put("enqueue_call",stats(enqueueTimes)).put("terminal_ime_enqueue",stats(imeLatency)).put("elapsed_ms",SystemClock.elapsedRealtime()-started).put("total_pss_kib",memory.totalPss).put("frames_over_16_7_ms",frameTimes.count { it>16.7 })
         } finally {
             sampling.set(false); historyThread?.join(3000)
             main { terminal()?.viewTreeObserver?.removeOnDrawListener(listener);activity.window.removeOnFrameMetricsAvailableListener(metrics) };metricThread.quitSafely()

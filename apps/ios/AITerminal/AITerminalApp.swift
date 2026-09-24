@@ -24,6 +24,7 @@ final class TerminalModel: ObservableObject {
     @Published var history = ""
     @Published var historyLoading = false
     private var accountBusy = false
+    private var sessionsRefreshInFlight = false
     @Published private(set) var generation = 0
     private let performanceLog = OSLog(subsystem: "dev.aiterminal", category: .pointsOfInterest)
     let core = RemoteTerminal()
@@ -124,7 +125,12 @@ final class TerminalModel: ObservableObject {
         worker.async { [weak self] in
             guard let self else { return }
             do {
-                let ca = Bundle.main.url(forResource: "server-ca", withExtension: "pem").flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
+                #if DEBUG
+                let testCA = WorkspacePreferences.serviceTest ? ProcessInfo.processInfo.environment["AI_TERMINAL_TEST_CA_PEM"] : nil
+                #else
+                let testCA: String? = nil
+                #endif
+                let ca = testCA ?? Bundle.main.url(forResource: "server-ca", withExtension: "pem").flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
                 try self.account.login(server: server, username: username, password: password, name: deviceName, platform: "ios", caPem: ca)
                 try self.persist(); try self.loadDevices()
             } catch { self.failed(error) }
@@ -159,10 +165,14 @@ final class TerminalModel: ObservableObject {
                 DispatchQueue.main.async {
                     guard self.generation == version else { return }
                     self.sessions = sessions; self.sessionSnapshots[id] = sessions; self.busy = false; self.connected = true; self.status = "已连接 · 选择会话"
-                    if let sessionID {
-                        if sessions.contains(where: { $0.id == sessionID && !$0.exited }) { self.select(sessionID, control: false) }
-                        else { self.error = "历史对应的终端已关闭，对话仅供查阅" }
-                    } else if let first = sessions.first(where: { !$0.exited }) { self.select(first.id, control: false) }
+                    if let sessionID, sessions.contains(where: { $0.id == sessionID && !$0.exited }) {
+                        self.select(sessionID, control: false)
+                    } else if let first = sessions.first(where: { !$0.exited }) {
+                        if sessionID != nil { self.status = "上次会话已关闭，已恢复在线终端" }
+                        self.select(first.id, control: false)
+                    } else if sessionID != nil {
+                        self.error = "历史对应的终端已关闭，对话仅供查阅"
+                    }
                 }
             } catch { self.failed(error, version: version) }
         }
@@ -261,11 +271,25 @@ final class TerminalModel: ObservableObject {
         } catch { self.failed(error, version: version) } }
     }
     func refreshSessions() {
-        guard connected, !busy else { return }; busy = true; let version = generation
-        worker.async { [weak self] in guard let self else { return }; do {
-            let sessions = try self.core.sessions()
-            DispatchQueue.main.async { guard self.generation == version else { return }; self.sessions = sessions; self.sessionSnapshots[self.deviceID] = sessions; self.busy = false }
-        } catch { self.failed(error, version: version) } }
+        guard connected, !busy, !sessionsRefreshInFlight else { return }
+        sessionsRefreshInFlight = true
+        let version = generation; let device = deviceID
+        worker.async { [weak self] in guard let self else { return }
+            do {
+                let sessions = try self.core.sessions()
+                DispatchQueue.main.async {
+                    self.sessionsRefreshInFlight = false
+                    guard self.generation == version, self.connected, self.deviceID == device else { return }
+                    self.sessions = sessions; self.sessionSnapshots[device] = sessions
+                    if let selected = self.selected, sessions.first(where: { $0.id == selected })?.exited == true { self.status = "当前会话已关闭" }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.sessionsRefreshInFlight = false
+                    if self.generation == version { self.error = terminalError(error) }
+                }
+            }
+        }
     }
     func readHistory() {
         let version = generation

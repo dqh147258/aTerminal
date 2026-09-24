@@ -55,7 +55,6 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private lateinit var surface: HorizontalScrollView
     private lateinit var takeControl: CheckBox
     private lateinit var inputBox: LinearLayout
-    private lateinit var input: EditText
     private lateinit var store: PairingStore
     private lateinit var display: DisplayPreferences
     private var terminal: TerminalView? = null
@@ -73,22 +72,34 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private var restorePending = false
     private var connecting = false
     private var aiBusy = false
+    private var sessionRefreshBusy = false
+    private var refreshDrawer: (() -> Unit)? = null
+    private val drawerRefresh = object : Runnable {
+        override fun run() {
+            if (active && connected && overlay?.tag == "drawer") {
+                if (!drawerTab) refreshSessions()
+                ui.postDelayed(this, 3000)
+            }
+        }
+    }
     private lateinit var aiStatus: TextView
     private var edgeStartX = 0f
     private var edgeStartY = 0f
-    private val testMode get() = BuildConfig.TERMINAL_DEBUG && intent.getBooleanExtra("acceptance_test", false)
+    private val terminalTest get() = BuildConfig.TERMINAL_DEBUG && intent.getBooleanExtra("terminal_input_test", false)
+    private val testMode get() = BuildConfig.TERMINAL_DEBUG && (intent.getBooleanExtra("acceptance_test", false) || terminalTest)
     private val isolatedUi get() = BuildConfig.TERMINAL_DEBUG && intent.getBooleanExtra("isolated_ui", false)
-    private val connectionPreferences get() = getSharedPreferences(if (testMode || isolatedUi) "acceptance-connection" else "connection", MODE_PRIVATE)
+    private val connectionPreferences get() = getSharedPreferences(if (terminalTest) "terminal-input-connection" else if (testMode || isolatedUi) "acceptance-connection" else "connection", MODE_PRIVATE)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = Palette.background
         window.navigationBarColor = Palette.background
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-        store = PairingStore(this, if (testMode || isolatedUi) "acceptance-account" else "account")
-        display = DisplayPreferences(this, if (testMode || isolatedUi) "acceptance-display" else "display")
+        store = PairingStore(this, if (terminalTest) "terminal-input-account" else if (testMode || isolatedUi) "acceptance-account" else "account")
+        display = DisplayPreferences(this, if (terminalTest) "terminal-input-display" else if (testMode || isolatedUi) "acceptance-display" else "display")
         serverUrl = if (isolatedUi) "" else connectionPreferences.getString("server", "") ?: ""
         root = FrameLayout(this).apply {
+            isFocusableInTouchMode = true
             setBackgroundColor(Palette.background)
             setOnApplyWindowInsetsListener { view, insets ->
                 view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop,
@@ -218,7 +229,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             background = shape(Palette.surface, true)
             addView(iconButton(R.drawable.ic_sliders_horizontal, "终端设置") { settingsPanel() }); gap(6)
             addView(iconButton(R.drawable.ic_message_circle, "AI 对话") { openChat() }); gap(6)
-            addView(iconButton(R.drawable.ic_keyboard, "显示或隐藏终端输入") { toggleInput() })
+            addView(iconButton(R.drawable.ic_keyboard, "显示或隐藏终端键盘") { toggleInput() })
         }
         region.addView(tools, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.CENTER_VERTICAL).apply { marginEnd = dp(12) })
         workspace.grow(region)
@@ -230,20 +241,10 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         inputBox.addView(row().apply {
             fill(takeControl)
             addView(actionButton("历史") { terminalHistory() })
-            addView(iconButton(R.drawable.ic_x, "隐藏终端输入") { toggleInput(false) })
-        })
-        input = field("输入文字").apply {
-            isSingleLine = false; maxLines = 4; inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
-        }
-        inputBox.addView(row().apply {
-            fill(input)
-            addView(actionButton("发送") {
-                val text = input.text.toString()
-                if (enqueue { remote.sendText(text, false) }) input.setText("")
-            })
+            addView(iconButton(R.drawable.ic_x, "隐藏终端键盘") { toggleInput(false) })
         })
         val keys = row()
-        for ((name, key) in listOf("回车" to "enter", "Ctrl-C" to "ctrl_c", "Tab" to "tab", "Esc" to "escape", "↑" to "up", "↓" to "down", "←" to "left", "→" to "right")) {
+        for ((name, key) in listOf("回车" to "enter", "Tab" to "tab", "退格" to "backspace", "Ctrl-C" to "ctrl_c", "Esc" to "escape", "↑" to "up", "↓" to "down", "←" to "left", "→" to "right")) {
             keys.addView(actionButton(name) { enqueue { remote.sendKey(key) } })
         }
         inputBox.addView(HorizontalScrollView(this).apply { addView(keys) })
@@ -268,8 +269,8 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     }
     private fun persist() { val value = account.export(); if (value.isEmpty()) store.clear() else store.save(value) }
     private fun signedIn(name: String, server: String) {
-        accountName = name; serverUrl = server; chatStore = ChatStore(this, server, name)
-        memory = WorkspaceMemory(this, server, name); restorePending = true
+        accountName = name; serverUrl = server; chatStore = ChatStore(this, server, name, if (terminalTest) "terminal-input" else "")
+        memory = WorkspaceMemory(this, server, name, if (terminalTest) "terminal-input" else ""); restorePending = true
         (loginBox.parent as View).visibility = View.GONE; workspace.visibility = View.VISIBLE
         status.text = "$name · 选择在线 Desktop"
     }
@@ -300,15 +301,37 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             finally { persist() }
         }
     }
-    private fun refreshSessions() {
-        if (!connected) { notice("请先连接 Desktop"); return }
-        val version = generation
-        work { val list = remote.sessions(); post { if (generation == version) { sessions = list; uncertainSessions.removeAll { it.first == deviceId }; memory?.record(deviceId, list.associate { it.id to it.exited }); if (overlay?.tag == "drawer") openDrawer() } } }
+    private fun refreshSessions(manual: Boolean = false) {
+        if (!connected) { if (manual) notice("请先连接 Desktop"); return }
+        if (sessionRefreshBusy) return
+        sessionRefreshBusy = true
+        val version = generation; val device = deviceId
+        worker.execute {
+            try {
+                val list = remote.sessions()
+                post {
+                    sessionRefreshBusy = false
+                    if (generation == version && connected && deviceId == device) {
+                        sessions = list
+                        uncertainSessions.removeAll { it.first == device }
+                        memory?.record(device, list.associate { it.id to it.exited })
+                        updateSessionHeader()
+                        refreshDrawer?.invoke()
+                    }
+                }
+            } catch (e: Exception) { post { sessionRefreshBusy = false; if (manual && generation == version) notice(e.message ?: "刷新会话失败") } }
+        }
+    }
+    private fun updateSessionHeader() {
+        val session = sessions.firstOrNull { it.id == selected } ?: return
+        sessionTitle.text = session.cwd.substringAfterLast('/').ifEmpty { session.cwd }
+        sessionMeta.text = "$deviceName · ${session.cwd}"
     }
     private fun select(id: String, control: Boolean, chat: Boolean = false) {
-        closeOverlay(); generation++; val version = generation
+        val reopenKeyboard = control && inputBox.visibility == View.VISIBLE
+        closeOverlay(); toggleInput(false); generation++; val version = generation
         selected = null; controlled = false; takeControl.isChecked = false
-        input.setText(""); surface.removeAllViews(); terminal = null
+        surface.removeAllViews(); terminal = null
         status.text = "打开会话…"
         work {
             if (generation == version) {
@@ -316,17 +339,25 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 post { if (generation == version && active) {
                     selected = id; controlled = hasControl; takeControl.isChecked = controlled
                     memory?.remember(deviceId, id)
-                    val session = sessions.firstOrNull { it.id == id }
-                    sessionTitle.text = session?.cwd?.substringAfterLast('/')?.ifEmpty { session.cwd } ?: "终端"
-                    sessionMeta.text = "$deviceName · ${session?.cwd ?: id}"
-                    show(frame); if (chat) openChat()
+                    updateSessionHeader()
+                    if (sessions.none { it.id == id }) { sessionTitle.text = "终端"; sessionMeta.text = "$deviceName · $id" }
+                    show(frame)
+                    if (reopenKeyboard) terminal?.focusKeyboard()
+                    if (chat) openChat()
                 } }
             }
         }
     }
     private fun show(frame: RenderFrame) {
         empty.visibility = View.GONE
-        if (terminal == null) { terminal = TerminalView(this, frame).apply { zoom(this@MainActivity.display.fontSize / 15f) }; surface.addView(terminal) }
+        if (terminal == null) { terminal = TerminalView(this, frame).apply {
+            canType = { selected != null && controlled }
+            sendText = { text -> enqueue { remote.sendText(text, false) } }
+            sendKey = { key -> enqueue { remote.sendKey(key) } }
+            keyboardOpened = { inputBox.visibility = View.VISIBLE }
+            readOnlyTapped = { inputBox.visibility = View.VISIBLE; notice("请先接管输入") }
+            zoom(this@MainActivity.display.fontSize / 15f)
+        }; surface.addView(terminal) }
         else terminal!!.update(frame)
         dimensions.text = "${frame.cols} 列 × ${frame.rows} 行 · UTF-8"
     }
@@ -336,9 +367,9 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     }
     private fun toggleInput(show: Boolean = inputBox.visibility != View.VISIBLE) {
         inputBox.visibility = if (show) View.VISIBLE else View.GONE
-        if (!show) hideKeyboard()
+        if (show) terminal?.focusKeyboard() else hideKeyboard()
     }
-    private fun hideKeyboard() { (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(root.windowToken, 0); root.clearFocus() }
+    private fun hideKeyboard() { (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(root.windowToken, 0); root.requestFocus(); terminal?.clearFocus() }
 
     private fun createSession() {
         if (!connected) { accountPanel(); return }
@@ -364,7 +395,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 sessionBusy = true; val version = ++generation
                 val closingDevice = deviceId
                 uncertainSessions.add(closingDevice to session.id)
-                selected = null; controlled = false; takeControl.isChecked = false; input.setText("")
+                selected = null; controlled = false; takeControl.isChecked = false; toggleInput(false)
                 closeOverlay(); surface.removeAllViews(); terminal = null; empty.visibility = View.VISIBLE
                 status.text = "正在关闭会话"
                 worker.execute {
@@ -430,7 +461,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             } else {
                 list.addView(row().apply {
                     fill(label(if (connected) deviceName else "尚未连接设备", 12f, Palette.muted))
-                    addView(iconButton(R.drawable.ic_refresh_cw, "刷新会话") { refreshSessions() })
+                    addView(iconButton(R.drawable.ic_refresh_cw, "刷新会话") { refreshSessions(manual = true) })
                     addView(iconButton(R.drawable.ic_plus, "新建会话") { createSession() })
                 })
                 val matches = sessions.filter { it.cwd.contains(search, true) || it.id.contains(search, true) }
@@ -450,6 +481,12 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             setPadding(dp(12), dp(8), dp(12), dp(8)); fill(label(accountName.ifEmpty { "旧版配对" }))
             addView(iconButton(R.drawable.ic_user_round, "账号与设备") { accountPanel() })
         })
+        refreshDrawer = { if (overlay?.tag == "drawer") render() }
+        if (connected) {
+            if (!drawerTab) refreshSessions()
+            ui.removeCallbacks(drawerRefresh)
+            ui.postDelayed(drawerRefresh, 3000)
+        }
     }
 
     private fun accountPanel() {
@@ -490,7 +527,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private fun signedOut() {
         closeOverlay(); chatStore = null; memory = null; uncertainSessions.clear(); restorePending = false; accountName = ""; devices = emptyList(); deviceId = ""; deviceName = ""
         workspace.visibility = View.GONE; (loginBox.parent as View).visibility = View.VISIBLE
-        surface.removeAllViews(); terminal = null; input.setText(""); status.text = "已退出登录"
+        surface.removeAllViews(); terminal = null; toggleInput(false); status.text = "已退出登录"
     }
     private fun passwordDialog() {
         val box = column(16); val old = field("当前密码", true); val next = field("新密码（至少 12 字节）", true)
@@ -568,6 +605,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     }
     private fun closeOverlay() {
         assistant?.close(); assistant = null
+        refreshDrawer = null; ui.removeCallbacks(drawerRefresh)
         overlay?.let { root.removeView(it) }; overlay = null; overlayPanel = null
         workspace.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
         hideKeyboard()
@@ -622,7 +660,9 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         if (selected != null) try {
             remote.pollDisplay()?.let { batch ->
                 batch.update?.let { terminal?.apply(it); dimensions.text = "${it.cols} 列 × ${it.rows} 行 · UTF-8" }
+                val lostControl = controlled && !batch.controlled
                 controlled = batch.controlled; takeControl.isChecked = controlled
+                if (lostControl) toggleInput(false)
                 val next = (if (batch.path == "direct") "直连" else "中转") + if (controlled) " · 可输入" else " · 只读"
                 if (status.text.toString() != next) status.text = next
             }
@@ -631,9 +671,10 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     }
     private fun disconnect() {
         generation++; selected = null; controlled = false; connected = false; connecting = false; sessions = emptyList()
+        sessionRefreshBusy = false
         aiStatus.visibility = View.GONE
         takeControl.isChecked = false; connection.text = "未连接"; connection.setTextColor(Palette.muted)
-        input.setText(""); surface.removeAllViews(); terminal = null; empty.visibility = View.VISIBLE
+        toggleInput(false); surface.removeAllViews(); terminal = null; empty.visibility = View.VISIBLE
         sessionTitle.text = "AI Terminal"; sessionMeta.text = deviceName.ifEmpty { "选择 Desktop" }
         work { remote.disconnect() }
     }

@@ -6,16 +6,30 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.RenderNode
 import android.os.Build
+import android.text.InputType
+import android.view.KeyEvent
 import android.view.View
+import android.view.inputmethod.BaseInputConnection
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputMethodManager
 import uniffi.ai_terminal_mobile.*
 
 class TerminalView(context: Context, private var frame: RenderFrame) : View(context) {
+    var canType: () -> Boolean = { false }
+    var sendText: (String) -> Boolean = { false }
+    var sendKey: (String) -> Boolean = { false }
+    var keyboardOpened: () -> Unit = {}
+    var readOnlyTapped: () -> Unit = {}
     private var cells = frame.cells.toMutableList()
     private var sourceEpoch: ULong? = null
     private var sourceGeneration: ULong? = null
     init {
         frame = frame.copy(cells = cells)
-        contentDescription = "终端屏幕"
+        contentDescription = "终端屏幕，点击输入"
+        isFocusable = true
+        isFocusableInTouchMode = true
+        setOnClickListener { focusKeyboard() }
         setOnLongClickListener {
             val text = frame.cells.chunked(frame.cols.toInt()).joinToString("\n") { row -> row.filter { it.width > 0u }.joinToString("") { it.text } }
             (context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager)
@@ -23,6 +37,87 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
             true
         }
     }
+    fun focusKeyboard(): Boolean {
+        if (!canType()) { readOnlyTapped(); return false }
+        requestFocus()
+        (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+            .showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
+        keyboardOpened()
+        return true
+    }
+    override fun onCheckIsTextEditor() = true
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
+        outAttrs.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+        outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_ACTION_NONE
+        return object : BaseInputConnection(this@TerminalView, true) {
+            private var composing = ""
+            private var committing = false
+            override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean {
+                composing = text?.toString().orEmpty()
+                return super.setComposingText(text, newCursorPosition)
+            }
+            override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
+                committing = true
+                val updated = super.commitText(text, newCursorPosition)
+                committing = false
+                composing = ""
+                editable?.clear()
+                text?.toString()?.let(::committedText)
+                return updated
+            }
+            override fun finishComposingText(): Boolean {
+                val pending = composing
+                val updated = super.finishComposingText()
+                if (!committing && pending.isNotEmpty()) {
+                    composing = ""
+                    editable?.clear()
+                    committedText(pending)
+                }
+                return updated
+            }
+            override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
+                if (composing.isNotEmpty()) {
+                    val updated = super.deleteSurroundingText(beforeLength, afterLength)
+                    composing = editable?.toString().orEmpty()
+                    return updated
+                }
+                return sendKey("backspace")
+            }
+            override fun performEditorAction(actionCode: Int) = sendKey("enter")
+            override fun sendKeyEvent(event: KeyEvent): Boolean =
+                if (event.action == KeyEvent.ACTION_DOWN && terminalKey(event)) true
+                else event.action == KeyEvent.ACTION_UP || super.sendKeyEvent(event)
+        }
+    }
+    private fun committedText(value: String) {
+        val segment = StringBuilder()
+        fun flush() { if (segment.isNotEmpty()) { sendText(segment.toString()); segment.setLength(0) } }
+        for (character in value) {
+            if (character == '\n' || character == '\r') { flush(); sendKey("enter") }
+            else segment.append(character)
+        }
+        flush()
+    }
+    private fun terminalKey(event: KeyEvent): Boolean {
+        val key = when (event.keyCode) {
+            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> "enter"
+            KeyEvent.KEYCODE_TAB -> "tab"
+            KeyEvent.KEYCODE_DEL, KeyEvent.KEYCODE_FORWARD_DEL -> "backspace"
+            KeyEvent.KEYCODE_ESCAPE -> "escape"
+            KeyEvent.KEYCODE_DPAD_UP -> "up"
+            KeyEvent.KEYCODE_DPAD_DOWN -> "down"
+            KeyEvent.KEYCODE_DPAD_LEFT -> "left"
+            KeyEvent.KEYCODE_DPAD_RIGHT -> "right"
+            KeyEvent.KEYCODE_C -> if (event.isCtrlPressed) "ctrl_c" else null
+            else -> null
+        }
+        if (key != null) return sendKey(key)
+        if (event.isCtrlPressed || event.isAltPressed) return false
+        val codePoint = event.unicodeChar
+        if (codePoint > 0) return sendText(String(Character.toChars(codePoint)))
+        return false
+    }
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean = terminalKey(event) || super.onKeyDown(keyCode, event)
     private val rowNodes = mutableMapOf<Int, RenderNode>()
     private val changedRows = mutableSetOf<Int>()
     fun zoom(scale: Float) { rowNodes.clear(); paint.textSize = 15f * resources.displayMetrics.scaledDensity * scale; metrics.textSize = paint.textSize; cellWidth = metrics.measureText("M"); cellHeight = metrics.fontSpacing; baseline = -metrics.fontMetrics.top; requestLayout(); invalidate() }

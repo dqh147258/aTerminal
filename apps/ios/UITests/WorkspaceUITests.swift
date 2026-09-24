@@ -85,6 +85,9 @@ final class LiveServiceUITests: XCTestCase {
         let password: String
         let session: String
         let benchmarks: [Benchmark]
+        let caPem: String?
+        let createCommand: String?
+        let closeCommandPrefix: String?
         struct Benchmark: Decodable { let id: String; let cols: Int }
     }
     override func setUp() { continueAfterFailure = false }
@@ -117,15 +120,21 @@ final class LiveServiceUITests: XCTestCase {
         wait { control.exists && control.isEnabled }
         if control.value as? String == "0" { control.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap() }
         wait { control.value as? String == "1" }
-        if app.buttons["显示输入"].exists { app.buttons["显示输入"].tap() }
-        let draft = app.textFields["terminal.draft"]; draft.tap(); draft.typeText(command)
-        app.buttons["terminal.send"].tap(); app.buttons["terminal.key.enter"].tap()
-        if hideInput { app.buttons["隐藏输入"].tap() }
+        let screen = terminal(app); screen.tap()
+        XCTAssertTrue(app.buttons["隐藏键盘"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.textFields["terminal.input"].exists)
+        XCTAssertFalse(app.textFields["terminal.draft"].exists)
+        app.typeText(command)
+        XCTAssertTrue(app.keyboards.buttons["Return"].waitForExistence(timeout: 3))
+        app.keyboards.buttons["Return"].tap()
+        if hideInput { app.buttons["隐藏键盘"].tap() }
     }
     func testRealTerminalWorkflowAndPlaceholder() throws {
         guard let path = ProcessInfo.processInfo.environment["AI_TERMINAL_IOS_FIXTURE"], path.hasPrefix("/"), FileManager.default.fileExists(atPath: path) else { throw XCTSkip("Dedicated integration fixture not supplied") }
         let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
-        let app = XCUIApplication(); app.launchArguments = ["--service-test"]; app.launch()
+        let app = XCUIApplication(); app.launchArguments = ["--service-test"]
+        if let caPem = fixture.caPem { app.launchEnvironment["AI_TERMINAL_TEST_CA_PEM"] = caPem }
+        app.launch()
         if !app.textFields["login.server"].waitForExistence(timeout: 5) {
             if app.buttons["关闭设备"].exists { app.buttons["关闭设备"].tap() }
             XCTAssertTrue(app.buttons["workspace.drawer"].waitForExistence(timeout: 15)); app.buttons["workspace.drawer"].tap()
@@ -147,6 +156,35 @@ final class LiveServiceUITests: XCTestCase {
         wait { !self.hasLine(app, "AI_DEVICE_OK") && !self.hasLine(app, "AI_DEVICE_DONE") }
         command("printf '\\nIOS_PTY_OK\\n'", app: app)
         wait { self.hasLine(app, "IOS_PTY_OK") }
+        let tabDirectory = "/private/tmp/i" + String(fixture.session.prefix(8))
+        command("mkdir -p \(tabDirectory)", app: app)
+        command("echo IOS_TAB_OK > \(tabDirectory)/complete_marker", app: app)
+        command("echo IOS_TAB_READY", app: app)
+        wait { self.hasLine(app, "IOS_TAB_READY") }
+        terminal(app).tap()
+        app.typeText("cat \(tabDirectory)/comple")
+        app.buttons["terminal.key.tab"].tap(); app.buttons["terminal.key.enter"].tap()
+        wait { self.hasLine(app, "IOS_TAB_OK") }
+        command("rm -r \(tabDirectory)", app: app)
+        if let createCommand = fixture.createCommand, let closeCommandPrefix = fixture.closeCommandPrefix {
+            command(createCommand, app: app)
+            var externalID = ""
+            wait {
+                let text = self.text(app)
+                guard let range = text.range(of: "AIT_TERMINAL_TEST_SESSION=[0-9a-f]{16}", options: .regularExpression) else { return false }
+                externalID = String(text[range].suffix(16))
+                return true
+            }
+            app.buttons["workspace.drawer"].tap()
+            app.segmentedControls.buttons["终端"].tap()
+            wait { app.buttons["session.select." + externalID].exists }
+            app.buttons["关闭工作空间"].tap()
+            command(closeCommandPrefix + " " + externalID, app: app)
+            app.buttons["workspace.drawer"].tap()
+            app.segmentedControls.buttons["终端"].tap()
+            wait { !app.buttons["session.select." + externalID].exists }
+            app.buttons["关闭工作空间"].tap()
+        }
         capture("live-pty-120-columns")
         command("printf '%120s\\n' IOS_RIGHT_EDGE", app: app)
         wait { self.text(app).contains("IOS_RIGHT_EDGE") }
