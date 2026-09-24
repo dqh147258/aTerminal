@@ -1,5 +1,7 @@
 # 终端帧与并行输入结果
 
+后续增加了 Desktop 附着状态：两端在桌面附着期间仍能同时输入，桌面脱离后手机只读，重新附着再恢复；见 [终端附着状态](../0924-terminal-presence/RESULTS.md)。本页下方是此前并行输入验收时的行为记录。
+
 后续默认 Agent 已完成切换并补上瞬时坏帧恢复、外部关闭会话的正常退出；当前状态见 [默认 Agent 稳定性结果](../0924-default-agent-stability/RESULTS.md)。本页下方关于旧 Agent 仍运行的描述是当时的验收记录。
 
 `git status` 不再使终端会话报 `invalid or oversized terminal frame`。根因是 Desktop 终端引擎在 Git 输出中把制表符 `\t` 原样写入屏幕单元，而协议严格禁止控制字符；现将这种单元显示为空格，不放宽帧校验。隔离 Zsh PTY 复现时，坏单元位于第 6 行第 0 列，只出现在中间帧，最终截图检查原先无法发现。

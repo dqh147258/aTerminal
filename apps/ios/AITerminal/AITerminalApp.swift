@@ -21,6 +21,8 @@ final class TerminalModel: ObservableObject {
     @Published var deviceID = ""
     @Published var status = "登录后选择 Desktop"
     @Published var hasControl = false
+    @Published var desktopAttached = false
+    @Published var sessionExited = false
     @Published var history = ""
     @Published var historyLoading = false
     private var accountBusy = false
@@ -35,6 +37,12 @@ final class TerminalModel: ObservableObject {
     @Published private(set) var selected: String?
     var displayCore: RemoteTerminal? { selected == nil || !connected ? nil : core }
     var currentSession: RemoteSession? { sessions.first { $0.id == selected } }
+    var readOnlyReason: String {
+        if !connected { return "Desktop 已断开，只能查看当前画面" }
+        if sessionExited { return "会话已结束，只能查看历史" }
+        if !desktopAttached { return "Desktop 已离开；在桌面重新 --attach 后可输入" }
+        return "当前设备只有只读权限"
+    }
     var deviceName: String { devices.first { $0.id == deviceID }?.name ?? "Desktop" }
     var identity: ChatIdentity? { server.isEmpty || username.isEmpty ? nil : ChatIdentity(server: server, account: username) }
     var chatScope: ChatScope? {
@@ -47,6 +55,10 @@ final class TerminalModel: ObservableObject {
         if ProcessInfo.processInfo.arguments.contains("--login-fixture") { return }
         if ProcessInfo.processInfo.arguments.contains("--workspace-fixture") {
             fixture = true; status = "本地 UI 验证 · 未连接"
+            if ProcessInfo.processInfo.arguments.contains("--devices-fixture") {
+                devices = [AccountDevice(id: "online", name: "Online Desktop", platform: "desktop", online: true, current: false),
+                           AccountDevice(id: "offline", name: "Old iPhone", platform: "ios", online: false, current: false)]
+            }
             if ProcessInfo.processInfo.arguments.contains("--pending-connection-fixture") {
                 busy = true
                 let version = generation
@@ -155,7 +167,7 @@ final class TerminalModel: ObservableObject {
     }
     func connectDevice(_ id: String, sessionID: String? = nil) {
         guard !busy else { return }; busy = true; error = nil; connected = false; deviceID = id; sessions = []
-        generation += 1; let version = generation; selected = nil; screen = nil; hasControl = false; status = "连接中…"
+        generation += 1; let version = generation; selected = nil; screen = nil; hasControl = false; desktopAttached = false; sessionExited = false; status = "连接中…"
         worker.async { [weak self] in
             guard let self else { return }
             defer { do { try self.persist() } catch { self.failed(error, version: version) } }
@@ -195,7 +207,7 @@ final class TerminalModel: ObservableObject {
     }
     func legacyConnect(_ invitation: String) {
         guard !busy else { return }; busy = true; error = nil
-        generation += 1; let version = generation; selected = nil; hasControl = false
+        generation += 1; let version = generation; selected = nil; hasControl = false; desktopAttached = false; sessionExited = false
         worker.async { [weak self] in guard let self else { return }
             do {
                 guard self.account.username().isEmpty else { throw CocoaError(.userCancelled) }
@@ -216,7 +228,7 @@ final class TerminalModel: ObservableObject {
     }
     func select(_ id: String, control: Bool) {
         guard !busy else { return }; busy = true; error = nil
-        generation += 1; let version = generation; selected = nil; hasControl = false; screen = nil; history = ""
+        generation += 1; let version = generation; selected = nil; hasControl = false; desktopAttached = false; sessionExited = false; screen = nil; history = ""
         worker.async { [weak self] in guard let self else { return }
             do { let frame = try self.core.select(id: id, takeControl: control)
                 #if DEBUG
@@ -227,9 +239,10 @@ final class TerminalModel: ObservableObject {
                 }
                 #endif
                 let controlled = self.core.hasControl()
+                let attached = self.core.desktopAttached(); let exited = self.core.sessionExited()
                 DispatchQueue.main.async {
                     guard self.generation == version else { return }
-                    self.selected = id; self.screen = frame; self.hasControl = controlled; self.connected = true; self.busy = false
+                    self.selected = id; self.screen = frame; self.hasControl = controlled; self.desktopAttached = attached; self.sessionExited = exited; self.connected = true; self.busy = false
                     if let identity = self.identity, !self.deviceID.isEmpty, self.currentSession?.exited != true { RecentTerminal(device: self.deviceID, session: id).save(identity) }
                 }
             } catch { self.failed(error, version: version) }
@@ -240,15 +253,19 @@ final class TerminalModel: ObservableObject {
     func key(_ value: String) { os_signpost(.event, log: performanceLog, name: "InputEnqueue"); do { try core.sendKey(key: value) } catch { status = terminalError(error) } }
     func displayStatus(_ frame: RenderFrame?, _ path: String, _ controlled: Bool, _ error: String?) {
         if hasControl != controlled { hasControl = controlled }
+        let attached = core.desktopAttached(); let exited = core.sessionExited()
+        if desktopAttached != attached { desktopAttached = attached }
+        if sessionExited != exited { sessionExited = exited }
         if error != nil { connected = false; hasControl = false }
-        let next = error ?? ((path == "direct" ? "直连" : "中转") + (controlled ? " · 可输入" : " · 只读"))
+        let availability = exited ? "会话已结束 · 只读历史" : (!attached ? "Desktop 已离开 · 只读历史" : (controlled ? "可输入" : "只读权限"))
+        let next = error ?? ((path == "direct" ? "直连" : "中转") + " · " + availability)
         if status != next { status = next }
         #if DEBUG
         if let frame { recordTestStatus(frame, path: path) }
         #endif
     }
     func pause() {
-        generation += 1; busy = accountBusy; selected = nil; hasControl = false; connected = false; screen = nil; history = ""; historyLoading = false; status = "已断开，选择设备恢复连接"
+        generation += 1; busy = accountBusy; selected = nil; hasControl = false; desktopAttached = false; sessionExited = false; connected = false; screen = nil; history = ""; historyLoading = false; status = "已断开，选择设备恢复连接"
         worker.async { [weak self] in self?.channelState.device = ""; try? self?.core.disconnect() }
     }
     func create(_ path: String) {
@@ -265,7 +282,7 @@ final class TerminalModel: ObservableObject {
             DispatchQueue.main.async {
                 guard self.generation == version else { return }
                 if let identity = self.identity, RecentTerminal.load(identity)?.session == self.selected { RecentTerminal.remove(identity) }
-                self.generation += 1; self.selected = nil; self.screen = nil; self.hasControl = false; self.sessions = sessions; self.sessionSnapshots[self.deviceID] = sessions; self.busy = false; self.status = "会话已关闭"
+                self.generation += 1; self.selected = nil; self.screen = nil; self.hasControl = false; self.desktopAttached = false; self.sessionExited = false; self.sessions = sessions; self.sessionSnapshots[self.deviceID] = sessions; self.busy = false; self.status = "会话已关闭"
             }
         } catch { self.failed(error, version: version) } }
     }

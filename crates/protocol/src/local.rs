@@ -50,6 +50,9 @@ pub struct Request {
     /// Set only by the authenticated local bridge, never trusted from the network.
     #[prost(string, tag = "20")]
     pub account_scope: String,
+    /// Last Desktop attachment transition observed by a Watch subscriber.
+    #[prost(uint64, tag = "21")]
+    pub availability_epoch: u64,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, prost::Enumeration)]
 #[repr(i32)]
@@ -74,6 +77,8 @@ pub enum Operation {
     Assistant = 14,
     /// Local-only assistant broker input; fenced separately from manual input sequences.
     AssistantInput = 15,
+    /// Local Desktop CLI attachment; remote bridges must reject this operation.
+    AttachDesktop = 16,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -96,6 +101,10 @@ pub struct SessionInfo {
     pub next_input_seq: u64,
     #[prost(string, tag = "9")]
     pub error: String,
+    #[prost(bool, tag = "10")]
+    pub desktop_attached: bool,
+    #[prost(uint64, tag = "11")]
+    pub availability_epoch: u64,
 }
 
 #[derive(Clone, PartialEq, Message)]

@@ -200,6 +200,57 @@ pub(crate) fn open_private(path: &Path, append: bool) -> Result<fs::File> {
 }
 
 type Actor = SyncSender<(Request, SyncSender<Reply>)>;
+const DESKTOP_LEASE: Duration = Duration::from_secs(15);
+struct DesktopPresence {
+    clients: HashMap<u64, Instant>,
+    epoch: u64,
+}
+impl Default for DesktopPresence {
+    fn default() -> Self {
+        Self {
+            clients: HashMap::new(),
+            epoch: 1,
+        }
+    }
+}
+impl DesktopPresence {
+    fn active(&self) -> bool {
+        !self.clients.is_empty()
+    }
+    fn attach(&mut self, client: u64) -> Result<()> {
+        if client == 0 {
+            bail!("invalid Desktop client")
+        }
+        let was_active = self.active();
+        self.clients.insert(client, Instant::now());
+        if !was_active {
+            self.epoch += 1;
+        }
+        Ok(())
+    }
+    fn detach(&mut self, client: u64) {
+        let was_active = self.active();
+        self.clients.remove(&client);
+        if was_active && !self.active() {
+            self.epoch += 1;
+        }
+    }
+    fn touch(&mut self, client: u64) {
+        if let Some(last) = self.clients.get_mut(&client) {
+            *last = Instant::now();
+        }
+    }
+    fn expire(&mut self) -> bool {
+        let was_active = self.active();
+        self.clients
+            .retain(|_, last| last.elapsed() < DESKTOP_LEASE);
+        if was_active && !self.active() {
+            self.epoch += 1;
+            return true;
+        }
+        false
+    }
+}
 struct Host {
     account: Arc<crate::account::AccountManager>,
     assistant: crate::assistant::Assistant,
@@ -526,10 +577,12 @@ fn session_loop(
 ) {
     let mut control = Control::default();
     control.acquire(client).unwrap();
+    let mut presence = DesktopPresence::default();
     let mut info = SessionInfo {
         id,
         epoch: engine.snapshot().epoch,
         cwd: cwd.to_string_lossy().into_owned(),
+        availability_epoch: presence.epoch,
         ..SessionInfo::default()
     };
     let mut snapshots = VecDeque::from([engine.snapshot()]);
@@ -538,6 +591,10 @@ fn session_loop(
     let mut warned_invalid_frame = false;
     let mut watchers: Vec<(Request, SyncSender<Reply>, Instant)> = Vec::new();
     loop {
+        if presence.expire() {
+            info.desktop_attached = false;
+            info.availability_epoch = presence.epoch;
+        }
         let start = Instant::now();
         while !eof && start.elapsed() < Duration::from_millis(2) {
             match pty.output.try_recv() {
@@ -594,6 +651,7 @@ fn session_loop(
             let (req, _, deadline) = &watchers[index];
             if req.revision != snapshots.back().unwrap().revision
                 || req.control_epoch != control.metadata(req.client).1
+                || req.availability_epoch != info.availability_epoch
                 || info.exited
                 || Instant::now() >= *deadline
             {
@@ -604,6 +662,7 @@ fn session_loop(
                     &mut engine,
                     &pty,
                     &mut control,
+                    &mut presence,
                     &mut info,
                     &mut snapshots,
                 );
@@ -622,6 +681,7 @@ fn session_loop(
                     if req.session_epoch == info.epoch
                         && req.revision == snapshots.back().unwrap().revision
                         && req.control_epoch == control.metadata(req.client).1
+                        && req.availability_epoch == info.availability_epoch
                         && !info.exited
                     {
                         watchers.push((req, reply_tx, Instant::now() + Duration::from_secs(1)));
@@ -635,6 +695,7 @@ fn session_loop(
                     &mut engine,
                     &pty,
                     &mut control,
+                    &mut presence,
                     &mut info,
                     &mut snapshots,
                 );
@@ -655,6 +716,7 @@ fn handle_session(
     engine: &mut Engine,
     pty: &Session,
     control: &mut Control,
+    presence: &mut DesktopPresence,
     info: &mut SessionInfo,
     snapshots: &mut VecDeque<Snapshot>,
 ) -> Result<Reply> {
@@ -662,8 +724,16 @@ fn handle_session(
     if req.session_epoch != 0 && req.session_epoch != info.epoch {
         bail!("stale session epoch")
     }
+    presence.touch(req.client);
     let mut reply = Reply::default();
     match op {
+        Operation::AttachDesktop => {
+            if info.exited {
+                bail!("session exited")
+            }
+            control.acquire(req.client)?;
+            presence.attach(req.client)?;
+        }
         Operation::Acquire => {
             if info.exited {
                 bail!("session exited")
@@ -672,10 +742,14 @@ fn handle_session(
         }
         Operation::Detach => {
             control.release(req.client);
+            presence.detach(req.client);
         }
         Operation::AssistantInput => {
             if info.exited {
                 bail!("session exited");
+            }
+            if !presence.active() {
+                bail!("Desktop is detached; terminal is read-only")
             }
             control.check(req.client, req.control_epoch)?;
             if req.input_seq != control.metadata(req.client).2 {
@@ -688,6 +762,9 @@ fn handle_session(
             let started = Instant::now();
             if info.exited {
                 bail!("session exited")
+            }
+            if !presence.active() {
+                bail!("Desktop is detached; terminal is read-only")
             }
             let signature = req.encode_to_vec();
             if !control.input(req.client, req.control_epoch, req.input_seq, &signature)? {
@@ -705,6 +782,9 @@ fn handle_session(
             }
         }
         Operation::Resize => {
+            if !presence.active() {
+                bail!("Desktop is detached; terminal is read-only")
+            }
             control.check(req.client, req.control_epoch)?;
             let rows = u16::try_from(req.rows)?;
             let cols = u16::try_from(req.cols)?;
@@ -740,6 +820,8 @@ fn handle_session(
         _ => bail!("invalid session operation"),
     }
     (info.controller, info.control_epoch, info.next_input_seq) = control.metadata(req.client);
+    info.desktop_attached = presence.active();
+    info.availability_epoch = presence.epoch;
     reply.info = Some(info.clone());
     Ok(reply)
 }
@@ -815,7 +897,7 @@ fn encode_input(request: &Request, engine: &Engine) -> Result<Vec<u8>> {
 }
 
 #[cfg(test)]
-mod snapshot_tests {
+mod service_tests {
     use super::*;
 
     #[test]
@@ -859,5 +941,22 @@ mod snapshot_tests {
                 .to_string(),
             "session busy"
         );
+    }
+
+    #[test]
+    fn desktop_availability_changes_only_at_first_attach_and_last_detach() {
+        let mut presence = DesktopPresence::default();
+        assert!(!presence.active());
+        presence.attach(1).unwrap();
+        let attached_epoch = presence.epoch;
+        presence.attach(2).unwrap();
+        assert_eq!(presence.epoch, attached_epoch);
+        presence.detach(1);
+        assert!(presence.active());
+        assert_eq!(presence.epoch, attached_epoch);
+        presence.clients.insert(2, Instant::now() - DESKTOP_LEASE);
+        assert!(presence.expire());
+        assert!(!presence.active());
+        assert!(presence.epoch > attached_epoch);
     }
 }

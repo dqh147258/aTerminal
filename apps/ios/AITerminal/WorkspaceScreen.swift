@@ -133,7 +133,7 @@ struct WorkspaceScreen: View {
                     TerminalSurface(frame: frame, zoom: min(24, max(12, fontSize)) / 15, generation: model.generation, core: model.displayCore,
                         canInput: model.hasControl && model.connected && !model.busy, keyboardRequested: inputVisible,
                         onText: model.text, onKey: model.key, onKeyboardChange: { inputVisible = $0 },
-                        onReadOnly: { model.status = "当前设备只有只读权限" },
+                        onReadOnly: { model.status = model.readOnlyReason },
                         onStatus: model.displayStatus, onOpenWorkspace: { drawer = true })
                 } else {
                     VStack {
@@ -157,11 +157,11 @@ struct WorkspaceScreen: View {
             VStack(spacing: 0) {
                 HStack(spacing: 4) {
                     ToolButton(symbol: inputVisible ? "keyboard.chevron.compact.down" : "keyboard", label: inputVisible ? "隐藏键盘" : "打开终端键盘") {
-                        if model.hasControl { inputVisible.toggle() } else { model.status = "当前会话不可输入，请检查设备权限或连接" }
+                        if model.hasControl { inputVisible.toggle() } else { model.status = model.readOnlyReason }
                     }
                     Spacer(minLength: 4)
                     ToolButton(symbol: "clock", label: "终端历史") { model.readHistory(); panel = .terminalHistory }.disabled(model.selected == nil)
-                    ToolButton(symbol: "xmark.square", label: "关闭会话") { closing = true }.disabled(model.selected == nil || !model.connected || model.busy)
+                    ToolButton(symbol: "xmark.square", label: "关闭会话") { closing = true }.disabled(model.selected == nil || !model.connected || model.busy || model.sessionExited || !model.desktopAttached)
                 }
                 HStack(alignment: .top) {
                     Text(model.status).lineLimit(2)
@@ -215,7 +215,7 @@ struct WorkspaceScreen: View {
                                     VStack(alignment: .leading, spacing: 6) {
                                         Text(session.displayName).lineLimit(2)
                                         Text(session.cwd).font(.system(size: 12, design: .monospaced)).foregroundColor(WorkspaceStyle.muted).lineLimit(2)
-                                        Text(session.exited ? "已关闭 · \(session.exitCode)" : (model.connected ? "在线" : "待确认")).font(.caption).foregroundColor(!session.exited && model.connected ? WorkspaceStyle.success : WorkspaceStyle.muted)
+                                        Text(session.exited ? "已结束 · 只读" : (model.connected ? (session.desktopAttached ? "在线" : "桌面已离开 · 只读") : "待确认")).font(.caption).foregroundColor(!session.exited && session.desktopAttached && model.connected ? WorkspaceStyle.success : WorkspaceStyle.muted)
                                     }
                                     Spacer(minLength: 0)
                                     if session.id == model.selected { Image(systemName: "checkmark").foregroundColor(WorkspaceStyle.accent) }
@@ -305,12 +305,13 @@ struct WorkspaceScreen: View {
         }
     }
     private var devicesPanel: some View {
-        VStack(spacing: 0) {
+        let onlineDevices = model.devices.filter(\.online)
+        return VStack(spacing: 0) {
             HStack { Text(model.busy ? "正在连接" : "已登录设备").font(.subheadline).foregroundColor(WorkspaceStyle.muted); Spacer(); if model.busy { ProgressView() }; ToolButton(symbol: "arrow.clockwise", label: "刷新设备") { model.refreshDevices() }.disabled(model.busy) }.padding(.horizontal, 16)
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    if model.devices.isEmpty { EmptyWorkspace(symbol: "desktopcomputer", title: "暂无可用设备") }
-                    ForEach(model.devices, id: \.id) { device in
+                    if onlineDevices.isEmpty { EmptyWorkspace(symbol: "desktopcomputer", title: "暂无在线设备") }
+                    ForEach(onlineDevices, id: \.id) { device in
                         HStack(spacing: 12) {
                             Button {
                                 let target = continueScope?.device == device.id ? continueScope?.session : nil
@@ -319,10 +320,10 @@ struct WorkspaceScreen: View {
                             } label: {
                                 HStack(spacing: 12) {
                                     Image(systemName: device.platform == "desktop" ? "desktopcomputer" : "iphone").font(.title3).foregroundColor(WorkspaceStyle.accent)
-                                    VStack(alignment: .leading, spacing: 6) { Text(device.name).lineLimit(2); Text(device.current ? "本机" : (device.online ? "在线" : "离线")).font(.caption).foregroundColor(device.online ? WorkspaceStyle.success : WorkspaceStyle.muted) }
+                                    VStack(alignment: .leading, spacing: 6) { Text(device.name).lineLimit(2); Text(device.current ? "本机" : "在线").font(.caption).foregroundColor(WorkspaceStyle.success) }
                                     Spacer(minLength: 0)
                                 }.frame(maxWidth: .infinity, alignment: .leading).frame(minHeight: 56)
-                            }.buttonStyle(.plain).disabled(device.platform != "desktop" || !device.online || model.busy).accessibilityIdentifier("device.connect." + device.id)
+                            }.buttonStyle(.plain).disabled(device.platform != "desktop" || model.busy).accessibilityIdentifier("device.connect." + device.id)
                             ToolButton(symbol: "trash", label: "移除设备 \(device.name)") { revokeDevice = device }.disabled(model.busy)
                         }.padding(.horizontal, 20).padding(.vertical, 8)
                         Divider().padding(.leading, 20)

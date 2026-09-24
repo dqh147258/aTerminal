@@ -41,6 +41,7 @@ pub struct RemoteSession {
     pub cwd: String,
     pub exited: bool,
     pub exit_code: u32,
+    pub desktop_attached: bool,
 }
 struct State {
     replica: Replica,
@@ -95,10 +96,11 @@ impl State {
             }
             // Control metadata and screen revisions have independent ordering. A later input
             // reply can advance the control epoch before an earlier valid display delta arrives.
-            let current_metadata = self
-                .selected
-                .as_ref()
-                .is_none_or(|old| info.control_epoch >= old.control_epoch);
+            let current_metadata = self.selected.as_ref().is_none_or(|old| {
+                info.control_epoch > old.control_epoch
+                    || info.control_epoch == old.control_epoch
+                        && info.availability_epoch >= old.availability_epoch
+            });
             if current_metadata {
                 if let Some(old) = &self.selected
                     && (old.control_epoch != info.control_epoch || info.exited)
@@ -111,6 +113,7 @@ impl State {
                 {
                     info.next_input_seq = info.next_input_seq.max(old.next_input_seq);
                 }
+                self.controlled = info.controller != 0 && desktop_available(&info) && !info.exited;
                 self.selected = Some(info);
             }
         }
@@ -199,7 +202,7 @@ impl RemoteTerminal {
         let (tx, state) = self.shared()?;
         let mut state = state.lock().map_err(ffi)?;
         if !state.controlled || !state.connected {
-            return Err(ffi("read-only view; take control before typing"));
+            return Err(ffi("terminal is currently read-only"));
         }
         // Capture session identity, fencing epoch and sequence under one lock. Selection cannot
         // change between building the request and reserving its sequence number.
@@ -333,7 +336,8 @@ impl RemoteTerminal {
             }) {
                 Ok(reply) => reply.info,
                 Err(CoreError::InvalidFrame { reason })
-                    if reason.contains("read-only permission") =>
+                    if reason.contains("read-only permission")
+                        || reason.contains("session exited") =>
                 {
                     None
                 }
@@ -355,6 +359,7 @@ impl RemoteTerminal {
                 a.id == b.id
                     && a.control_epoch == b.control_epoch
                     && a.controller == b.controller
+                    && desktop_available(b)
                     && !b.exited
             });
         s.next_input = s.selected.as_ref().map_or(1, |s| s.next_input_seq);
@@ -402,6 +407,8 @@ impl RemoteTerminal {
         Ok(Some(DisplayBatch {
             update,
             controlled: state.connected && state.controlled,
+            desktop_attached: state.selected.as_ref().is_some_and(desktop_available),
+            exited: state.selected.as_ref().is_some_and(|info| info.exited),
             path: state.path.clone(),
         }))
     }
@@ -431,6 +438,18 @@ impl RemoteTerminal {
         self.shared().ok().is_some_and(|(_, s)| {
             let s = s.lock().unwrap();
             s.controlled && s.connected
+        })
+    }
+    pub fn desktop_attached(&self) -> bool {
+        self.shared().ok().is_some_and(|(_, s)| {
+            let s = s.lock().unwrap();
+            s.selected.as_ref().is_some_and(desktop_available)
+        })
+    }
+    pub fn session_exited(&self) -> bool {
+        self.shared().ok().is_some_and(|(_, s)| {
+            let s = s.lock().unwrap();
+            s.selected.as_ref().is_some_and(|info| info.exited)
         })
     }
     pub fn connection_path(&self) -> String {
@@ -495,12 +514,17 @@ impl RemoteTerminal {
     }
 }
 fn session(s: SessionInfo) -> RemoteSession {
+    let desktop_attached = desktop_available(&s);
     RemoteSession {
         id: s.id,
         cwd: s.cwd,
         exited: s.exited,
         exit_code: s.exit_code,
+        desktop_attached,
     }
+}
+fn desktop_available(info: &SessionInfo) -> bool {
+    info.availability_epoch == 0 || info.desktop_attached
 }
 fn take_update(s: &mut State) -> Result<Option<RenderUpdate>, CoreError> {
     if let Some(e) = &s.error {
@@ -810,6 +834,77 @@ mod tests {
             })
             .unwrap();
         assert_eq!(state.replica.state(), Some(&third));
+    }
+    #[test]
+    fn desktop_detach_and_reattach_update_input_without_reselecting() {
+        let mut state = State {
+            desired: Some("s".into()),
+            ..State::default()
+        };
+        let availability = |epoch, attached| SessionInfo {
+            id: "s".into(),
+            epoch: 1,
+            controller: 7,
+            control_epoch: 2,
+            availability_epoch: epoch,
+            desktop_attached: attached,
+            ..SessionInfo::default()
+        };
+        state
+            .apply(&Reply {
+                info: Some(availability(2, true)),
+                snapshot: Some(screen(1, 1, "a")),
+                ..Reply::default()
+            })
+            .unwrap();
+        assert!(state.controlled);
+        state
+            .apply(&Reply {
+                info: Some(availability(3, false)),
+                ..Reply::default()
+            })
+            .unwrap();
+        assert!(!state.controlled);
+        state
+            .apply(&Reply {
+                info: Some(availability(2, true)),
+                ..Reply::default()
+            })
+            .unwrap();
+        assert!(
+            !state.controlled,
+            "late attachment status restored stale input access"
+        );
+        state
+            .apply(&Reply {
+                info: Some(availability(4, true)),
+                ..Reply::default()
+            })
+            .unwrap();
+        assert!(state.controlled);
+    }
+    #[test]
+    fn old_agent_without_presence_metadata_keeps_existing_input_behavior() {
+        let mut state = State {
+            desired: Some("s".into()),
+            ..State::default()
+        };
+        let info = SessionInfo {
+            id: "s".into(),
+            epoch: 1,
+            controller: 7,
+            control_epoch: 2,
+            ..SessionInfo::default()
+        };
+        state
+            .apply(&Reply {
+                info: Some(info.clone()),
+                snapshot: Some(screen(1, 1, "a")),
+                ..Reply::default()
+            })
+            .unwrap();
+        assert!(desktop_available(&info));
+        assert!(state.controlled);
     }
     #[test]
     fn input_queue_backpressure_does_not_consume_sequence_or_change_session_identity() {

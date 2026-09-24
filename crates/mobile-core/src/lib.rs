@@ -70,6 +70,8 @@ pub struct RenderUpdate {
 pub struct DisplayBatch {
     pub update: Option<RenderUpdate>,
     pub controlled: bool,
+    pub desktop_attached: bool,
+    pub exited: bool,
     pub path: String,
 }
 pub(crate) fn render_cell(c: &ai_terminal_protocol::Cell) -> RenderCell {

@@ -42,7 +42,7 @@ target/debug/ai-terminal --state-dir "$PWD/.local/local-dev/agent" auth login \
   --ca-file deploy/secrets/lan-ca.crt
 ```
 
-密码在终端隐藏提示中输入，用上一节的 `show` 命令获取。当前本地部署的账号凭据存于 `.local/local-dev/config/ai-terminal/` 的私有文件中；`start-local-agent.sh` 显式选择该存储方式，避免无交互环境改用空的系统凭据库。Desktop 登录后 Agent 在后台运行；以下命令创建一条真实 Shell，按 **Ctrl+]** 脱离界面但保留 Shell 供手机连接：
+密码在终端隐藏提示中输入，用上一节的 `show` 命令获取。当前本地部署的账号凭据存于 `.local/local-dev/config/ai-terminal/` 的私有文件中；`start-local-agent.sh` 显式选择该存储方式，避免无交互环境改用空的系统凭据库。Desktop 登录后 Agent 在后台运行；以下命令创建一条真实 Shell。按 **Ctrl+]** 脱离桌面画面时 Shell 仍在运行，但新版 Agent 会让手机转为只读；再次执行 `--attach SESSION_ID` 才恢复两端输入。某些终端把这个原始按键报告为 Ctrl+5，CLI 同样识别：
 
 ```sh
 target/debug/ai-terminal --state-dir "$PWD/.local/local-dev/agent"
@@ -67,7 +67,7 @@ cargo +stable run -p ai-terminal -- --close SESSION_ID
 cargo +stable run -p ai-terminal -- --snapshot /tmp/screen.pb -- /bin/sh -c 'printf "hello\n"'
 ```
 
-`--watch` 只读，`--close` 结束指定 Shell；`--snapshot` 无交互地捕获程序结束时的 Protobuf 屏幕。Windows 上默认优先 `pwsh.exe`，也可在 `--` 后显式传入 Shell。不能无损接管其他程序早已启动的 Shell 内存状态。
+`--watch` 只读观察，不让手机恢复输入；`--attach` 回到同一 PTY、原目录和画面；`--close` 结束指定 Shell；`--snapshot` 无交互地捕获程序结束时的 Protobuf 屏幕。Shell 真正结束后，移动端可查看最后画面/已有滚动历史，但不能继续输入或复原进程状态。Windows 上默认优先 `pwsh.exe`，也可在 `--` 后显式传入 Shell。不能无损接管其他程序早已启动的 Shell 内存状态。
 
 ## 3. 在 Android x86 设备调试
 
@@ -81,7 +81,9 @@ adb -s 127.0.0.1:62001 shell am start -W -n dev.aiterminal.app/.MainActivity --e
 adb -s 127.0.0.1:62001 reverse --list
 ```
 
-反向映射列表应为空。App 登录页填服务地址 `https://192.168.0.36:7200`、测试用户名和 `show` 输出的密码；连接在线的 `Local Desktop`，选择 Shell。有写权限的设备打开会话后即可点击终端画面输入，直接输入 `printf 'LOCAL_DEBUG_OK\n'` 并按回车，确认终端显示独立输出。Desktop CLI 与手机可以同时输入并同步看到同一 PTY 画面，无需切换控制权。再执行 `git status`，确认客户端不退出、状态输出持续显示；特殊键工具栏的 Tab 应作用于当前 Shell 的补全，Ctrl-C 应中断当前前台命令。`acceptance_test` 使用独立的 App 偏好与账号存储，不覆盖普通 App 登录数据。
+反向映射列表应为空。App 登录页填服务地址 `https://192.168.0.36:7200`、测试用户名和 `show` 输出的密码；连接在线的 Desktop，选择已由桌面 CLI 附着的 Shell。有写权限的手机与 Desktop CLI 可同时输入并同步同一 PTY 画面，无需切换控制权。直接输入 `printf 'LOCAL_DEBUG_OK\n'` 并按回车，再执行 `git status`，确认仍能继续输入；Tab 应作用于当前 Shell 的补全，Ctrl-C 应中断前台命令。按 Ctrl+] 从桌面脱离后，手机保留画面与历史但停止输入；用 `--attach SESSION_ID` 恢复，确认手机也再次可输入。账号设备面板只展示在线设备，不自动撤销离线设备。`acceptance_test` 使用独立的 App 偏好与账号存储，不覆盖普通 App 登录数据。
+
+当前默认 `.local/local-dev/agent` 仍有用户 Shell，属于上一版正在运行的 Agent；重新编译不会热更新该进程。新版 App/CLI 对它保持旧输入行为的兼容，完整的“桌面脱离后手机只读”规则需要在这些 Shell 不再使用后重启默认 Agent。可先用独立私有状态目录和新 Agent 测试；不要为升级而直接结束正在工作的 Shell。
 
 这台机器的本地证书由私有 CA 签发。Debug 验收模式会读取上述 App 私有 CA 文件，让 Rust TLS 验证证书链及 IP 主机名；它**不会跳过 TLS 校验**。普通登录模式不读取该文件，当前 UI 也没有私有 CA 导入入口，因此不能把 Debug 测试通过解释为普通用户能直接登录这套自签证书服务。验收结束删除测试 CA：
 

@@ -35,7 +35,7 @@ SESSION_ID="$(python3 -c 'import json; print(json.load(open(".local/ios-lan/demo
 ./target/debug/ai-terminal --state-dir "$PWD/.local/ios-lan" --attach "$SESSION_ID" --watch
 ```
 
-去掉 `--watch` 即可从桌面同时输入，手机输入仍然可用；Ctrl+] 脱离客户端，Shell 继续运行。当前会话 ID 和连接地址保存在 `.local/ios-lan/demo.json`。
+去掉 `--watch` 即可从桌面附着并与手机同时输入；Ctrl+] 脱离后 Shell 继续运行，但新版 Agent 会把手机转为只读历史，重新 `--attach` 恢复输入。当前会话 ID 和连接地址保存在 `.local/ios-lan/demo.json`。
 
 ## 环境与重建
 

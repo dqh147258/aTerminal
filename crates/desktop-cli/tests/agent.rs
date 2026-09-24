@@ -56,6 +56,17 @@ fn host_with_model(model_url: Option<&str>) -> (Host, Client) {
         thread::sleep(Duration::from_millis(20));
     }
 }
+fn attach_desktop(client: &Client, id: &str) -> ai_terminal_protocol::local::SessionInfo {
+    client
+        .call(Request {
+            operation: Operation::AttachDesktop as i32,
+            session: id.into(),
+            ..Request::default()
+        })
+        .unwrap()
+        .info
+        .unwrap()
+}
 #[test]
 fn detach_retains_process_and_control_fences_duplicate_input() {
     let (mut host, client) = host();
@@ -83,6 +94,7 @@ fn detach_retains_process_and_control_fences_duplicate_input() {
         });
     let info = created.info.unwrap();
     let id = info.id.clone();
+    assert!(attach_desktop(&client, &id).desktop_attached);
     let input = Request {
         session: id.clone(),
         session_epoch: info.epoch,
@@ -104,6 +116,18 @@ fn detach_retains_process_and_control_fences_duplicate_input() {
             ..Request::default()
         })
         .unwrap();
+    assert!(
+        !client
+            .call(Request {
+                session: id.clone(),
+                operation: Operation::Poll as i32,
+                ..Request::default()
+            })
+            .unwrap()
+            .info
+            .unwrap()
+            .desktop_attached
+    );
     assert!(client.call(input.clone()).is_err());
     let second = Client::connect(&host.dir).unwrap();
     let acquired = second
@@ -117,9 +141,23 @@ fn detach_retains_process_and_control_fences_duplicate_input() {
         .unwrap();
     assert_eq!(acquired.epoch, info.epoch);
     assert!(!acquired.exited);
+    assert!(!acquired.desktop_attached);
     let mut stale = input;
     stale.input_seq = 2;
     assert!(client.call(stale).is_err());
+    assert!(
+        second
+            .call(Request {
+                session: id.clone(),
+                operation: Operation::Input as i32,
+                control_epoch: acquired.control_epoch,
+                input_seq: 1,
+                input: b"not yet".to_vec(),
+                ..Request::default()
+            })
+            .is_err()
+    );
+    attach_desktop(&second, &id);
     second
         .call(Request {
             session: id.clone(),
@@ -294,6 +332,8 @@ async fn encrypted_relay_reaches_the_same_pty_and_revocation_closes_it() {
         .unwrap();
     assert!(created.error.is_empty(), "{}", created.error);
     let info = created.info.unwrap();
+    assert!(!info.desktop_attached);
+    attach_desktop(&local, &info.id);
     remote
         .request(Request {
             session: info.id.clone(),
@@ -384,10 +424,12 @@ async fn mobile_core_reads_types_and_cannot_override_readonly_pair() {
     )
     .unwrap();
     let invitation = invite.export().unwrap();
+    let desktop = local.clone();
     let id = tokio::task::spawn_blocking(move || {
         let mobile = ai_terminal_mobile::RemoteTerminal::new();
         mobile.connect(invitation).unwrap();
         let session = mobile.create_session(String::new()).unwrap();
+        attach_desktop(&desktop, &session.id);
         mobile.select(session.id.clone(), true).unwrap();
         let request = r#"{"action":"send","request_id":"round-1","message":"explain"}"#.to_owned();
         let status: serde_json::Value = serde_json::from_str(
@@ -420,6 +462,50 @@ async fn mobile_core_reads_types_and_cannot_override_readonly_pair() {
             assert!(Instant::now() < until);
             thread::sleep(Duration::from_millis(30));
         }
+        desktop
+            .call(Request {
+                operation: Operation::Detach as i32,
+                session: session.id.clone(),
+                ..Request::default()
+            })
+            .unwrap();
+        let until_read_only = Instant::now() + Duration::from_secs(5);
+        while mobile.has_control() && Instant::now() < until_read_only {
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            !mobile.has_control(),
+            "Desktop detach did not make Mobile read-only"
+        );
+        assert!(!mobile.desktop_attached());
+        assert!(mobile.send_text("must not run".into(), true).is_err());
+        mobile.read_history().unwrap();
+        attach_desktop(&desktop, &session.id);
+        let until_resume = Instant::now() + Duration::from_secs(5);
+        while !mobile.has_control() && Instant::now() < until_resume {
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            mobile.has_control(),
+            "Desktop attach did not restore Mobile input"
+        );
+        mobile
+            .send_text("echo MOBILE_RESUMED".into(), true)
+            .unwrap();
+        let until_output = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(frame) = mobile.refresh().unwrap()
+                && has_output(
+                    frame.cells.iter().map(|c| c.text.as_str()),
+                    frame.cols as usize,
+                    "MOBILE_RESUMED",
+                )
+            {
+                break;
+            }
+            assert!(Instant::now() < until_output, "resumed output missing");
+            thread::sleep(Duration::from_millis(30));
+        }
         loop {
             let response: serde_json::Value = serde_json::from_str(
                 &mobile
@@ -445,6 +531,35 @@ async fn mobile_core_reads_types_and_cannot_override_readonly_pair() {
                 .assistant("missing-session".into(), r#"{"action":"status"}"#.into())
                 .is_err()
         );
+        mobile.send_text("exit".into(), true).unwrap();
+        let until_exit = Instant::now() + Duration::from_secs(5);
+        loop {
+            if desktop
+                .call(Request {
+                    operation: Operation::Poll as i32,
+                    session: session.id.clone(),
+                    ..Request::default()
+                })
+                .unwrap()
+                .info
+                .unwrap()
+                .exited
+            {
+                break;
+            }
+            assert!(Instant::now() < until_exit, "Shell did not exit");
+            thread::sleep(Duration::from_millis(20));
+        }
+        let final_screen = mobile.select(session.id.clone(), true).unwrap();
+        assert!(mobile.session_exited());
+        assert!(!mobile.has_control());
+        assert!(has_output(
+            final_screen.cells.iter().map(|cell| cell.text.as_str()),
+            final_screen.cols as usize,
+            "MOBILE_RESUMED"
+        ));
+        mobile.read_history().unwrap();
+        assert!(mobile.send_text("cannot execute".into(), true).is_err());
         mobile.disconnect().unwrap();
         session.id
     })
@@ -548,10 +663,12 @@ async fn assistant_inputs_once_monitors_real_pty_and_fences_stale_writes() {
         serde_json::to_vec(&pair).unwrap(),
     )
     .unwrap();
+    let desktop = local.clone();
     tokio::task::spawn_blocking(move || {
         let mobile = ai_terminal_mobile::RemoteTerminal::new();
         mobile.connect(invite.export().unwrap()).unwrap();
         let session = mobile.create_session(String::new()).unwrap();
+        attach_desktop(&desktop, &session.id);
         mobile.select(session.id.clone(), false).unwrap();
         let send = |id: &str, task: &str| serde_json::json!({"action":"send","request_id":id,"message":task,"allow_input":true,"monitor":true,"include_screen":true}).to_string();
         let call = |request: String| -> serde_json::Value {
@@ -668,6 +785,7 @@ async fn account_login_discovers_desktop_streams_input_and_revokes_active_connec
         .info
         .unwrap()
         .id;
+    attach_desktop(&local, &id);
     let selected = id.clone();
     tokio::task::spawn_blocking(move || {
         let account = ai_terminal_mobile::Account::new();
@@ -807,6 +925,7 @@ async fn stream_reorders_window_replays_ack_and_fences_stale_input() {
             break reply.info.unwrap();
         }
     };
+    attach_desktop(&local, &info.id);
     tokio::time::sleep(Duration::from_millis(100)).await;
     let first = Request {
         operation: Operation::Input as i32,

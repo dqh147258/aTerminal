@@ -126,6 +126,17 @@ class MobileWorkflowTest {
             input("printf 'GIT_STATUS_COMPLETED\\n'")
             waitFor("git status keeps the live PTY usable") { lines().any { it == "GIT_STATUS_COMPLETED" } }
             result.put("git_status_survived", true)
+            if (fixture.optBoolean("check_desktop_detach")) {
+                File(context.filesDir, "desktop-detach-ready").writeText(target)
+                waitFor("Desktop detach makes Mobile read-only") { get("controlled") == false && !(get("remote") as RemoteTerminal).desktopAttached() }
+                try { (get("remote") as RemoteTerminal).sendText("must not run", true); fail("Detached Desktop accepted Mobile input") }
+                catch (_: Exception) {}
+                (get("remote") as RemoteTerminal).readHistory()
+                result.put("desktop_detach_read_only", true)
+                File(context.filesDir, "desktop-detached").writeText(target)
+                waitFor("Desktop attach restores Mobile input") { get("controlled") == true && (get("remote") as RemoteTerminal).desktopAttached() }
+                result.put("desktop_reattach_restored_input", true)
+            }
             val desktopMarker = fixture.optString("desktop_marker")
             if (desktopMarker.isNotEmpty()) {
                 File(context.filesDir, "shared-input-ready").writeText(target)

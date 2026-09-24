@@ -103,6 +103,7 @@ pub(crate) async fn serve(
                     let info = result.info.as_ref().context("missing subscription info")?;
                     req.session_epoch = info.epoch;
                     req.control_epoch = info.control_epoch;
+                    req.availability_epoch = info.availability_epoch;
                     req.revision = result
                         .snapshot
                         .as_ref()
@@ -194,10 +195,11 @@ pub(crate) async fn serve(
                     if reply.snapshot.is_some()
                         || reply.delta.is_some()
                         || !reply.error.is_empty()
-                        || reply
-                            .info
-                            .as_ref()
-                            .is_some_and(|i| i.control_epoch != s.request.control_epoch || i.exited)
+                        || reply.info.as_ref().is_some_and(|i| {
+                            i.control_epoch != s.request.control_epoch
+                                || i.availability_epoch != s.request.availability_epoch
+                                || i.exited
+                        })
                     {
                         s.ended = !reply.error.is_empty()
                             || reply.info.as_ref().is_some_and(|info| info.exited);
@@ -211,6 +213,7 @@ pub(crate) async fn serve(
                             .unwrap_or(s.request.revision);
                         if let Some(info) = &reply.info {
                             s.request.control_epoch = info.control_epoch;
+                            s.request.availability_epoch = info.availability_epoch;
                         }
                         s.pending.push_back((
                             update_id,

@@ -76,6 +76,14 @@ final class WorkspaceUITests: XCTestCase {
         app.buttons["workspace.settings"].tap()
         XCTAssertTrue(app.staticTexts["文字大小"].exists)
     }
+    func testDevicePanelHidesOfflineDevices() {
+        let app = launch(["--workspace-fixture", "--devices-fixture"])
+        app.buttons["选择设备"].tap()
+        XCTAssertTrue(app.staticTexts["Online Desktop"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts["Old iPhone"].exists)
+        XCTAssertFalse(app.staticTexts["离线"].exists)
+        capture("online-devices-only")
+    }
 }
 
 final class LiveServiceUITests: XCTestCase {
@@ -87,6 +95,8 @@ final class LiveServiceUITests: XCTestCase {
         let benchmarks: [Benchmark]
         let caPem: String?
         let desktopName: String?
+        let desktopDetachReadyFile: String?
+        let desktopDetachedFile: String?
         let createCommand: String?
         let closeCommandPrefix: String?
         struct Benchmark: Decodable { let id: String; let cols: Int }
@@ -148,6 +158,7 @@ final class LiveServiceUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["login.error"].exists, app.staticTexts["login.error"].exists ? app.staticTexts["login.error"].label : "")
         if !desktop.exists { app.buttons["选择设备"].tap() }
         XCTAssertTrue(desktop.waitForExistence(timeout: 15))
+        XCTAssertFalse(app.staticTexts["离线"].exists)
         desktop.tap()
         XCTAssertTrue(terminal(app).waitForExistence(timeout: 20))
         select(fixture.session, app: app)
@@ -156,6 +167,15 @@ final class LiveServiceUITests: XCTestCase {
         wait { !self.hasLine(app, "AI_DEVICE_OK") && !self.hasLine(app, "AI_DEVICE_DONE") }
         command("printf '\\nIOS_PTY_OK\\n'", app: app)
         wait { self.hasLine(app, "IOS_PTY_OK") }
+        if let readyFile = fixture.desktopDetachReadyFile, let detachedFile = fixture.desktopDetachedFile {
+            try Data(fixture.session.utf8).write(to: URL(fileURLWithPath: readyFile), options: .atomic)
+            wait(15) { app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Desktop 已离开 · 只读历史")).firstMatch.exists }
+            XCTAssertTrue(self.hasLine(app, "IOS_PTY_OK"))
+            try Data(fixture.session.utf8).write(to: URL(fileURLWithPath: detachedFile), options: .atomic)
+            wait(15) { app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "可输入")).firstMatch.exists }
+            command("printf '\\nIOS_REATTACHED_OK\\n'", app: app)
+            wait { self.hasLine(app, "IOS_REATTACHED_OK") }
+        }
         command("git status", app: app)
         command("printf '\\nIOS_GIT_STATUS_OK\\n'", app: app)
         wait { self.hasLine(app, "IOS_GIT_STATUS_OK") }

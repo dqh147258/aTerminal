@@ -42,6 +42,26 @@ impl Drop for Attachment {
         });
     }
 }
+fn attach_desktop(client: &Client, id: &str, epoch: u64) -> Result<bool> {
+    match client.call(Request {
+        session: id.into(),
+        session_epoch: epoch,
+        operation: Operation::AttachDesktop as i32,
+        ..Request::default()
+    }) {
+        Ok(_) => Ok(false),
+        Err(error) if error.to_string() == "unknown operation" => {
+            client.call(Request {
+                session: id.into(),
+                session_epoch: epoch,
+                operation: Operation::Acquire as i32,
+                ..Request::default()
+            })?;
+            Ok(true)
+        }
+        Err(error) => Err(error),
+    }
+}
 pub fn run(args: Args) -> Result<u32> {
     let state_dir = args.state_dir.unwrap_or_else(default_state_dir);
     let client = if args.list || args.close.is_some() || args.history.is_some() || args.agent_stop {
@@ -94,19 +114,20 @@ pub fn run(args: Args) -> Result<u32> {
         bail!("attach requires a terminal; --snapshot captures non-interactively")
     }
     let (cols, rows) = terminal::size()?;
-    let reply = if let Some(id) = args.attach {
-        if !args.watch {
+    let (reply, legacy_agent) = if let Some(id) = args.attach {
+        let legacy = if args.watch {
+            false
+        } else {
+            attach_desktop(&client, &id, 0)?
+        };
+        (
             client.call(Request {
-                session: id.clone(),
-                operation: Operation::Acquire as i32,
+                session: id,
+                operation: Operation::Poll as i32,
                 ..Request::default()
-            })?;
-        }
-        client.call(Request {
-            session: id,
-            operation: Operation::Poll as i32,
-            ..Request::default()
-        })?
+            })?,
+            legacy,
+        )
     } else {
         let cwd = args.cwd.unwrap_or(std::env::current_dir()?);
         let cwd = cwd
@@ -121,14 +142,32 @@ pub fn run(args: Args) -> Result<u32> {
                     .map_err(|_| anyhow::anyhow!("command must be UTF-8"))
             })
             .collect::<Result<Vec<_>>>()?;
-        client.call(Request {
+        let created = client.call(Request {
             operation: Operation::Create as i32,
             cwd,
             command,
             rows: u32::from(rows),
             cols: u32::from(cols),
             ..Request::default()
-        })?
+        })?;
+        if args.watch {
+            (created, false)
+        } else {
+            let created_info = created
+                .info
+                .as_ref()
+                .context("Agent omitted session identity")?;
+            let legacy = attach_desktop(&client, &created_info.id, created_info.epoch)?;
+            (
+                client.call(Request {
+                    session: created_info.id.clone(),
+                    session_epoch: created_info.epoch,
+                    operation: Operation::Poll as i32,
+                    ..Request::default()
+                })?,
+                legacy,
+            )
+        }
     };
     let info = reply.info.context("Agent omitted session identity")?;
     let frame = reply.snapshot.context("Agent omitted initial snapshot")?;
@@ -162,6 +201,7 @@ pub fn run(args: Args) -> Result<u32> {
     let polling = client.clone();
     let shared = state.clone();
     let poll_id = id.clone();
+    let interactive = !args.watch;
     thread::spawn(move || {
         let mut replica = Replica::default();
         replica.snapshot(frame).expect("validated frame");
@@ -181,7 +221,38 @@ pub fn run(args: Args) -> Result<u32> {
             });
             match result {
                 Ok(reply) => match update(&mut replica, reply) {
-                    Ok(info) => {
+                    Ok(mut info) => {
+                        if interactive
+                            && !legacy_agent
+                            && !stop.load(Ordering::Acquire)
+                            && !info.desktop_attached
+                        {
+                            match polling.call(Request {
+                                session: poll_id.clone(),
+                                session_epoch: epoch,
+                                operation: Operation::AttachDesktop as i32,
+                                ..Request::default()
+                            }) {
+                                Ok(reply) => {
+                                    if let Some(attached) = reply.info {
+                                        info = attached
+                                    }
+                                }
+                                Err(e) => {
+                                    shared.lock().unwrap().error = Some(e.to_string());
+                                    break;
+                                }
+                            }
+                            if stop.load(Ordering::Acquire) {
+                                let _ = polling.call(Request {
+                                    session: poll_id.clone(),
+                                    session_epoch: epoch,
+                                    operation: Operation::Detach as i32,
+                                    ..Request::default()
+                                });
+                                break;
+                            }
+                        }
                         force_snapshot = false;
                         let mut view = shared.lock().unwrap();
                         let current = replica.state().unwrap();
@@ -236,8 +307,7 @@ pub fn run(args: Args) -> Result<u32> {
             if let Event::Resize(cols, rows) = &event {
                 renderer.viewport(*cols, *rows);
             }
-            if matches!(&event,Event::Key(k) if k.kind!=KeyEventKind::Release&&k.code==KeyCode::Char(']')&&k.modifiers.contains(KeyModifiers::CONTROL))
-            {
+            if is_detach_key(&event) {
                 return Ok(0);
             }
             if args.watch {
@@ -281,4 +351,26 @@ fn update(replica: &mut Replica, reply: Reply) -> Result<SessionInfo, ProtocolEr
         replica.delta(delta)?;
     }
     reply.info.ok_or(ProtocolError::Invalid)
+}
+fn is_detach_key(event: &Event) -> bool {
+    matches!(event, Event::Key(key)
+        if key.kind != KeyEventKind::Release
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char(']') | KeyCode::Char('5')))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyEvent;
+
+    #[test]
+    fn raw_ctrl_bracket_alias_detaches() {
+        for character in [']', '5'] {
+            assert!(is_detach_key(&Event::Key(KeyEvent::new(
+                KeyCode::Char(character),
+                KeyModifiers::CONTROL
+            ))));
+        }
+    }
 }

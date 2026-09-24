@@ -13,6 +13,8 @@ import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
+import android.widget.HorizontalScrollView
+import android.widget.ScrollView
 import uniffi.ai_terminal_mobile.*
 
 class TerminalView(context: Context, private var frame: RenderFrame) : View(context) {
@@ -24,6 +26,7 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
     private var cells = frame.cells.toMutableList()
     private var sourceEpoch: ULong? = null
     private var sourceGeneration: ULong? = null
+    private var followCursor = true
     init {
         frame = frame.copy(cells = cells)
         contentDescription = "终端屏幕，点击输入"
@@ -39,11 +42,38 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
     }
     fun focusKeyboard(): Boolean {
         if (!canType()) { readOnlyTapped(); return false }
+        followCursor = true
         requestFocus()
         (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
             .showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
         keyboardOpened()
+        revealCursor()
         return true
+    }
+    fun stopFollowingCursor() { followCursor = false }
+    private fun revealCursor() {
+        if (!followCursor || !frame.cursorVisible) return
+        post {
+            if (!followCursor || !frame.cursorVisible) return@post
+            val horizontal = parent as? HorizontalScrollView ?: return@post
+            val x = (frame.cursorCol.toInt() * cellWidth).toInt()
+            val y = (frame.cursorRow.toInt() * cellHeight).toInt()
+            val margin = (12 * resources.displayMetrics.density).toInt().coerceAtLeast((6 * cellWidth).toInt())
+            if (horizontal.width > 0) {
+                val right = x + cellWidth.toInt() + margin
+                val left = (x - margin).coerceAtLeast(0)
+                if (left < horizontal.scrollX) horizontal.scrollTo(left, horizontal.scrollY)
+                else if (right > horizontal.scrollX + horizontal.width) horizontal.scrollTo(right - horizontal.width, horizontal.scrollY)
+            }
+            val vertical = horizontal.parent as? ScrollView
+            if (vertical != null && vertical.height > 0) {
+                val verticalMargin = cellHeight.toInt()
+                val bottom = y + cellHeight.toInt() + verticalMargin
+                val top = (y - verticalMargin).coerceAtLeast(0)
+                if (top < vertical.scrollY) vertical.scrollTo(vertical.scrollX, top)
+                else if (bottom > vertical.scrollY + vertical.height) vertical.scrollTo(vertical.scrollX, bottom - vertical.height)
+            }
+        }
     }
     override fun onCheckIsTextEditor() = true
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
@@ -121,7 +151,7 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
     private val rowNodes = mutableMapOf<Int, RenderNode>()
     private val changedRows = mutableSetOf<Int>()
     fun zoom(scale: Float) { rowNodes.clear(); paint.textSize = 15f * resources.displayMetrics.scaledDensity * scale; metrics.textSize = paint.textSize; cellWidth = metrics.measureText("M"); cellHeight = metrics.fontSpacing; baseline = -metrics.fontMetrics.top; requestLayout(); invalidate() }
-    fun update(next: RenderFrame) { rowNodes.clear(); changedRows.clear(); val resized = next.rows != frame.rows || next.cols != frame.cols; cells = next.cells.toMutableList(); frame = next.copy(cells = cells); sourceEpoch = null; sourceGeneration = null; if (resized) requestLayout(); invalidate() }
+    fun update(next: RenderFrame) { rowNodes.clear(); changedRows.clear(); val resized = next.rows != frame.rows || next.cols != frame.cols; cells = next.cells.toMutableList(); frame = next.copy(cells = cells); sourceEpoch = null; sourceGeneration = null; if (resized) requestLayout(); invalidate(); revealCursor() }
     fun apply(update: RenderUpdate) {
         val resized = frame.rows != update.rows || frame.cols != update.cols
         val count = update.rows.toLong() * update.cols.toLong()
@@ -147,6 +177,7 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
         if (update.full || resized) { rowNodes.clear(); changedRows.clear() } else changedRows.addAll(dirty)
         if (resized) requestLayout()
         if (update.full) invalidate() else for (row in dirty) invalidate(0, (row * cellHeight).toInt(), width, kotlin.math.ceil((row + 1) * cellHeight.toDouble()).toInt())
+        revealCursor()
     }
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE; textSize = 15f * resources.displayMetrics.scaledDensity; fontFeatureSettings = "'liga' 0" }
     private val metrics = Paint(paint)
@@ -211,14 +242,23 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
         }
         paint.alpha = 255
         if (frame.cursorVisible) {
-            paint.color = 0xffeeeeee.toInt()
-            paint.style = if (frame.cursorShape == 3u) Paint.Style.STROKE else Paint.Style.FILL
             val x = frame.cursorCol.toInt() * cellWidth
             val y = frame.cursorRow.toInt() * cellHeight
+            val stroke = (2f * resources.displayMetrics.density).coerceAtLeast(2f)
+            paint.color = 0xffe5e5e5.toInt(); paint.style = Paint.Style.FILL; paint.alpha = 255
             when (frame.cursorShape) {
-                1u -> canvas.drawRect(x, y, x + 2f, y + cellHeight, paint)
-                2u -> canvas.drawRect(x, y + cellHeight - 2f, x + cellWidth, y + cellHeight, paint)
-                else -> { paint.alpha = 120; canvas.drawRect(x, y, x + cellWidth, y + cellHeight, paint) }
+                1u -> canvas.drawRect(x, y, x + stroke, y + cellHeight, paint)
+                2u -> canvas.drawRect(x, y + cellHeight - stroke, x + cellWidth, y + cellHeight, paint)
+                3u -> { paint.style = Paint.Style.STROKE; paint.strokeWidth = stroke; canvas.drawRect(x + stroke / 2, y + stroke / 2, x + cellWidth - stroke / 2, y + cellHeight - stroke / 2, paint) }
+                else -> {
+                    canvas.drawRect(x, y, x + cellWidth, y + cellHeight, paint)
+                    val cell = frame.cells[frame.cursorRow.toInt() * frame.cols.toInt() + frame.cursorCol.toInt()]
+                    if (cell.width > 0u && cell.text.isNotBlank()) {
+                        val saved = canvas.save(); canvas.clipRect(x, y, x + cellWidth, y + cellHeight)
+                        paint.color = 0xff101014.toInt(); paint.isFakeBoldText = false; paint.isUnderlineText = false; paint.isStrikeThruText = false; paint.textSkewX = 0f
+                        canvas.drawText(cell.text, x, y + baseline, paint); canvas.restoreToCount(saved)
+                    }
+                }
             }
             paint.alpha = 255
             paint.style = Paint.Style.FILL

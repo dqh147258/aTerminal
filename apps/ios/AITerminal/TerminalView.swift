@@ -35,16 +35,24 @@ struct TerminalSurface: UIViewRepresentable {
     }
     func updateUIView(_ scroll: UIScrollView, context: Context) {
         guard let view = scroll.viewWithTag(10) as? TerminalView else { return }
+        let coordinator = context.coordinator
         context.coordinator.core = core; context.coordinator.onStatus = onStatus
         context.coordinator.onOpenWorkspace = onOpenWorkspace
-        view.canInput = canInput; view.onText = onText; view.onKey = onKey
-        view.onKeyboardChange = onKeyboardChange; view.onReadOnly = onReadOnly
+        view.canInput = canInput
+        view.onText = { text in coordinator.followCursor = true; coordinator.revealCursor(); return onText?(text) ?? false }
+        view.onKey = { key in coordinator.followCursor = true; coordinator.revealCursor(); onKey?(key) }
+        view.onKeyboardChange = { open in
+            onKeyboardChange?(open)
+            if open { coordinator.followCursor = true; coordinator.revealCursor() }
+        }
+        view.onReadOnly = onReadOnly
         if keyboardRequested && canInput { view.focusKeyboard() }
         else if !keyboardRequested || !canInput { view.hideKeyboard() }
         if view.generation != generation { view.generation = generation; view.screen = frame }
         if view.zoom != zoom { view.zoom = zoom }
         let size = view.intrinsicContentSize
         if view.frame.size != size { view.frame = CGRect(origin: .zero, size: size); scroll.contentSize = size }
+        coordinator.revealCursor()
         context.coordinator.updateTestMetrics()
     }
     static func dismantleUIView(_ view: UIScrollView, coordinator: Coordinator) { coordinator.link?.invalidate(); coordinator.link = nil }
@@ -55,7 +63,14 @@ struct TerminalSurface: UIViewRepresentable {
         var onStatus: ((RenderFrame?, String, Bool, String?) -> Void)?
         var onOpenWorkspace: (() -> Void)?
         private var edgeStart: CGFloat?
+        var followCursor = true
         func scrollViewDidScroll(_ scrollView: UIScrollView) { updateTestMetrics() }
+        func revealCursor() {
+            guard followCursor, let scroll, scroll.bounds.width > 0, let cursor = view?.cursorRect else { return }
+            let visible = CGRect(origin: scroll.contentOffset, size: scroll.bounds.size)
+            let target = cursor.insetBy(dx: -max(12, cursor.width * 6), dy: -max(8, cursor.height))
+            if !visible.contains(target) { scroll.scrollRectToVisible(target, animated: false) }
+        }
         func updateTestMetrics() {
             #if DEBUG
             guard WorkspacePreferences.serviceTest, let scroll, let view, let screen = view.screen else { return }
@@ -65,7 +80,10 @@ struct TerminalSurface: UIViewRepresentable {
         }
         @objc func panned(_ gesture: UIPanGestureRecognizer) {
             guard let window = scroll?.window else { return }
-            if gesture.state == .began { edgeStart = gesture.location(in: window).x - gesture.translation(in: window).x }
+            if gesture.state == .began {
+                edgeStart = gesture.location(in: window).x - gesture.translation(in: window).x
+                if (edgeStart ?? 0) >= 24 { followCursor = false }
+            }
             if gesture.state == .ended {
                 if let start = edgeStart, start < 24, gesture.translation(in: window).x > 60 { onOpenWorkspace?() }
                 edgeStart = nil
@@ -74,6 +92,8 @@ struct TerminalSurface: UIViewRepresentable {
         var link: CADisplayLink?
         private var lastPath = ""
         private var lastControl = false
+        private var lastDesktopAttached = false
+        private var lastExited = false
         func start() { link = CADisplayLink(target: self, selector: #selector(tick)); link?.preferredFramesPerSecond = 60; link?.add(to: .main, forMode: .common) }
         @objc func tick() {
             guard let core, let view else { return }
@@ -82,9 +102,14 @@ struct TerminalSurface: UIViewRepresentable {
                 if let update { view.apply(update) }
                 let size = view.intrinsicContentSize
                 if view.frame.size != size { view.frame.size = size; scroll?.contentSize = size }
+                if update != nil { revealCursor() }
                 updateTestMetrics()
                 let path = core.connectionPath(); let control = core.hasControl()
-                if update != nil || path != lastPath || control != lastControl { lastPath = path; lastControl = control; onStatus?(view.screen, path, control, nil) }
+                let desktopAttached = core.desktopAttached(); let exited = core.sessionExited()
+                if update != nil || path != lastPath || control != lastControl || desktopAttached != lastDesktopAttached || exited != lastExited {
+                    lastPath = path; lastControl = control; lastDesktopAttached = desktopAttached; lastExited = exited
+                    onStatus?(view.screen, path, control, nil)
+                }
             } catch { onStatus?(nil, "offline", false, terminalError(error)); link?.invalidate() }
         }
     }
@@ -116,7 +141,7 @@ private final class TerminalInputField: UITextField {
 
 final class TerminalView: UIView, UIContextMenuInteractionDelegate, UITextFieldDelegate {
     private let performanceLog = OSLog(subsystem: "dev.aiterminal", category: .pointsOfInterest)
-    var canInput = false
+    var canInput = false { didSet { screenElement.accessibilityLabel = canInput ? "终端画面，点击输入" : "终端画面，只读" } }
     var onText: ((String) -> Bool)?
     var onKey: ((String) -> Void)?
     var onKeyboardChange: ((Bool) -> Void)?
@@ -238,6 +263,11 @@ final class TerminalView: UIView, UIContextMenuInteractionDelegate, UITextFieldD
         guard let screen else { return .zero }
         return CGSize(width: CGFloat(screen.cols) * cellWidth, height: CGFloat(screen.rows) * font.lineHeight)
     }
+    var cursorRect: CGRect? {
+        guard let screen, screen.cursorVisible else { return nil }
+        return CGRect(x: CGFloat(screen.cursorCol) * cellWidth, y: CGFloat(screen.cursorRow) * font.lineHeight,
+                      width: cellWidth, height: font.lineHeight)
+    }
     override func draw(_ rect: CGRect) {
         os_signpost(.begin, log: performanceLog, name: "TerminalDraw")
         defer { os_signpost(.end, log: performanceLog, name: "TerminalDraw") }
@@ -275,16 +305,24 @@ final class TerminalView: UIView, UIContextMenuInteractionDelegate, UITextFieldD
                 context.restoreGState()
             }
         }
-        if screen.cursorVisible {
-            let x = CGFloat(screen.cursorCol) * cellWidth
-            let y = CGFloat(screen.cursorRow) * font.lineHeight
-            let box = CGRect(x: x, y: y, width: cellWidth, height: font.lineHeight)
-            UIColor.white.withAlphaComponent(0.47).setFill()
+        if let box = cursorRect {
+            let x = box.minX; let y = box.minY
+            let stroke: CGFloat = 2
+            UIColor.white.withAlphaComponent(0.92).setFill()
             switch screen.cursorShape {
-            case 1: context.fill(CGRect(x: x, y: y, width: 2, height: font.lineHeight))
-            case 2: context.fill(CGRect(x: x, y: y + font.lineHeight - 2, width: cellWidth, height: 2))
-            case 3: UIColor.white.setStroke(); context.stroke(box)
-            default: context.fill(box)
+            case 1: context.fill(CGRect(x: x, y: y, width: stroke, height: font.lineHeight))
+            case 2: context.fill(CGRect(x: x, y: box.maxY - stroke, width: cellWidth, height: stroke))
+            case 3: UIColor.white.setStroke(); context.setLineWidth(stroke); context.stroke(box.insetBy(dx: stroke / 2, dy: stroke / 2))
+            default:
+                context.fill(box)
+                let cell = screen.cells[Int(screen.cursorRow * screen.cols + screen.cursorCol)]
+                if cell.width > 0 && !cell.text.trimmingCharacters(in: .whitespaces).isEmpty {
+                    context.saveGState(); context.clip(to: box)
+                    var style = textAttributes(cell)
+                    style[.foregroundColor] = UIColor(red: 16/255, green: 16/255, blue: 20/255, alpha: 1)
+                    (cell.text as NSString).draw(at: box.origin, withAttributes: style)
+                    context.restoreGState()
+                }
             }
         }
     }

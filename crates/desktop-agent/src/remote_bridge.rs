@@ -155,6 +155,7 @@ pub(crate) fn authorize(read_only: bool, request: &Request) -> Result<()> {
             | Operation::Watch
             | Operation::Streaming
             | Operation::AssistantInput
+            | Operation::AttachDesktop
     ) {
         bail!("remote clients cannot stop the desktop Agent")
     }
@@ -201,6 +202,7 @@ mod tests {
         for operation in [
             Operation::Input,
             Operation::Acquire,
+            Operation::AttachDesktop,
             Operation::Create,
             Operation::Resize,
             Operation::Close,

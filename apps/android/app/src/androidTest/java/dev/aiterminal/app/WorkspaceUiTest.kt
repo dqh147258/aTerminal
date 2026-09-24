@@ -229,7 +229,7 @@ class WorkspaceUiTest {
             launch().use { scenario -> scenario.onActivity { activity ->
                 fun set(name: String, value: Any) { MainActivity::class.java.getDeclaredField(name).apply { isAccessible = true }.set(activity, value) }
                 set("memory", memory); set("connected", true); set("deviceId", "device")
-                set("sessions", listOf(uniffi.ai_terminal_mobile.RemoteSession("session", "/test", false, 0u)))
+                set("sessions", listOf(uniffi.ai_terminal_mobile.RemoteSession("session", "/test", false, 0u, true)))
                 memory.record("device", mapOf("session" to false))
                 val status = MainActivity::class.java.getDeclaredMethod("sessionAvailability", String::class.java, String::class.java).apply { isAccessible = true }
                 assertEquals("在线", status.invoke(activity, "device", "session"))
@@ -241,5 +241,21 @@ class WorkspaceUiTest {
                 assertEquals("待确认", status.invoke(activity, "unqueried-device", "session"))
             } }
         } finally { memory.clear() }
+    }
+
+    @Test fun accountPanelShowsOnlineDevicesWithoutStaleOfflineRows() {
+        launch(false).use { scenario -> scenario.onActivity { activity ->
+            fun set(name: String, value: Any) { MainActivity::class.java.getDeclaredField(name).apply { isAccessible = true }.set(activity, value) }
+            set("accountName", "fixture")
+            set("devices", listOf(
+                uniffi.ai_terminal_mobile.AccountDevice("online", "Online Desktop", "desktop", true, false),
+                uniffi.ai_terminal_mobile.AccountDevice("offline", "Old iPhone", "ios", false, false)
+            ))
+            MainActivity::class.java.getDeclaredMethod("accountPanel").apply { isAccessible = true }.invoke(activity)
+            val labels = all(activity.window.decorView).filterIsInstance<TextView>().filter { it.isShown }.map { it.text.toString() }
+            assertTrue(labels.contains("Online Desktop"))
+            assertFalse(labels.contains("Old iPhone"))
+            assertFalse(labels.contains("离线"))
+        } }
     }
 }
