@@ -1,6 +1,6 @@
 # 在线设备与终端附着状态
 
-- Status: In progress
+- Status: Completed
 - Updated: 2026-09-24
 
 ## 目标与范围
@@ -20,6 +20,8 @@ Android/iOS 账号设备列表只显示在线设备；Desktop CLI 从会话脱�
 3. Android/iOS 允许选择已退出会话查看最后画面和历史，清晰显示 Desktop 已离开/会话已结束/只读配对；桌面重新附着后恢复输入。
 4. 光标采用清晰块/线/下划线样式，输入时确保光标进入可视区域；用户手动滚动后停止自动跟随。保留原 24 位色与现有样式解析，不把宿主 Terminal 主题硬编码到 App。
 5. 构建与自动化测试后，使用独立 Agent 和真实本地 Server、Android x86/iOS 模拟器验证；不在测试前关闭默认 Agent 的用户 Shell。
+
+执行完成：新版功能在独立在线 Agent `Local Desktop 新版` 可用，旧默认 Agent 的两条用户 Shell 保留，客户端已做旧 Agent 兼容。Rust/iOS 真服务验收通过；Android 构建和 UI 测试通过，真服务流程因 Nox 内核 panic 和 SDK AVD `offline` 未能完成，恢复设备后的步骤见 `HANDOFF.md`。宿主 Terminal 主题继承按用户允许的范围暂缓，详见 `RESULTS.md`。
 
 ## 验证
 

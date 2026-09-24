@@ -85,6 +85,14 @@ adb -s 127.0.0.1:62001 reverse --list
 
 当前默认 `.local/local-dev/agent` 仍有用户 Shell，属于上一版正在运行的 Agent；重新编译不会热更新该进程。新版 App/CLI 对它保持旧输入行为的兼容，完整的“桌面脱离后手机只读”规则需要在这些 Shell 不再使用后重启默认 Agent。可先用独立私有状态目录和新 Agent 测试；不要为升级而直接结束正在工作的 Shell。
 
+本机已有在线的 `Local Desktop 新版`，其独立 Agent 使用 `.local/local-dev/agent-next`。手机选择这个设备；Desktop 运行以下命令附着预置会话，手机会自动从只读恢复可输入：
+
+```sh
+target/debug/ai-terminal --state-dir "$PWD/.local/local-dev/agent-next" --attach 54d6f93383cbc8e7
+```
+
+重启 Mac 后先用 `AI_TERMINAL_CREDENTIAL_STORE=file XDG_CONFIG_HOME="$PWD/.local/local-dev/config-next" target/debug/ai-terminal --state-dir "$PWD/.local/local-dev/agent-next" auth status` 启动该独立 Agent，再运行 `--attach`。它和默认 `Local Desktop` 是两台不同的账号设备，不能用旧会话 ID 附着到新版 Agent。
+
 这台机器的本地证书由私有 CA 签发。Debug 验收模式会读取上述 App 私有 CA 文件，让 Rust TLS 验证证书链及 IP 主机名；它**不会跳过 TLS 校验**。普通登录模式不读取该文件，当前 UI 也没有私有 CA 导入入口，因此不能把 Debug 测试通过解释为普通用户能直接登录这套自签证书服务。验收结束删除测试 CA：
 
 ```sh
@@ -154,3 +162,5 @@ lsof -nP -iTCP:7200-7201 -sTCP:LISTEN
 `--agent-stop` 会结束该 Agent 的所有 Shell；如果只想暂停手机远程访问而保留本地 Shell，执行 `auth logout` 后停在这里即可。Admin 与 Server 是同一服务，Compose `stop` 后 Admin 页面也会关闭。确认 `ps -a` 中两个容器均为 `Exited`，且 `lsof` 没有 7200/7201 监听；再次启动从第 1 步开始。Compose `stop` 保留测试账号、数据库卷、证书和管理员令牌；不要对持久的 `ai-terminal-dev` 项目执行 `down -v`。测试账号密码或 Admin 令牌如需轮换，应在 Admin 页面操作，并同步更新本机私有账号文件。若另外运行了 `scripts/run-ios-lan.py`，其模拟器和独立 Agent 可用 `python3 scripts/stop-local.py` 一并关闭；该脚本也会停止同一组 Docker 容器。
 
 若仍使用先前的 `Terminal Fix Desktop` 独立测试 Agent，确认其中的 Shell 都不再需要后，另行运行 `target/debug/ai-terminal --state-dir "$PWD/.local/shared-input-test/agent" auth logout` 和同一路径的 `--agent-stop`；不要把它与默认 `.local/local-dev/agent` 的关闭命令混用。
+
+关闭 `Local Desktop 新版` 时，先确认 `54d6f93383cbc8e7` 及该 Agent 的其它 Shell 都不再需要，然后分别对 `.local/local-dev/agent-next` 执行 `auth logout` 与 `--agent-stop`；这些命令不会停止默认 `.local/local-dev/agent`。

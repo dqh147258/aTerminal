@@ -4,7 +4,7 @@ Android/iOS 的账号设备面板现在只显示 Server 报告为在线的设备
 
 新版 Agent 由本机 CLI 的专用附着操作维护 Desktop 活跃状态。按 Ctrl+] 脱离后，PTY、工作目录和已有画面仍在，但手机只读；Desktop `--attach SESSION_ID` 返回同一 PTY 后手机自动恢复输入。原始 Ctrl+] 字节在本机 crossterm 中被报告为 Ctrl+5，CLI 现兼容这个等价键。异常终止时，最多 15 秒后附着租约过期并变只读。Shell 真正退出时，手机仍可打开最后画面与现有滚动历史，但不能继续输入或复原进程。
 
-现有默认 `.local/local-dev/agent` 还在运行旧 Agent，且仍有两条用户 Shell `84751f6b26645d1d`、`8df358908a56eb55`。新版 CLI 在这个旧 Agent 上自动回退到旧附着操作；新版 App 把缺少附着状态字段的旧 Agent 视作旧行为，因此两条会话仍可使用，但“桌面脱离后手机只读”只在新版 Agent 上生效。已将这两条会话最后有效画面和滚动历史保存到私有 `.local/local-dev/presence-preupgrade-20260924/`，没有结束它们。将新规则部署到默认 `Local Desktop` 必须重启 Agent，这会结束两条仍可用的 Shell，归档不能复活其进程；待用户决定后再切换。隔离的新版 `Presence Test Desktop` Agent 用于真实验收，测试 Shell 均已关闭，账号已退出、Agent 已停止，四条测试创建的离线 Probe 设备记录也已撤销。
+现有默认 `.local/local-dev/agent` 还在运行旧 Agent，且仍有两条用户 Shell `84751f6b26645d1d`、`8df358908a56eb55`。新版 CLI 在这个旧 Agent 上自动回退到旧附着操作；新版 App 把缺少附着状态字段的旧 Agent 视作旧行为，因此两条会话仍可使用，但“桌面脱离后手机只读”只在新版 Agent 上生效。已将这两条会话最后有效画面和滚动历史保存到私有 `.local/local-dev/presence-preupgrade-20260924/`，没有结束它们。将新规则部署到默认 `Local Desktop` 必须重启 Agent，这会结束两条仍可用的 Shell，归档不能复活其进程。为立即使用新规则，另在 `.local/local-dev/agent-next` 启动在线设备 `Local Desktop 新版`，预置项目根目录 Shell `54d6f93383cbc8e7`；它当前正常运行但未附着，手机因此只读，Desktop 用 `--attach 54d6f93383cbc8e7` 后恢复两端输入。隔离的 `Presence Test Desktop` 测试 Agent 已退出并停止，测试 Shell 均已关闭，四条测试创建的离线 Probe 设备记录也已撤销。
 
 | 验证 | 结果 |
 | --- | --- |

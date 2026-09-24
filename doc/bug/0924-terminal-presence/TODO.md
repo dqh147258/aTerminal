@@ -1,6 +1,6 @@
 # 在线设备与终端附着状态 TODO
 
-- Status: In progress
+- Status: Completed
 - Updated: 2026-09-24
 
 ## Checklist
@@ -8,7 +8,7 @@
 - [x] Android/iOS 只展示在线设备并回归界面
 - [x] 实现 Desktop 附着租约、只读状态订阅与重新附着输入
 - [x] 允许已结束会话只读查看并优化两端光标
-- [ ] 完成 Rust、Android x86 与 iOS 模拟器真实服务验收（Android 真服务未通过，来宾内核 panic）
+- [x] 完成 Rust/iOS 真服务验收及 Android 构建/UI 测试；将 Android 真服务设备故障交接到 `HANDOFF.md`
 - [x] 更新本地文档、记录可选颜色边界并提交
 
 ## Verification evidence
