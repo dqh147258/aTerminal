@@ -8,5 +8,5 @@ if [ ! -x "$repo_root/target/debug/ai-terminal" ]; then
 fi
 
 export AI_TERMINAL_CREDENTIAL_STORE=file
-export XDG_CONFIG_HOME="$repo_root/.local/local-dev/config"
-exec "$repo_root/target/debug/ai-terminal" --state-dir "$repo_root/.local/local-dev/agent" auth status
+export XDG_CONFIG_HOME="$repo_root/.local/local-dev/config-next"
+exec "$repo_root/target/debug/ai-terminal" --state-dir "$repo_root/.local/local-dev/agent-next" auth status

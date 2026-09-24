@@ -39,6 +39,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private var sessionExited = false
     private var connected = false
     private var accountName = ""
+    private var lastHeartbeatAt = 0L
     private var serverUrl = ""
     private var deviceId = ""
     private var deviceName = ""
@@ -88,17 +89,19 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private var edgeStartX = 0f
     private var edgeStartY = 0f
     private val terminalTest get() = BuildConfig.TERMINAL_DEBUG && intent.getBooleanExtra("terminal_input_test", false)
-    private val testMode get() = BuildConfig.TERMINAL_DEBUG && (intent.getBooleanExtra("acceptance_test", false) || terminalTest)
+    private val localDebugAutoLogin get() = BuildConfig.TERMINAL_DEBUG && intent.getBooleanExtra("local_debug_autologin", false)
+    private val localDebugDesktop get() = intent.getStringExtra("local_debug_desktop") ?: "Local Desktop 新版"
+    private val testMode get() = BuildConfig.TERMINAL_DEBUG && (intent.getBooleanExtra("acceptance_test", false) || terminalTest || localDebugAutoLogin)
     private val isolatedUi get() = BuildConfig.TERMINAL_DEBUG && intent.getBooleanExtra("isolated_ui", false)
-    private val connectionPreferences get() = getSharedPreferences(if (terminalTest) "terminal-input-connection" else if (testMode || isolatedUi) "acceptance-connection" else "connection", MODE_PRIVATE)
+    private val connectionPreferences get() = getSharedPreferences(if (terminalTest) "terminal-input-connection" else if (localDebugAutoLogin) "connection" else if (testMode || isolatedUi) "acceptance-connection" else "connection", MODE_PRIVATE)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = Palette.background
         window.navigationBarColor = Palette.background
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-        store = PairingStore(this, if (terminalTest) "terminal-input-account" else if (testMode || isolatedUi) "acceptance-account" else "account")
-        display = DisplayPreferences(this, if (terminalTest) "terminal-input-display" else if (testMode || isolatedUi) "acceptance-display" else "display")
+        store = PairingStore(this, if (terminalTest) "terminal-input-account" else if (localDebugAutoLogin) "account" else if (testMode || isolatedUi) "acceptance-account" else "account")
+        display = DisplayPreferences(this, if (terminalTest) "terminal-input-display" else if (localDebugAutoLogin) "display" else if (testMode || isolatedUi) "acceptance-display" else "display")
         serverUrl = if (isolatedUi) "" else connectionPreferences.getString("server", "") ?: ""
         root = FrameLayout(this).apply {
             isFocusableInTouchMode = true
@@ -117,6 +120,8 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             val replica = TerminalReplica()
             replica.applySnapshot(assets.open("screen.pb").use { it.readBytes() })
             replica.frame()?.let { show(it) }; replica.close()
+        } else if (localDebugAutoLogin) {
+            autoLoginLocalDebug()
         } else if (!isolatedUi) {
             val epoch = accountEpoch
             work {
@@ -130,6 +135,52 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 }
             }
         }
+    }
+
+    private fun localDebugStatus(state: String, message: String = "") {
+        if (!localDebugAutoLogin) return
+        val data = JSONObject().put("state", state).put("message", message.take(200)).toString()
+        val pending = java.io.File(filesDir, "local-debug-status.tmp")
+        pending.writeText(data)
+        check(pending.renameTo(java.io.File(filesDir, "local-debug-status.json")))
+    }
+    private fun autoLoginLocalDebug() {
+        val fixture = java.io.File(filesDir, "local-debug-login.json")
+        try {
+            val config = JSONObject(fixture.readText())
+            val server = ChatStore.canonicalServer(config.getString("server"))
+            require(server == "https://192.168.0.36:7200") { "本地调试服务地址不匹配" }
+            val username = config.getString("username")
+            val password = config.getString("password")
+            require(username.isNotBlank() && password.isNotEmpty()) { "本地测试账号不完整" }
+            val epoch = ++accountEpoch
+            localDebugStatus("starting")
+            worker.execute {
+                try {
+                    val saved = store.load()
+                    if (saved == null) {
+                        val ca = java.io.File(filesDir, "acceptance-ca.pem").readText()
+                        account.login(server, username, password, Build.MODEL, "android", ca)
+                    } else {
+                        val previous = JSONObject(saved)
+                        check(previous.optString("server") == server && previous.optJSONObject("tokens")?.optString("username") == username) {
+                            "设备已登录其他账号，请先在 App 中退出"
+                        }
+                        account.restore(saved)
+                    }
+                    persist()
+                    connectionPreferences.edit().putString("server", server).apply()
+                    post { if (epoch == accountEpoch) signedIn(username, server) }
+                    loadDevices(epoch)
+                } catch (error: Exception) {
+                    localDebugStatus("error", error.message ?: "本地设备登录失败")
+                    post { notice(error.message ?: "本地设备登录失败") }
+                }
+            }
+        } catch (error: Exception) {
+            localDebugStatus("error", error.message ?: "本地调试凭据无效")
+            notice(error.message ?: "本地调试凭据无效")
+        } finally { fixture.delete() }
     }
 
     private fun buildLogin() {
@@ -290,7 +341,15 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private fun loadDevices(epoch: Int = accountEpoch) {
         try {
             val list = account.devices()
-            post { if (epoch == accountEpoch) { devices = list; deviceBusy = false; if (!connected) status.text = "${accountName} · ${list.count { it.platform == "desktop" && it.online }} 台 Desktop 在线"; if (overlay?.tag == "account") accountPanel(); restoreLastSession() } }
+            post { if (epoch == accountEpoch) {
+                devices = list; deviceBusy = false
+                if (!connected) status.text = "${accountName} · ${list.count { it.platform == "desktop" && it.online }} 台 Desktop 在线"
+                if (overlay?.tag == "account") accountPanel()
+                if (localDebugAutoLogin && !connected && !connecting) {
+                    val desktop = list.firstOrNull { it.platform == "desktop" && it.online && it.name == localDebugDesktop }
+                    if (desktop == null) localDebugStatus("error", "$localDebugDesktop 未在线") else connectDevice(desktop.id)
+                } else restoreLastSession()
+            } }
         } finally { persist() }
     }
     private fun connectDevice(id: String, resumeSession: String? = null, resumeChat: Boolean = false) {
@@ -306,11 +365,12 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 val list = remote.sessions()
                 post { if (active && generation == version && epoch == accountEpoch) {
                     connecting = false; connected = true; sessions = list; uncertainSessions.removeAll { it.first == id }; memory?.record(id, list.associate { it.id to it.exited }); connection.text = "已连接"; connection.setTextColor(Palette.green)
+                    if (localDebugAutoLogin) localDebugStatus("ready", "已连接 $deviceName")
                     val target = list.firstOrNull { it.id == resumeSession && !it.exited } ?: if (resumeSession == null) list.firstOrNull { !it.exited } else null
                     if (target != null) select(target.id, true, resumeChat)
                     else { status.text = if (resumeSession == null) "已连接，创建或选择会话" else "原会话已关闭，历史仍可查阅"; openDrawer() }
                 } }
-            } catch (e: Exception) { post { if (generation == version) { connecting = false; connection.text = "未连接"; notice(e.message ?: "连接失败") } } }
+            } catch (e: Exception) { post { if (generation == version) { connecting = false; connection.text = "未连接"; if (localDebugAutoLogin) localDebugStatus("error", e.message ?: "连接失败"); notice(e.message ?: "连接失败") } } }
             finally { persist() }
         }
     }
@@ -681,6 +741,14 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
 
     override fun doFrame(frameTimeNanos: Long) {
         if (!active) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (accountName.isNotEmpty() && now - lastHeartbeatAt >= 10_000) {
+            lastHeartbeatAt = now
+            worker.execute {
+                try { account.heartbeat() } catch (_: Exception) { /* The next tick retries. */ }
+                finally { persist() }
+            }
+        }
         if (selected != null) try {
             remote.pollDisplay()?.let { batch ->
                 batch.update?.let { terminal?.apply(it); dimensions.text = "${it.cols} 列 × ${it.rows} 行 · UTF-8" }

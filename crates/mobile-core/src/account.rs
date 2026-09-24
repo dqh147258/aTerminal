@@ -89,6 +89,12 @@ impl Account {
             })
             .collect())
     }
+    pub fn heartbeat(&self) -> Result<(), CoreError> {
+        let mut state = self.inner.lock().map_err(ffi)?;
+        let session = state.as_mut().ok_or_else(|| ffi("not logged in"))?;
+        runtime().block_on(session.heartbeat()).map_err(ffi)?;
+        Ok(())
+    }
     pub fn connect(
         &self,
         device_id: String,

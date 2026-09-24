@@ -150,6 +150,14 @@ final class TerminalModel: ObservableObject {
     }
     func refreshDevices() { guard !busy else { return }; busy = true; accountBusy = true; worker.async { [weak self] in do { try self?.loadDevices() } catch { self?.failed(error) } } }
     func resume() { if !username.isEmpty, !connected, !busy { refreshDevices() } }
+    func heartbeat() {
+        guard !username.isEmpty, !fixture else { return }
+        worker.async { [weak self] in
+            guard let self else { return }
+            try? self.account.heartbeat()
+            try? self.persist()
+        }
+    }
     private func restoreLastTerminal() {
         guard !busy, !connected, let identity, let last = RecentTerminal.load(identity) else { return }
         guard devices.contains(where: { $0.id == last.device && $0.platform == "desktop" && $0.online }) else { status = "上次的 Desktop 当前离线"; return }

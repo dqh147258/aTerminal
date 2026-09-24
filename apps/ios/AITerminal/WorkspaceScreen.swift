@@ -81,6 +81,9 @@ struct WorkspaceScreen: View {
         .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
             if drawer && !historyTab { model.refreshSessions() }
         }
+        .onReceive(Timer.publish(every: 10, on: .main, in: .common).autoconnect()) { _ in
+            if phase == .active { model.heartbeat() }
+        }
         .onChange(of: phase) { value in
             if value == .background { assistant.stop(); model.pause(); panel = nil; inputVisible = false }
             if value == .active { model.resume() }

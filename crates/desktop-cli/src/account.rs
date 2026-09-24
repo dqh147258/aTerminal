@@ -1,6 +1,6 @@
 use ai_terminal_protocol::local::{Operation, Request};
 use ai_terminal_security::account::DesktopAccountCommand;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use clap::Subcommand;
 use std::{
     io::{self, Write},
@@ -28,6 +28,9 @@ pub enum Auth {
         name: Option<String>,
         #[arg(long)]
         ca_file: Option<PathBuf>,
+        /// Read one password line from stdin for local automation; never put it in argv.
+        #[arg(long)]
+        password_stdin: bool,
     },
     Status,
     Logout,
@@ -46,6 +49,7 @@ pub fn run(command: Management, state: Option<PathBuf>) -> Result<u32> {
                     username,
                     name,
                     ca_file,
+                    password_stdin,
                 },
         } => {
             let username = if let Some(v) = username {
@@ -57,7 +61,14 @@ pub fn run(command: Management, state: Option<PathBuf>) -> Result<u32> {
                 io::stdin().read_line(&mut v)?;
                 v.trim().to_owned()
             };
-            let password = rpassword::prompt_password("Password: ")?;
+            let password = if password_stdin {
+                let mut line = String::new();
+                io::stdin().read_line(&mut line)?;
+                line.trim_end_matches(['\r', '\n']).to_owned()
+            } else {
+                rpassword::prompt_password("Password: ")?
+            };
+            ensure!(!password.is_empty(), "password is required");
             let ca = ca_file
                 .or_else(|| std::env::var_os("AI_TERMINAL_CA_FILE").map(PathBuf::from))
                 .map(std::fs::read_to_string)
