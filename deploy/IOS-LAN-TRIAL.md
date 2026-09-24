@@ -67,9 +67,11 @@ python3 scripts/run-ios-lan.py --toolchain stable --build --restore --interactiv
 ```sh
 xcodebuild -project apps/ios/AITerminal.xcodeproj -scheme AITerminal \
   -sdk iphonesimulator -configuration Debug -derivedDataPath build/xcode \
-  CODE_SIGN_IDENTITY=- build
+  ARCHS=x86_64 CODE_SIGN_IDENTITY=- build
 python3 scripts/run-ios-lan.py --toolchain stable --restore --interactive
 ```
+
+上例匹配本机 x86_64 模拟器 XCFramework。Apple Silicon 主机需先构建 `aarch64-apple-ios-sim` 库，并将 `ARCHS` 改为 `arm64`。
 
 **`prepare-lan.py` 只启动已有的 `ai-terminal-server:development` 镜像，不编译 Server。** 修改 Server 代码或镜像缺失时先构建并更新容器：
 

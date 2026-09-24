@@ -125,12 +125,15 @@ Android SDK 通过 `ANDROID_HOME` 或本地 `local.properties` 配置。产物�
 本机 Xcode 验证命令：
 
 ```sh
-xcodebuild -project apps/ios/AITerminal.xcodeproj -scheme AITerminal -sdk iphonesimulator -configuration Debug -derivedDataPath build/xcode CODE_SIGN_IDENTITY=- build
+xcodebuild -project apps/ios/AITerminal.xcodeproj -scheme AITerminal -sdk iphonesimulator -configuration Debug -derivedDataPath build/xcode ARCHS=x86_64 CODE_SIGN_IDENTITY=- build
 ```
+
+上例使用本机 x86_64 模拟器库；Apple Silicon 上将 `ARCHS` 改为 `arm64`，并先按上文生成 `aarch64-apple-ios-sim` 的 XCFramework。
 
 ## 文档与状态
 
 - [移动工作台与 Admin 实现计划](doc/task/0922-mobile-admin/PLAN.md) · [执行记录](doc/task/0922-mobile-admin/TODO.md)
+- [Android x86 真实本地部署验收](doc/task/0924-local-deployment-test/RESULTS.md)
 - [账号与输入优化结果](doc/task/0922-account-input/RESULTS.md)
 - [Android 真机结果](doc/task/0922-account-input/ANDROID-DEVICE.md) · [常用设备调试说明](deploy/ANDROID-DEVICE.md)
 - [已批准的实施计划](doc/task/0921-terminal-architecture/PLAN.md)

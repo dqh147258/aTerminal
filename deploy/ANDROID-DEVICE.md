@@ -18,6 +18,25 @@ adb -s dmronjvo9pwsbinf shell input swipe 540 2000 540 500 350
 
 `KEYCODE_WAKEUP` 用于自动化时仅唤醒，避免盲目按电源键把已经亮着的屏幕再次关闭。手动操作按电源键后上划即可。坐标基于本次竖屏分辨率；横屏或设备变化时先查询 `wm size`。
 
+## x86 本地部署测试设备
+
+2026-09-24 使用 ADB 设备 `127.0.0.1:62001`：Android API 25、`x86`，设备列表显示为 `SM_G930K`。测试命令必须显式指定这个序列号；它与上述 arm64 测试设备是不同目标。APK 需包含 x86 原生库，安装使用 `-r` 保留现有应用数据。
+
+```sh
+adb -s 127.0.0.1:62001 install -r apps/android/app/build/outputs/apk/debug/app-debug.apk
+adb -s 127.0.0.1:62001 shell am start -W -n dev.aiterminal.app/.MainActivity
+```
+
+真实本地部署验收使用 `https://192.168.0.36:7200`，设备直接走局域网，不设置 `adb reverse`。本机部署采用私有 CA；Debug 验收模式（`--ez acceptance_test true`）可从 App 私有目录的 `files/acceptance-ca.pem` 读取 CA，由 Rust TLS 正常验证链和 IP 主机名。测试后删除该文件。普通登录路径不读取此文件；正式使用私有 CA 的服务需要另行提供可信证书导入能力，或部署 Rust TLS 默认根证书信任的证书。完整结果见 `doc/task/0924-local-deployment-test/RESULTS.md`。
+
+```sh
+adb -s 127.0.0.1:62001 shell run-as dev.aiterminal.app mkdir -p files
+adb -s 127.0.0.1:62001 shell "run-as dev.aiterminal.app sh -c 'cat > files/acceptance-ca.pem'" < deploy/secrets/lan-ca.crt
+adb -s 127.0.0.1:62001 shell am start -W -n dev.aiterminal.app/.MainActivity --ez acceptance_test true
+# 验收完成后：
+adb -s 127.0.0.1:62001 shell run-as dev.aiterminal.app rm -f files/acceptance-ca.pem
+```
+
 ## 当前开发包
 
 ```sh
