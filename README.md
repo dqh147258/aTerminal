@@ -4,7 +4,7 @@ AI Terminal 由 Rust Desktop Agent、原生 Android/iOS 客户端和轻量协调
 
 **当前是可运行的开发版本，尚未完成发布验收。** Desktop Shell、账号与设备管理、端到端加密远程终端、移动工作台和 Web Admin 已实现。Android 最低支持 API 25，提供 arm64-v8a、x86_64、x86 构建。跨公网 NAT、长期性能、发布签名与商店发布仍需验收。
 
-Android/iOS 工作台提供登录、设备和会话选择、终端输入与历史、显示设置及最后会话恢复。移动端 AI 浮窗当前仅为不可交互的占位界面，不发送模型请求、不监控终端、不录音；已有历史仍可查看。Desktop 模型协议代码保留，后续启用边界见 [AI 协议说明](deploy/ASSISTANT.md)。
+Android/iOS 工作台提供登录、设备和会话选择、终端画面直接输入（含回车、Tab 等特殊键）、终端历史、显示设置及最后会话恢复。移动端 AI 浮窗当前仅为不可交互的占位界面，不发送模型请求、不监控终端、不录音；已有历史仍可查看。Desktop 模型协议代码保留，后续启用边界见 [AI 协议说明](deploy/ASSISTANT.md)。
 
 **[本机快速启动、调试与测试](deploy/LOCAL-DEBUG.md)** 包含 Server/Admin 启停、测试账号和管理员令牌位置、Desktop Agent、Android x86 设备、移动构建、日志及完整关闭步骤。
 

@@ -26,7 +26,7 @@ python3 scripts/run-ios-lan.py --toolchain stable --restore --interactive
 
 `prepare-lan.py` 启动本项目 Docker 服务，复用证书和数据库，不更改其他服务。`run-ios-lan.py` 启动 Agent，沿用配对，在完整关闭后创建新的 Shell，会话 ID 随之更新。
 
-iPhone SE 模拟器已安装 AI Terminal，配对已保存到 Keychain。启动后为正常直连、只读视图；打开“接管输入”即可输入。输入框的发送按钮只发送文本，“回车”单独提交。`--interactive` 不会自动发送测试命令。
+iPhone SE 模拟器已安装 AI Terminal，配对已保存到 Keychain。启动后为正常直连、只读视图；打开“接管输入”后点击终端画面即可用系统键盘直接输入并按 Return，Tab、Esc、方向键和 Ctrl-C 由特殊键工具栏或硬键盘提供。`--interactive` 不会自动发送测试命令。
 
 桌面观察同一会话，不抢走手机控制权：
 

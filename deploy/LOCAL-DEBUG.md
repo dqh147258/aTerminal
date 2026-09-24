@@ -73,7 +73,7 @@ adb -s 127.0.0.1:62001 shell am start -W -n dev.aiterminal.app/.MainActivity --e
 adb -s 127.0.0.1:62001 reverse --list
 ```
 
-反向映射列表应为空。App 登录页填服务地址 `https://192.168.0.36:7200`、测试用户名和 `show` 输出的密码；连接在线的 `Local Desktop`，选择 Shell。可输入 `printf 'LOCAL_DEBUG_OK\n'` 并点击发送和回车，确认终端显示独立输出；再检查设置浮窗、AI 占位、后台恢复和 Ctrl-C。`acceptance_test` 使用独立的 App 偏好与账号存储，不覆盖普通 App 登录数据。
+反向映射列表应为空。App 登录页填服务地址 `https://192.168.0.36:7200`、测试用户名和 `show` 输出的密码；连接在线的 `Local Desktop`，选择 Shell。先开启“接管输入”，点击终端画面打开系统键盘，直接输入 `printf 'LOCAL_DEBUG_OK\n'` 并按回车，确认终端显示独立输出。特殊键工具栏的 Tab 应作用于当前 Shell 的补全，Ctrl-C 应中断当前前台命令；再检查会话抽屉、设置浮窗、AI 占位和后台恢复。`acceptance_test` 使用独立的 App 偏好与账号存储，不覆盖普通 App 登录数据。
 
 这台机器的本地证书由私有 CA 签发。Debug 验收模式会读取上述 App 私有 CA 文件，让 Rust TLS 验证证书链及 IP 主机名；它**不会跳过 TLS 校验**。普通登录模式不读取该文件，当前 UI 也没有私有 CA 导入入口，因此不能把 Debug 测试通过解释为普通用户能直接登录这套自签证书服务。验收结束删除测试 CA：
 
