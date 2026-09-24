@@ -1,6 +1,6 @@
 # 移动工作台与 Admin 交付
 
-三个 worktree 子任务已完成，代码集成在 `/Volumes/Code/My/AITerminal`。未提交 Git、未发布、未删除工作树或关闭执行器终端。分支和 SessionID 见 `WORKTREES.md`。
+三个 worktree 子任务已完成，代码集成在 `/Volumes/Code/My/AITerminal`。2026-09-24 已分别提交三个工作树和主工作区，并把三个分支合并进 `main`；详见 `doc/task/0924-worktree-sync/PLAN.md`。未发布、未删除工作树或关闭执行器终端。分支和 SessionID 见 `WORKTREES.md`。
 
 ## 使用入口
 
