@@ -5,7 +5,7 @@ use crate::{
 use ai_terminal_agent::{Client, default_state_dir};
 use ai_terminal_protocol::{
     ProtocolError, Replica, Snapshot,
-    local::{Operation, Reply, Request, SessionInfo},
+    local::{Operation, Reply, Request, SESSION_CLOSED_ERROR, SessionInfo},
 };
 use anyhow::{Context, Result, bail};
 use crossterm::{
@@ -197,7 +197,13 @@ pub fn run(args: Args) -> Result<u32> {
                     }
                 },
                 Err(e) => {
-                    shared.lock().unwrap().error = Some(e.to_string());
+                    let mut view = shared.lock().unwrap();
+                    if e.to_string() == SESSION_CLOSED_ERROR {
+                        view.info.exited = true;
+                        view.info.exit_code = 0;
+                    } else {
+                        view.error = Some(e.to_string());
+                    }
                     break;
                 }
             }

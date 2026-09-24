@@ -5,8 +5,10 @@ use crate::{
 };
 use ai_terminal_engine::Engine;
 use ai_terminal_protocol::{
-    Snapshot,
-    local::{Operation, Reply, Request, SessionInfo, read_message, write_message},
+    ProtocolError, Snapshot,
+    local::{
+        Operation, Reply, Request, SESSION_CLOSED_ERROR, SessionInfo, read_message, write_message,
+    },
 };
 use anyhow::{Context, Result, bail};
 use fs2::FileExt;
@@ -305,11 +307,16 @@ fn error(message: impl Into<String>) -> Reply {
 }
 fn request_actor(actor: &Actor, request: Request) -> Result<Reply> {
     let (tx, rx) = mpsc::sync_channel(1);
-    actor
-        .try_send((request, tx))
-        .context("session busy or closed")?;
-    rx.recv_timeout(Duration::from_secs(2))
-        .context("session did not respond")
+    match actor.try_send((request, tx)) {
+        Ok(()) => {}
+        Err(mpsc::TrySendError::Disconnected(_)) => bail!(SESSION_CLOSED_ERROR),
+        Err(mpsc::TrySendError::Full(_)) => bail!("session busy"),
+    }
+    match rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(reply) => Ok(reply),
+        Err(mpsc::RecvTimeoutError::Disconnected) => bail!(SESSION_CLOSED_ERROR),
+        Err(mpsc::RecvTimeoutError::Timeout) => bail!("session did not respond"),
+    }
 }
 fn dispatch(host: &Host, request: Request) -> Result<Reply> {
     let op = Operation::try_from(request.operation).context("unknown operation")?;
@@ -498,7 +505,7 @@ fn dispatch(host: &Host, request: Request) -> Result<Reply> {
                 .unwrap()
                 .get(&request.session)
                 .cloned()
-                .context("session not found")?;
+                .ok_or_else(|| anyhow::anyhow!(SESSION_CLOSED_ERROR))?;
             let reply = request_actor(&actor, request.clone())?;
             if op == Operation::Close && reply.error.is_empty() {
                 host.sessions.lock().unwrap().remove(&request.session);
@@ -528,6 +535,7 @@ fn session_loop(
     let mut snapshots = VecDeque::from([engine.snapshot()]);
     let mut eof = false;
     let mut last_publish = Instant::now();
+    let mut warned_invalid_frame = false;
     let mut watchers: Vec<(Request, SyncSender<Reply>, Instant)> = Vec::new();
     loop {
         let start = Instant::now();
@@ -567,13 +575,17 @@ fn session_loop(
             && (eof || last_publish.elapsed() >= Duration::from_millis(4))
         {
             let s = engine.snapshot();
-            if let Err(e) = s.validate() {
-                info.error = e.to_string();
-            } else {
-                snapshots.push_back(s);
-                if snapshots.len() > 16 {
-                    snapshots.pop_front();
+            let revision = s.revision;
+            if let Err(e) = publish_snapshot(s, &mut snapshots) {
+                if !warned_invalid_frame {
+                    eprintln!(
+                        "session {}: skipped invalid display revision {revision}: {e}",
+                        info.id
+                    );
                 }
+                warned_invalid_frame = true;
+            } else {
+                warned_invalid_frame = false;
             }
             last_publish = Instant::now();
         }
@@ -699,9 +711,9 @@ fn handle_session(
             ai_terminal_engine::check_size(rows, cols)?;
             pty.resize(rows, cols)?;
             engine.resize(rows, cols)?;
-            snapshots.push_back(engine.snapshot());
-            if snapshots.len() > 16 {
-                snapshots.pop_front();
+            let snapshot = engine.snapshot();
+            if let Err(e) = publish_snapshot(snapshot, snapshots) {
+                eprintln!("session {}: skipped invalid resize frame: {e}", info.id);
             }
         }
         Operation::History => {
@@ -730,6 +742,18 @@ fn handle_session(
     (info.controller, info.control_epoch, info.next_input_seq) = control.metadata(req.client);
     reply.info = Some(info.clone());
     Ok(reply)
+}
+
+fn publish_snapshot(
+    snapshot: Snapshot,
+    snapshots: &mut VecDeque<Snapshot>,
+) -> Result<(), ProtocolError> {
+    snapshot.validate()?;
+    snapshots.push_back(snapshot);
+    if snapshots.len() > 16 {
+        snapshots.pop_front();
+    }
+    Ok(())
 }
 
 fn encode_input(request: &Request, engine: &Engine) -> Result<Vec<u8>> {
@@ -787,5 +811,53 @@ fn encode_input(request: &Request, engine: &Engine) -> Result<Vec<u8>> {
             _ => bail!("unsupported key"),
         }),
         _ => bail!("unknown input kind"),
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn invalid_intermediate_frame_does_not_poison_the_baseline() {
+        let mut engine = Engine::new(2, 8, 1).unwrap();
+        let first = engine.snapshot();
+        let mut snapshots = VecDeque::from([first.clone()]);
+        let mut invalid = first.clone();
+        invalid.revision += 1;
+        invalid.cells[0].text = "\t".into();
+        invalid.seal();
+        assert_eq!(
+            publish_snapshot(invalid, &mut snapshots),
+            Err(ProtocolError::Invalid)
+        );
+        assert_eq!(snapshots.back(), Some(&first));
+
+        engine.feed(b"ok");
+        let recovered = engine.snapshot();
+        publish_snapshot(recovered.clone(), &mut snapshots).unwrap();
+        assert_eq!(snapshots.back(), Some(&recovered));
+    }
+
+    #[test]
+    fn closed_actor_and_busy_actor_have_distinct_errors() {
+        let (actor, receiver) = mpsc::sync_channel(1);
+        drop(receiver);
+        assert_eq!(
+            request_actor(&actor, Request::default())
+                .unwrap_err()
+                .to_string(),
+            SESSION_CLOSED_ERROR
+        );
+
+        let (actor, _receiver) = mpsc::sync_channel(1);
+        let (reply, _) = mpsc::sync_channel(1);
+        actor.try_send((Request::default(), reply)).unwrap();
+        assert_eq!(
+            request_actor(&actor, Request::default())
+                .unwrap_err()
+                .to_string(),
+            "session busy"
+        );
     }
 }

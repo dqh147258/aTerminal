@@ -1,5 +1,5 @@
 use ai_terminal_agent::Client;
-use ai_terminal_protocol::local::{Operation, Request};
+use ai_terminal_protocol::local::{Operation, Request, SESSION_CLOSED_ERROR};
 use std::{
     path::PathBuf,
     process::{Child, Command, Stdio},
@@ -152,11 +152,22 @@ fn detach_retains_process_and_control_fences_duplicate_input() {
     }
     second
         .call(Request {
-            session: id,
+            session: id.clone(),
             operation: Operation::Close as i32,
             ..Request::default()
         })
         .unwrap();
+    assert_eq!(
+        second
+            .call(Request {
+                session: id,
+                operation: Operation::Poll as i32,
+                ..Request::default()
+            })
+            .unwrap_err()
+            .to_string(),
+        SESSION_CLOSED_ERROR
+    );
     assert!(second.call(Request::default()).unwrap().sessions.is_empty());
     second
         .call(Request {

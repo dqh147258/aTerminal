@@ -3,6 +3,9 @@ use crate::{Delta, MAX_MESSAGE_BYTES, Snapshot};
 use prost::Message;
 use std::io::{self, Read, Write};
 
+/// A session actor was removed after an explicit close. Clients may end attachment normally.
+pub const SESSION_CLOSED_ERROR: &str = "session closed";
+
 #[derive(Clone, PartialEq, Message)]
 pub struct Request {
     #[prost(string, tag = "1")]

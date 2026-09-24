@@ -26,17 +26,23 @@ curl --fail --noproxy '*' --cacert deploy/secrets/lan-ca.crt https://192.168.0.3
 
 ## 2. 启动 Desktop Agent 和 Shell
 
-先确认 Server 已健康，然后运行：
+先确认 Server 已健康，然后运行。`start-local-agent.sh` 用当前部署的私有凭据目录启动或检查 Agent；重启 Mac 后，应先运行它，再直接使用 `target/debug/ai-terminal`：
 
 ```sh
 cargo +stable build --locked -p ai-terminal --bin ai-terminal
+scripts/start-local-agent.sh
+```
+
+如果状态显示 `Not logged in`，再登录一次：
+
+```sh
 target/debug/ai-terminal --state-dir "$PWD/.local/local-dev/agent" auth login \
   --server https://192.168.0.36:7200 \
   --username aiterminal_local_test --name 'Local Desktop' \
   --ca-file deploy/secrets/lan-ca.crt
 ```
 
-密码在终端隐藏提示中输入，用上一节的 `show` 命令获取。Desktop 登录后 Agent 在后台运行；以下命令创建一条真实 Shell，按 **Ctrl+]** 脱离界面但保留 Shell 供手机连接：
+密码在终端隐藏提示中输入，用上一节的 `show` 命令获取。当前本地部署的账号凭据存于 `.local/local-dev/config/ai-terminal/` 的私有文件中；`start-local-agent.sh` 显式选择该存储方式，避免无交互环境改用空的系统凭据库。Desktop 登录后 Agent 在后台运行；以下命令创建一条真实 Shell，按 **Ctrl+]** 脱离界面但保留 Shell 供手机连接：
 
 ```sh
 target/debug/ai-terminal --state-dir "$PWD/.local/local-dev/agent"
@@ -46,7 +52,7 @@ target/debug/ai-terminal --state-dir "$PWD/.local/local-dev/agent" auth status
 
 CLI 创建会话时使用当前终端窗口的行列数；测试 120 列横向滚动时，先把终端窗口调到至少 120 列。Agent、Shell 与用户登录分别是不同状态：关闭 CLI 窗口不等于关闭 Shell 或退出账号。`--list` 能确认会话仍为 `running`。
 
-重新编译 `ai-terminal` 不会替换正在运行的 Agent。旧 Shell 的 PTY 状态只在旧 Agent 进程内，不能无损迁移；有未完成会话时不要用 `--agent-stop` 升级。可用另一个私有 `--state-dir` 启动新版 Agent、按上面的账号命令登录并在手机设备列表选择新 Desktop，待旧 Shell 不再需要后再停止旧 Agent。当前工作区保留的新版测试 Agent 位于 `.local/shared-input-test/agent`，设备名为 `Terminal Fix Desktop`，可直接运行 `target/debug/ai-terminal --state-dir "$PWD/.local/shared-input-test/agent"` 创建新版 Shell；原 `.local/local-dev/agent` 的两条旧会话仍保持运行。
+重新编译 `ai-terminal` 不会替换正在运行的 Agent。Shell 的 PTY 状态只在 Agent 进程内，不能无损迁移；有未完成会话时不要用 `--agent-stop` 升级。2026-09-24 已将报错的旧 Agent 切换为新版，旧会话最后画面和历史保存在私有目录 `.local/local-dev/legacy-session-archive-20260924/`；当前 `.local/local-dev/agent` 是可直接使用的默认入口。若以后需要先保留旧会话测试新版本，可用另一个私有 `--state-dir` 启动并在手机设备列表选择相应 Desktop。
 
 只调试单机 Desktop 终端时，不必启动 Server 或登录账号：
 
@@ -145,4 +151,4 @@ lsof -nP -iTCP:7200-7201 -sTCP:LISTEN
 
 `--agent-stop` 会结束该 Agent 的所有 Shell；如果只想暂停手机远程访问而保留本地 Shell，执行 `auth logout` 后停在这里即可。Admin 与 Server 是同一服务，Compose `stop` 后 Admin 页面也会关闭。确认 `ps -a` 中两个容器均为 `Exited`，且 `lsof` 没有 7200/7201 监听；再次启动从第 1 步开始。Compose `stop` 保留测试账号、数据库卷、证书和管理员令牌；不要对持久的 `ai-terminal-dev` 项目执行 `down -v`。测试账号密码或 Admin 令牌如需轮换，应在 Admin 页面操作，并同步更新本机私有账号文件。若另外运行了 `scripts/run-ios-lan.py`，其模拟器和独立 Agent 可用 `python3 scripts/stop-local.py` 一并关闭；该脚本也会停止同一组 Docker 容器。
 
-若使用上文的 `Terminal Fix Desktop` 独立 Agent，确认其中的 Shell 都不再需要后，另行运行 `target/debug/ai-terminal --state-dir "$PWD/.local/shared-input-test/agent" auth logout` 和同一路径的 `--agent-stop`；不要把它与原 `.local/local-dev/agent` 的关闭命令混用。
+若仍使用先前的 `Terminal Fix Desktop` 独立测试 Agent，确认其中的 Shell 都不再需要后，另行运行 `target/debug/ai-terminal --state-dir "$PWD/.local/shared-input-test/agent" auth logout` 和同一路径的 `--agent-stop`；不要把它与默认 `.local/local-dev/agent` 的关闭命令混用。
