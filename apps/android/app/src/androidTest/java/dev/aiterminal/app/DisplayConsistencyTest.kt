@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Rect
 import android.os.Handler
+import android.os.Build
 import android.os.Looper
 import android.os.SystemClock
 import android.view.PixelCopy
@@ -14,6 +15,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import uniffi.ai_terminal_mobile.*
 import java.util.concurrent.CountDownLatch
@@ -78,7 +80,8 @@ class DisplayConsistencyTest {
         assertEquals("The caller's immutable initial snapshot was mutated", "a", first.cells[0].text)
     }
     @Test fun hardwareRowCacheMatchesAFullRedraw() {
-        instrumentation.uiAutomation.executeShellCommand("am start -W -n dev.aiterminal.app/.MainActivity").use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
+        assumeTrue("RenderNode cache requires API 29", Build.VERSION.SDK_INT >= 29)
+        instrumentation.uiAutomation.executeShellCommand("am start -W -n dev.aiterminal.app/.MainActivity --ez isolated_ui true").use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
         var activity: MainActivity? = null
         val deadline = SystemClock.elapsedRealtime() + 10_000
         while (activity == null && SystemClock.elapsedRealtime() < deadline) {

@@ -4,12 +4,12 @@ android {
     compileSdk = 35
     defaultConfig {
         applicationId = "dev.aiterminal.app"
-        minSdk = 26
+        minSdk = 25
         targetSdk = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = 1
         versionName = "0.1.0-prototype"
-        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64", "x86") }
         buildConfigField("boolean", "TERMINAL_DEBUG", "false")
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }

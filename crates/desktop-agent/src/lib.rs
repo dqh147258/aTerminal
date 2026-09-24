@@ -1,5 +1,6 @@
 //! Per-user local session host. Remote authorization is a separate P2 concern.
 mod account;
+mod assistant;
 pub mod pty;
 mod remote_bridge;
 mod service;

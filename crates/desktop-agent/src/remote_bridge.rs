@@ -150,7 +150,11 @@ pub(crate) fn authorize(read_only: bool, request: &Request) -> Result<()> {
     let operation = Operation::try_from(request.operation)?;
     if matches!(
         operation,
-        Operation::Shutdown | Operation::Account | Operation::Watch | Operation::Streaming
+        Operation::Shutdown
+            | Operation::Account
+            | Operation::Watch
+            | Operation::Streaming
+            | Operation::AssistantInput
     ) {
         bail!("remote clients cannot stop the desktop Agent")
     }
@@ -174,6 +178,16 @@ mod tests {
     use super::*;
     #[test]
     fn observe_permission_is_enforced_outside_the_ui() {
+        assert!(
+            authorize(
+                false,
+                &Request {
+                    operation: Operation::AssistantInput as i32,
+                    ..Request::default()
+                }
+            )
+            .is_err()
+        );
         assert!(
             authorize(
                 true,

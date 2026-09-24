@@ -116,6 +116,18 @@ pub(crate) async fn serve(
                     });
                 }
                 result
+            } else if op == Operation::Close {
+                let closes_subscription = subscription
+                    .as_ref()
+                    .is_some_and(|s| s.request.session == req.session);
+                let mut result = call(client.clone(), req).await?;
+                if result.error.is_empty() && closes_subscription {
+                    // Closing one terminal must not leave a Watch worker polling a removed actor.
+                    // Fence updates already sent before the close acknowledgement.
+                    subscription = None;
+                    result.state_sequence = update_id;
+                }
+                result
             } else if op == Operation::History {
                 if history.is_some() {
                     Reply {

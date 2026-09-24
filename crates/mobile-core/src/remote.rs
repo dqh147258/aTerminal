@@ -253,6 +253,53 @@ impl RemoteTerminal {
             .map(session)
             .collect())
     }
+    pub fn assistant(&self, session_id: String, request_json: String) -> Result<String, CoreError> {
+        if session_id.is_empty() || session_id.len() > 128 || request_json.len() > 16000 {
+            return Err(ffi("invalid assistant request"));
+        }
+        let value: serde_json::Value = serde_json::from_str(&request_json).map_err(ffi)?;
+        let allow_input = value["action"] == "send" && value["allow_input"] == true;
+        let (_, shared) = self.shared()?;
+        if allow_input {
+            let controlled = {
+                let state = shared.lock().map_err(ffi)?;
+                if state.selected.as_ref().map(|s| s.id.as_str()) != Some(session_id.as_str()) {
+                    return Err(ffi("select this terminal before asking AI to operate it"));
+                }
+                state.controlled
+            };
+            if !controlled {
+                self.select(session_id.clone(), true)?;
+            }
+        }
+        let state = shared.lock().map_err(ffi)?;
+        let (control_epoch, input_seq) = if allow_input {
+            let selected = state
+                .selected
+                .as_ref()
+                .ok_or_else(|| ffi("no selected terminal"))?;
+            if selected.id != session_id || !state.controlled {
+                return Err(ffi("terminal control changed"));
+            }
+            (selected.control_epoch, state.next_input)
+        } else {
+            (0, 0)
+        };
+        drop(state);
+        let reply = self.call(Request {
+            session: session_id,
+            operation: Operation::Assistant as i32,
+            text: request_json,
+            control_epoch,
+            input_seq,
+            ..Request::default()
+        })?;
+        reply
+            .history
+            .into_iter()
+            .next()
+            .ok_or_else(|| ffi("Desktop does not support assistant requests"))
+    }
     pub fn select(&self, id: String, take_control: bool) -> Result<RenderFrame, CoreError> {
         let (_, state) = self.shared()?;
         let detach = {
@@ -551,7 +598,10 @@ async fn pump(
                                 bail!("input rejected: {}", reply.error)
                             }
                         } else {
-                            if p.job.request.operation == Operation::Subscribe as i32 {
+                            if matches!(
+                                Operation::try_from(p.job.request.operation)?,
+                                Operation::Subscribe | Operation::Close
+                            ) {
                                 if !subscription_boundary(
                                     id,
                                     reply.state_sequence,

@@ -15,6 +15,7 @@
 | keyring | 3.6.3 | MIT OR Apache-2.0，https://github.com/hwchen/keyring-rs |
 | rpassword | 7.5.4 | Apache-2.0，https://github.com/conradkleinespel/rpassword |
 | JNA | 5.17.0 | LGPL-2.1-or-later / Apache-2.0 双许可，https://github.com/java-native-access/jna |
+| Lucide（Web Admin/Android 本地图标） | 0.468.0 | ISC，https://github.com/lucide-icons/lucide；许可证见 `crates/server/admin/LUCIDE-LICENSE`、`apps/android/NOTICE-LUCIDE.md` 及 APK assets |
 
 未修改上游 crate。Android ABI 修复通过项目自有 CMake 工具链传参实现。媒体和 libdatachannel 自带 WebSocket 已关闭。正式发布前需完整检查所有 native 静态/动态依赖及来源交付要求。
 

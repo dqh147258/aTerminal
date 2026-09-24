@@ -67,6 +67,10 @@ pub enum Operation {
     Watch = 11,
     Streaming = 12,
     Subscribe = 13,
+    /// Desktop-owned asynchronous assistant; JSON request and response in text/history.
+    Assistant = 14,
+    /// Local-only assistant broker input; fenced separately from manual input sequences.
+    AssistantInput = 15,
 }
 
 #[derive(Clone, PartialEq, Message)]

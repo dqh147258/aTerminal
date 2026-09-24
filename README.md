@@ -2,7 +2,7 @@
 
 Rust 桌面终端、原生 Android/iOS 客户端与轻量协调服务器。设计采用桌面唯一终端状态、原生显示副本、WebRTC 优先和 WSS 兜底。
 
-**当前是可运行的开发版本，尚未完成发布验收。** 已实现后台会话、配对、端到端加密中转、WebRTC 直连与超时切换、Android/iOS 原生客户端。iOS 模拟器已连接真实桌面 PTY；Windows、Android 运行、跨公网 NAT、长期性能和发布签名仍待验证。AI 仅有定义文档。
+**当前是可运行的开发版本，尚未完成发布验收。** 已实现后台会话、配对、端到端加密中转、WebRTC 直连与超时切换、Android/iOS 原生客户端。移动工作台按设计更新，并新增 Web Admin 和 Desktop 模型对话。跨公网 NAT、长期性能和发布签名仍属于发布验收范围。
 
 ## 本地运行
 
@@ -73,6 +73,12 @@ ai-terminal auth logout
 
 手机输入服务地址、账号和密码，选择 Desktop/会话并接管输入。新版采用 `stream/2` 主动状态推送、有界异步输入和原生增量绘制；所有端需升级。Desktop 登录账号后不再加载旧邀请，即使退出账号也不会自动恢复旧邀请访问。
 
+### Web Admin 与 AI 对话
+
+服务内置 `/admin/`，使用现有管理员令牌登录，可查看服务概览、创建用户、重置密码、查询和撤销设备及连接；无需单独前端服务。部署与 API 见 [Web Admin](deploy/ADMIN.md)。
+
+Android/iOS 提供全屏远端 Terminal、局部半透明设置浮窗、工作空间侧滑菜单、最后会话恢复和显示设置，字号滑块实时预览。移动端 AI 浮窗当前仅显示不可交互的占位 UI，不发起模型请求、终端监控或录音；历史数据仍可查阅。Desktop 端实验性模型配置和安全边界见 [Desktop AI](deploy/ASSISTANT.md)，不代表当前移动端入口已开放。
+
 ### 旧邀请迁移入口
 
 Server 部署和凭据配置见 [deploy/README.md](deploy/README.md)。桌面创建并 detach 一个会话，再生成配对邀请：
@@ -91,12 +97,14 @@ cargo run -p ai-terminal -- --pair --server https://terminal.example.com --serve
 
 ## 移动构建（macOS 构建主机）
 
-需要 Xcode、Android SDK/NDK r28+、JDK 17，以及 Rust 目标 `aarch64-apple-ios`、`aarch64-linux-android`。示例中的 NDK 路径需替换为本机路径：
+需要 Xcode、Android SDK/NDK r28+、JDK 17，以及 Rust 目标 `aarch64-apple-ios`、`aarch64-linux-android`、`x86_64-linux-android`、`i686-linux-android`。Android 最低支持 API 25，三种 ABI 的原生库均须按 API 25 重建；示例中的 NDK 路径需替换为本机路径：
 
 ```sh
 python3 scripts/build-mobile.py ios --webrtc
 python3 scripts/build-mobile.py ios --webrtc --simulator
 python3 scripts/build-mobile.py android --webrtc --ndk /path/to/android-sdk/ndk/28.2.13676358
+python3 scripts/build-mobile.py android --webrtc --android-abi x86_64 --ndk /path/to/android-sdk/ndk/28.2.13676358
+python3 scripts/build-mobile.py android --webrtc --android-abi x86 --ndk /path/to/android-sdk/ndk/28.2.13676358
 python3 scripts/prepare-bindings.py
 python3 scripts/package-ios.py --simulator-target x86_64-apple-ios
 ./apps/android/gradlew -p apps/android :app:assembleDebug
@@ -106,7 +114,7 @@ Apple Silicon 构建主机的模拟器目标使用 `aarch64-apple-ios-sim`。打
 
 Android SDK 通过 `ANDROID_HOME` 或本地 `local.properties` 配置。产物：
 
-- `build/mobile/aarch64-linux-android/libai_terminal_mobile.so`，配套 `libc++_shared.so`。
+- `build/mobile/{aarch64,x86_64,i686}-linux-android/libai_terminal_mobile.so`，各配套 `libc++_shared.so`。
 - `build/mobile/aarch64-apple-ios/libai_terminal_mobile.a`。
 - `apps/android/app/build/outputs/apk/debug/app-debug.apk`。
 - `build/AITerminalCore.xcframework`，真机与当前构建机模拟器静态库。
@@ -122,6 +130,7 @@ xcodebuild -project apps/ios/AITerminal.xcodeproj -scheme AITerminal -sdk iphone
 
 ## 文档与状态
 
+- [移动工作台与 Admin 实现计划](doc/task/0922-mobile-admin/PLAN.md) · [执行记录](doc/task/0922-mobile-admin/TODO.md)
 - [账号与输入优化结果](doc/task/0922-account-input/RESULTS.md)
 - [Android 真机结果](doc/task/0922-account-input/ANDROID-DEVICE.md) · [常用设备调试说明](deploy/ANDROID-DEVICE.md)
 - [已批准的实施计划](doc/task/0921-terminal-architecture/PLAN.md)

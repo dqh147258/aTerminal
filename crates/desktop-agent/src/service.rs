@@ -200,6 +200,7 @@ pub(crate) fn open_private(path: &Path, append: bool) -> Result<fs::File> {
 type Actor = SyncSender<(Request, SyncSender<Reply>)>;
 struct Host {
     account: Arc<crate::account::AccountManager>,
+    assistant: crate::assistant::Assistant,
     sessions: Mutex<HashMap<String, Actor>>,
     owners: Mutex<HashMap<String, String>>,
     stop: Arc<AtomicBool>,
@@ -233,6 +234,7 @@ pub fn run_agent(dir: &Path) -> Result<()> {
     let account = crate::account::AccountManager::new(dir)?;
     let host = Arc::new(Host {
         account: account.clone(),
+        assistant: crate::assistant::Assistant::default(),
         sessions: Mutex::new(HashMap::new()),
         owners: Mutex::new(HashMap::new()),
         stop: Arc::new(AtomicBool::new(false)),
@@ -333,6 +335,73 @@ fn dispatch(host: &Host, request: Request) -> Result<Reply> {
         }
     }
     match op {
+        Operation::Assistant => {
+            let message = crate::assistant::Request::parse(&request.text)?;
+            let actor = host
+                .sessions
+                .lock()
+                .unwrap()
+                .get(&request.session)
+                .cloned()
+                .context("session not found")?;
+            let read_actor = actor.clone();
+            let read_request = request.clone();
+            let write_request = request.clone();
+            let reader_account = host.account.clone();
+            let writer_account = host.account.clone();
+            let terminal = crate::assistant::TerminalAccess {
+                observe: Box::new(move || {
+                    if !read_request.account_scope.is_empty()
+                        && reader_account.owner() != read_request.account_scope
+                    {
+                        bail!("account changed; assistant stopped");
+                    }
+                    let reply = request_actor(
+                        &read_actor,
+                        Request {
+                            operation: Operation::Poll as i32,
+                            revision: 0,
+                            ..read_request.clone()
+                        },
+                    )?;
+                    if !reply.error.is_empty() {
+                        bail!("{}", reply.error);
+                    }
+                    Ok(crate::assistant::Observation {
+                        screen: reply.snapshot.context("terminal snapshot unavailable")?,
+                        info: reply.info.context("terminal session unavailable")?,
+                    })
+                }),
+                input: Box::new(move |input| {
+                    if !write_request.account_scope.is_empty()
+                        && writer_account.owner() != write_request.account_scope
+                    {
+                        bail!("account changed; assistant input cancelled");
+                    }
+                    let reply = request_actor(
+                        &actor,
+                        Request {
+                            operation: Operation::AssistantInput as i32,
+                            input_kind: 1,
+                            text: input.text,
+                            submit: input.submit,
+                            ..write_request.clone()
+                        },
+                    )?;
+                    if !reply.error.is_empty() {
+                        bail!("{}", reply.error);
+                    }
+                    Ok(())
+                }),
+            };
+            let result =
+                host.assistant
+                    .call(&request.account_scope, &request.session, message, terminal)?;
+            Ok(Reply {
+                history: vec![result],
+                ..Reply::default()
+            })
+        }
         Operation::Account => {
             let result = host.account.call(&request.text)?;
             let owner = host.account.owner();
@@ -592,6 +661,17 @@ fn handle_session(
         Operation::Detach => {
             control.release(req.client);
             pty.set_fence(control.epoch);
+        }
+        Operation::AssistantInput => {
+            if info.exited {
+                bail!("session exited");
+            }
+            control.check(req.client, req.control_epoch)?;
+            if req.input_seq != control.next {
+                bail!("manual input occurred; stale AI input cancelled");
+            }
+            let bytes = encode_input(&req, engine)?;
+            pty.write_controlled(control.epoch, bytes)?;
         }
         Operation::Input => {
             let started = Instant::now();

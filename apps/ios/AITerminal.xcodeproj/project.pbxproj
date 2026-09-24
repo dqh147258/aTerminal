@@ -7,6 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BBCCDDEE0000000000000001 /* WorkspaceUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBCCDDEE0000000000000002 /* WorkspaceUITests.swift */; };
+		AABBCCDD0000000000000011 /* ChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCCDD0000000000000021 /* ChatStore.swift */; };
+		AABBCCDD0000000000000012 /* AssistantModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCCDD0000000000000022 /* AssistantModel.swift */; };
+		AABBCCDD0000000000000013 /* SpeechDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCCDD0000000000000023 /* SpeechDraft.swift */; };
+		AABBCCDD0000000000000014 /* WorkspaceStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCCDD0000000000000024 /* WorkspaceStyle.swift */; };
+		AABBCCDD0000000000000015 /* LoginScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCCDD0000000000000025 /* LoginScreen.swift */; };
+		AABBCCDD0000000000000016 /* WorkspaceScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCCDD0000000000000026 /* WorkspaceScreen.swift */; };
+		AABBCCDD0000000000000017 /* ChatPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCCDD0000000000000027 /* ChatPanel.swift */; };
 		35F18A14752B7144866C03FA /* TerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 907E6EABCDB6D1F4CBDDD6C9 /* TerminalView.swift */; };
 		463263EE470524BC379F8941 /* ai_terminal_mobile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61755E5491772A4DBDE6AECB /* ai_terminal_mobile.swift */; };
 		61657C3ADB284DE314771D24 /* PairingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6AE163B2FCA3046FA19CFEA /* PairingStore.swift */; };
@@ -17,6 +25,15 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		BBCCDDEE0000000000000002 /* WorkspaceUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/WorkspaceUITests.swift; sourceTree = "<group>"; };
+		BBCCDDEE0000000000000003 /* AITerminalUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = AITerminalUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AABBCCDD0000000000000021 /* ChatStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStore.swift; sourceTree = "<group>"; };
+		AABBCCDD0000000000000022 /* AssistantModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantModel.swift; sourceTree = "<group>"; };
+		AABBCCDD0000000000000023 /* SpeechDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechDraft.swift; sourceTree = "<group>"; };
+		AABBCCDD0000000000000024 /* WorkspaceStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceStyle.swift; sourceTree = "<group>"; };
+		AABBCCDD0000000000000025 /* LoginScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginScreen.swift; sourceTree = "<group>"; };
+		AABBCCDD0000000000000026 /* WorkspaceScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceScreen.swift; sourceTree = "<group>"; };
+		AABBCCDD0000000000000027 /* ChatPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatPanel.swift; sourceTree = "<group>"; };
 		61755E5491772A4DBDE6AECB /* ai_terminal_mobile.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ai_terminal_mobile.swift; path = ../../build/bindings/ai_terminal_mobile.swift; sourceTree = "<group>"; };
 		775FA7E799FB1D6CE1A1A4C7 /* AITerminalCore.xcframework */ = {isa = PBXFileReference; includeInIndex = 1; name = AITerminalCore.xcframework; path = ../../build/AITerminalCore.xcframework; sourceTree = "<group>"; };
 		8B426614BE9F4E8D712529B8 /* AITerminal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AITerminal.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -28,6 +45,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		BBCCDDEE0000000000000004 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		E8D2D8EBA10061BFD2EAB8C2 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -59,6 +77,7 @@
 		9775A9E0C779A73B41BB77AC = {
 			isa = PBXGroup;
 			children = (
+				BBCCDDEE0000000000000002 /* WorkspaceUITests.swift */,
 				DE7652F0A809344784C6793D /* Products */,
 				F237E9ED0528496B51926266 /* Frameworks */,
 				BA87ED45B9F295883E96DB8F /* AITerminal */,
@@ -71,6 +90,13 @@
 			isa = PBXGroup;
 			children = (
 				E61A9D47D7F9A3E562878563 /* AITerminalApp.swift */,
+				AABBCCDD0000000000000021 /* ChatStore.swift */,
+				AABBCCDD0000000000000022 /* AssistantModel.swift */,
+				AABBCCDD0000000000000023 /* SpeechDraft.swift */,
+				AABBCCDD0000000000000024 /* WorkspaceStyle.swift */,
+				AABBCCDD0000000000000025 /* LoginScreen.swift */,
+				AABBCCDD0000000000000026 /* WorkspaceScreen.swift */,
+				AABBCCDD0000000000000027 /* ChatPanel.swift */,
 				C6AE163B2FCA3046FA19CFEA /* PairingStore.swift */,
 				907E6EABCDB6D1F4CBDDD6C9 /* TerminalView.swift */,
 			);
@@ -81,6 +107,7 @@
 		DE7652F0A809344784C6793D /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				BBCCDDEE0000000000000003 /* AITerminalUITests.xctest */,
 				8B426614BE9F4E8D712529B8 /* AITerminal.app */,
 			);
 			name = Products;
@@ -98,6 +125,17 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		BBCCDDEE0000000000000005 /* AITerminalUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BBCCDDEE0000000000000006;
+			buildPhases = (BBCCDDEE0000000000000007, BBCCDDEE0000000000000004);
+			buildRules = ();
+			dependencies = (BBCCDDEE0000000000000008);
+			name = AITerminalUITests;
+			productName = AITerminalUITests;
+			productReference = BBCCDDEE0000000000000003;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		F2A5B55D1F67A87A847D6649 /* AITerminal */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 84742A3FD492A6C2FB5FAC3C /* Build configuration list for PBXNativeTarget "AITerminal" */;
@@ -140,6 +178,7 @@
 			projectRoot = "";
 			targets = (
 				F2A5B55D1F67A87A847D6649 /* AITerminal */,
+				BBCCDDEE0000000000000005 /* AITerminalUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -156,11 +195,19 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		BBCCDDEE0000000000000007 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (BBCCDDEE0000000000000001); runOnlyForDeploymentPostprocessing = 0; };
 		24FF5D3872BDEB9CF76EA913 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				BCDD60CB2B924C39F32959F7 /* AITerminalApp.swift in Sources */,
+				AABBCCDD0000000000000011 /* ChatStore.swift in Sources */,
+				AABBCCDD0000000000000012 /* AssistantModel.swift in Sources */,
+				AABBCCDD0000000000000013 /* SpeechDraft.swift in Sources */,
+				AABBCCDD0000000000000014 /* WorkspaceStyle.swift in Sources */,
+				AABBCCDD0000000000000015 /* LoginScreen.swift in Sources */,
+				AABBCCDD0000000000000016 /* WorkspaceScreen.swift in Sources */,
+				AABBCCDD0000000000000017 /* ChatPanel.swift in Sources */,
 				61657C3ADB284DE314771D24 /* PairingStore.swift in Sources */,
 				35F18A14752B7144866C03FA /* TerminalView.swift in Sources */,
 				463263EE470524BC379F8941 /* ai_terminal_mobile.swift in Sources */,
@@ -170,6 +217,16 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
+		BBCCDDEE0000000000000010 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 15.0; PRODUCT_BUNDLE_IDENTIFIER = dev.aiterminal.app.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = AITerminal; };
+			name = Debug;
+		};
+		BBCCDDEE0000000000000011 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 15.0; PRODUCT_BUNDLE_IDENTIFIER = dev.aiterminal.app.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = AITerminal; };
+			name = Release;
+		};
 		131F19B01D5A837F196F34AB /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -359,6 +416,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		BBCCDDEE0000000000000006 = {isa = XCConfigurationList; buildConfigurations = (BBCCDDEE0000000000000010, BBCCDDEE0000000000000011); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 		3119B6264979F4441D938792 /* Build configuration list for PBXProject "AITerminal" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -378,6 +436,8 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+		BBCCDDEE0000000000000008 = {isa = PBXTargetDependency; target = F2A5B55D1F67A87A847D6649; targetProxy = BBCCDDEE0000000000000009; };
+		BBCCDDEE0000000000000009 = {isa = PBXContainerItemProxy; containerPortal = 80940F1C73564AEDD4B9917C; proxyType = 1; remoteGlobalIDString = F2A5B55D1F67A87A847D6649; remoteInfo = AITerminal; };
 	};
 	rootObject = 80940F1C73564AEDD4B9917C /* Project object */;
 }

@@ -12,6 +12,7 @@ use tokio_tungstenite::{
 };
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 pub mod account;
+pub mod assistant;
 mod channel;
 mod tls;
 pub use channel::{Channel, PathKind, StreamEvent};

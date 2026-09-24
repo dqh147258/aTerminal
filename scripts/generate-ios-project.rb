@@ -2,6 +2,7 @@
 # Run once (or regenerate after source changes) with the xcodeproj gem available.
 require 'xcodeproj'
 require 'pathname'
+require 'rexml/document'
 
 root = Pathname.new(__dir__).parent
 path = root.join('apps/ios/AITerminal.xcodeproj')
@@ -37,9 +38,33 @@ target.build_configurations.each do |config|
     'OTHER_SWIFT_FLAGS' => ['$(inherited)', '-Xcc', '-fmodule-map-file=$(SRCROOT)/../../build/bindings/ai_terminal_mobileFFI.modulemap']
   })
 end
+ui_tests = project.new_target(:ui_test_bundle, 'AITerminalUITests', :ios, '15.0')
+ui_tests.add_dependency(target)
+ui_tests.source_build_phase.add_file_reference(project.main_group.new_file('UITests/WorkspaceUITests.swift'))
+ui_tests.build_configurations.each do |config|
+  config.build_settings.merge!({
+    'PRODUCT_BUNDLE_IDENTIFIER' => 'dev.aiterminal.app.uitests',
+    'GENERATE_INFOPLIST_FILE' => 'YES',
+    'SWIFT_VERSION' => '5.0',
+    'TEST_TARGET_NAME' => 'AITerminal',
+    'TARGETED_DEVICE_FAMILY' => '1,2'
+  })
+end
 project.save
 scheme = Xcodeproj::XCScheme.new
 scheme.add_build_target(target)
+scheme.add_test_target(ui_tests)
 scheme.set_launch_target(target)
 scheme.save_as(path.to_s, 'AITerminal', true)
+scheme_path = path.join('xcshareddata/xcschemes/AITerminal.xcscheme')
+document = REXML::Document.new(scheme_path.read)
+test_action = document.elements['Scheme/TestAction']
+test_action.attributes['shouldUseLaunchSchemeArgsEnv'] = 'NO'
+variables = test_action.add_element('EnvironmentVariables')
+variables.add_element('EnvironmentVariable', {
+  'key' => 'AI_TERMINAL_IOS_FIXTURE',
+  'value' => '$(AI_TERMINAL_IOS_FIXTURE)',
+  'isEnabled' => 'YES'
+})
+File.open(scheme_path, 'w') { |file| document.write(file, 2) }
 puts path

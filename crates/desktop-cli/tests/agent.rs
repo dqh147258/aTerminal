@@ -19,11 +19,24 @@ impl Drop for Host {
     }
 }
 fn host() -> (Host, Client) {
+    host_with_model(None)
+}
+fn host_with_model(model_url: Option<&str>) -> (Host, Client) {
     let dir = std::env::temp_dir().join(format!(
         "ai-terminal-test-{:x}",
         ai_terminal_agent::random_id()
     ));
-    let child = Command::new(env!("CARGO_BIN_EXE_ai-terminal"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ai-terminal"));
+    command
+        .env_remove("AI_TERMINAL_AI_BASE_URL")
+        .env_remove("AI_TERMINAL_AI_MODEL")
+        .env_remove("AI_TERMINAL_AI_API_KEY");
+    if let Some(url) = model_url {
+        command
+            .env("AI_TERMINAL_AI_BASE_URL", url)
+            .env("AI_TERMINAL_AI_MODEL", "test");
+    }
+    let child = command
         .env("AI_TERMINAL_CREDENTIAL_STORE", "file")
         .env("XDG_CONFIG_HOME", dir.join("config"))
         .args(["--agent", "--state-dir"])
@@ -254,11 +267,23 @@ async fn encrypted_relay_reaches_the_same_pty_and_revocation_closes_it() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mobile_core_reads_types_and_cannot_override_readonly_pair() {
-    let (mut host, local) = host();
-    let admin = ai_terminal_security::random_secret().unwrap();
-    let router = ai_terminal_server::router(&host.dir.join("mobile.db"), &admin).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
+    let (mut host, local) = host_with_model(Some(&format!("{url}/model")));
+    let admin = ai_terminal_security::random_secret().unwrap();
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let model_calls = calls.clone();
+    let router = ai_terminal_server::router(&host.dir.join("mobile.db"), &admin).unwrap()
+        .route("/model/chat/completions", axum::routing::post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+            let calls = model_calls.clone();
+            async move {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                assert_eq!(body["model"], "test");
+                assert_eq!(body["messages"].as_array().unwrap().len(), 2);
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                axum::Json(serde_json::json!({"choices":[{"message":{"content":"fixture explanation, not executed"}}]}))
+            }
+        }));
     let server = tokio::spawn(async move {
         axum::serve(listener, router).await.unwrap();
     });
@@ -277,6 +302,20 @@ async fn mobile_core_reads_types_and_cannot_override_readonly_pair() {
         mobile.connect(invitation).unwrap();
         let session = mobile.create_session(String::new()).unwrap();
         mobile.select(session.id.clone(), true).unwrap();
+        let request = r#"{"action":"send","request_id":"round-1","message":"explain"}"#.to_owned();
+        let status: serde_json::Value = serde_json::from_str(
+            &mobile
+                .assistant(session.id.clone(), r#"{"action":"status"}"#.into())
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(status["available"], true);
+        let started = Instant::now();
+        mobile
+            .assistant(session.id.clone(), request.clone())
+            .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(2));
+        mobile.assistant(session.id.clone(), request).unwrap();
         mobile
             .send_text("echo MOBILE_CORE_OK".into(), true)
             .unwrap();
@@ -294,11 +333,37 @@ async fn mobile_core_reads_types_and_cannot_override_readonly_pair() {
             assert!(Instant::now() < until);
             thread::sleep(Duration::from_millis(30));
         }
+        loop {
+            let response: serde_json::Value = serde_json::from_str(
+                &mobile
+                    .assistant(
+                        session.id.clone(),
+                        r#"{"action":"poll","request_id":"round-1"}"#.into(),
+                    )
+                    .unwrap(),
+            )
+            .unwrap();
+            if response["state"] == "completed" {
+                assert_eq!(response["reply"], "fixture explanation, not executed");
+                break;
+            }
+            assert!(
+                Instant::now() < until,
+                "assistant request did not finish: {response}"
+            );
+            thread::sleep(Duration::from_millis(30));
+        }
+        assert!(
+            mobile
+                .assistant("missing-session".into(), r#"{"action":"status"}"#.into())
+                .is_err()
+        );
         mobile.disconnect().unwrap();
         session.id
     })
     .await
     .unwrap();
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     let (pair, invite) = ai_terminal_remote::create_pair(&url, &admin, true)
         .await
         .unwrap();
@@ -313,7 +378,15 @@ async fn mobile_core_reads_types_and_cannot_override_readonly_pair() {
         let mobile = ai_terminal_mobile::RemoteTerminal::new();
         mobile.connect(invitation).unwrap();
         assert!(mobile.select(selected.clone(), true).is_err());
-        mobile.select(selected, false).unwrap();
+        mobile.select(selected.clone(), false).unwrap();
+        assert!(
+            mobile
+                .assistant(
+                    selected,
+                    r#"{"action":"send","request_id":"read-only","message":"explain"}"#.into()
+                )
+                .is_err()
+        );
         assert!(!mobile.has_control());
         assert!(mobile.send_text("must not run".into(), true).is_err());
         mobile.disconnect().unwrap();
@@ -343,6 +416,126 @@ fn has_output<'a>(cells: impl Iterator<Item = &'a str>, cols: usize, expected: &
         .collect::<Vec<_>>()
         .chunks(cols)
         .any(|line| line.concat().trim() == expected)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn assistant_inputs_once_monitors_real_pty_and_fences_stale_writes() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (mut host, local) = host_with_model(Some(&format!("{url}/model")));
+    let admin = ai_terminal_security::random_secret().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let model_calls = calls.clone();
+    let router = ai_terminal_server::router(&host.dir.join("assistant.db"), &admin).unwrap()
+        .route("/model/chat/completions", axum::routing::post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+            let calls = model_calls.clone();
+            async move {
+                if body.get("tools").is_some() {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    tokio::time::sleep(Duration::from_millis(350)).await;
+                    let task = body["messages"].as_array().unwrap().last().unwrap()["content"].as_str().unwrap();
+                    let text = match task {
+                        "execute" => "printf 'AI_FENCED_ONCE\\n'; sleep 1; printf 'AI_FENCED_DONE\\n'",
+                        "stale" => "printf 'MUST_NOT_RUN\\n'",
+                        "lost-control" => "printf 'LOST_MUST_NOT_RUN\\n'",
+                        "cancel-before" => "printf 'CANCEL_MUST_NOT_RUN\\n'",
+                        _ => panic!("unexpected fixture task"),
+                    };
+                    axum::Json(serde_json::json!({"choices":[{"message":{"content":null,"tool_calls":[{"type":"function","function":{"name":"terminal_input","arguments":serde_json::json!({"text":text,"submit":true}).to_string()}}]}}]}))
+                } else {
+                    assert!(body["messages"][1]["content"].as_str().unwrap().contains("Terminal snapshot revision"));
+                    axum::Json(serde_json::json!({"choices":[{"message":{"content":"Observed a real terminal revision; execution status is inferred."}}]}))
+                }
+            }
+        }));
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let (pair, invite) = ai_terminal_remote::create_pair(&url, &admin, false)
+        .await
+        .unwrap();
+    std::fs::create_dir_all(host.dir.join("pairs")).unwrap();
+    std::fs::write(
+        host.dir.join("pairs").join(format!("{}.json", pair.room)),
+        serde_json::to_vec(&pair).unwrap(),
+    )
+    .unwrap();
+    tokio::task::spawn_blocking(move || {
+        let mobile = ai_terminal_mobile::RemoteTerminal::new();
+        mobile.connect(invite.export().unwrap()).unwrap();
+        let session = mobile.create_session(String::new()).unwrap();
+        mobile.select(session.id.clone(), false).unwrap();
+        let send = |id: &str, task: &str| serde_json::json!({"action":"send","request_id":id,"message":task,"allow_input":true,"monitor":true,"include_screen":true}).to_string();
+        let call = |request: String| -> serde_json::Value {
+            serde_json::from_str(&mobile.assistant(session.id.clone(), request).unwrap()).unwrap()
+        };
+        let poll = |id: &str, state: &str| -> serde_json::Value {
+            let until = Instant::now() + Duration::from_secs(10);
+            loop {
+                let response = call(serde_json::json!({"action":"poll","request_id":id}).to_string());
+                if response["state"] == state { return response; }
+                assert!(Instant::now() < until, "assistant state did not become {state}: {response}");
+                thread::sleep(Duration::from_millis(30));
+            }
+        };
+        let assert_output = |expected: &str| {
+            let until = Instant::now() + Duration::from_secs(5);
+            loop {
+                if let Some(frame) = mobile.refresh().unwrap()
+                    && has_output(frame.cells.iter().map(|c| c.text.as_str()), frame.cols as usize, expected) { break; }
+                assert!(Instant::now() < until, "missing terminal output {expected}");
+                thread::sleep(Duration::from_millis(30));
+            }
+        };
+        call(send("once", "execute"));
+        call(send("once", "execute"));
+        assert!(mobile.has_control());
+        assert_output("AI_FENCED_DONE");
+        let until = Instant::now() + Duration::from_secs(8);
+        loop {
+            let response = poll("once", "monitoring");
+            if response["events"].as_array().unwrap().iter().any(|e| e["kind"] == "observation") { break; }
+            assert!(Instant::now() < until, "missing monitoring observation");
+            thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        mobile.send_text("printf 'AFTER_AI\\n'".into(), true).unwrap();
+        assert_output("AFTER_AI");
+        call(serde_json::json!({"action":"cancel","request_id":"once"}).to_string());
+        assert_eq!(poll("once", "stopped")["monitoring"], false);
+
+        call(send("stale", "stale"));
+        mobile.send_text("printf 'MANUAL_WINS\\n'".into(), true).unwrap();
+        let failure = poll("stale", "failed");
+        assert!(failure["message"].as_str().unwrap().contains("manual input"));
+        assert_output("MANUAL_WINS");
+        call(send("lost", "lost-control"));
+        mobile.select(session.id.clone(), false).unwrap();
+        assert!(poll("lost", "failed")["message"].as_str().unwrap().contains("control lost"));
+        call(send("cancel", "cancel-before"));
+        call(serde_json::json!({"action":"cancel","request_id":"cancel"}).to_string());
+        poll("cancel", "stopped");
+        let frame = mobile.refresh().unwrap().unwrap();
+        for forbidden in ["MUST_NOT_RUN", "LOST_MUST_NOT_RUN", "CANCEL_MUST_NOT_RUN"] {
+            assert!(!has_output(frame.cells.iter().map(|c| c.text.as_str()), frame.cols as usize, forbidden));
+        }
+        mobile.close_selected().unwrap();
+        thread::sleep(Duration::from_millis(300));
+        assert!(mobile.sessions().unwrap().iter().all(|s| s.id != session.id));
+        let next_session = mobile.create_session(String::new()).unwrap();
+        mobile.select(next_session.id, false).unwrap();
+        mobile.disconnect().unwrap();
+    }).await.unwrap();
+    local
+        .call(Request {
+            operation: Operation::Shutdown as i32,
+            ..Request::default()
+        })
+        .unwrap();
+    host.child.wait().unwrap();
+    server.abort();
 }
 
 #[cfg(unix)]

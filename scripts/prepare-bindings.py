@@ -16,7 +16,7 @@ subprocess.run([str(ROOT/'target/debug/ai-terminal-bindgen'),'generate','--libra
                 '--language','kotlin','--language','swift','--out-dir',str(ROOT/'build/bindings'),'--no-format','--metadata-no-deps'],cwd=ROOT,env=env,check=True)
 (ROOT/'build/fixtures').mkdir(parents=True,exist_ok=True)
 subprocess.run(['cargo','run','--locked','-p','ai-terminal-engine','--example','fixture','--','build/fixtures/screen.pb'],cwd=ROOT,env=env,check=True)
-for target,abi in [('aarch64-linux-android','arm64-v8a'),('x86_64-linux-android','x86_64')]:
+for target,abi in [('aarch64-linux-android','arm64-v8a'),('x86_64-linux-android','x86_64'),('i686-linux-android','x86')]:
     source=ROOT/'build/mobile'/target/'libai_terminal_mobile.so'
     if source.exists():
         dest=ROOT/'build/android-jni'/abi;dest.mkdir(parents=True,exist_ok=True)

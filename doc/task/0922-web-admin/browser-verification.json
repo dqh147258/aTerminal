@@ -1,0 +1,21 @@
+{
+  "browser": "147.0.7727.15",
+  "desktop": "1440x1000",
+  "mobile": "390x844 and 320x720",
+  "checks": [
+    "login rejection and success",
+    "create validation and persistence",
+    "duplicate username",
+    "password reset",
+    "user filter",
+    "XSS literal rendering",
+    "device revocation and access denial",
+    "connection revocation",
+    "search empty state",
+    "server error and retry",
+    "mobile overflow",
+    "no browser storage",
+    "logout and reload clear token"
+  ],
+  "consoleErrors": []
+}
