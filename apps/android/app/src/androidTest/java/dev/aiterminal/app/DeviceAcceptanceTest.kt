@@ -33,6 +33,13 @@ class DeviceAcceptanceTest {
     private fun views() = all(activity.window.decorView)
     private fun field(hint: String): EditText = views().filterIsInstance<EditText>().first { it.hint?.toString() == hint && it.isShown }
     private fun click(text: String) { main { assertForeground(); views().filterIsInstance<Button>().first { it.text.toString() == text && it.isShown }.performClick() } }
+    private fun clickDescription(text: String) { main { assertForeground(); views().first { it.contentDescription?.toString() == text && it.isShown }.performClick() } }
+    private fun logout() {
+        clickDescription("账号与设备"); click("退出登录")
+        instrumentation.waitForIdleSync()
+        instrumentation.uiAutomation.rootInActiveWindow.findAccessibilityNodeInfosByText("退出").last { it.isClickable }
+            .performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
+    }
     private fun waitFor(label: String, seconds: Long = 20, condition: () -> Boolean) { val deadline = SystemClock.elapsedRealtime() + seconds * 1000; while (SystemClock.elapsedRealtime() < deadline) { if (main(condition)) return; Thread.sleep(30) }; throw AssertionError("Timed out: $label") }
     private fun get(name: String): Any? = MainActivity::class.java.getDeclaredField(name).apply { isAccessible = true }.get(activity)
     private fun core() = get("remote") as RemoteTerminal
@@ -43,26 +50,34 @@ class DeviceAcceptanceTest {
     private fun stats(samples: List<Double>): JSONObject { assertTrue("No samples", samples.isNotEmpty()); val sorted = samples.sorted(); return JSONObject().put("count", sorted.size).put("p50_ms", sorted[sorted.size / 2]).put("p95_ms", sorted[(sorted.size * 95 + 99) / 100 - 1]).put("p99_ms", sorted[(sorted.size * 99 + 99) / 100 - 1]) }
     private fun select(id: String) {
         val sessions = core().sessions(); val index = sessions.indexOfFirst { it.id == id }; assertTrue(index >= 0)
-        main { ((get("sessionsBox") as LinearLayout).getChildAt(index) as Button).performClick() }
+        clickDescription("打开工作空间")
+        main { views().filterIsInstance<Button>().first { it.text.toString().startsWith(sessions[index].cwd + "\n") && it.isShown }.performClick() }
         waitFor("selected session") { get("selected") == id }
+        if (!main { (get("inputBox") as View).isShown }) clickDescription("显示或隐藏终端输入")
         if (!main { core().hasControl() }) { main { (get("takeControl") as CheckBox).performClick() }; waitFor("input control") { get("selected") == id && get("controlled") == true && core().hasControl() } }
     }
     private fun send(text: String) { main { field("输入文字").setText(text) }; click("发送") }
-    private fun connectDesktop() { waitFor("online desktop") { views().filterIsInstance<Button>().any { it.text.toString() == "Local Desktop · 在线" } }; click("Local Desktop · 在线"); waitFor("sessions") { (get("sessionsBox") as LinearLayout).childCount > 0 } }
+    private fun connectDesktop() {
+        waitFor("signed in") { (get("workspace") as View).isShown }
+        clickDescription("账号与设备")
+        waitFor("online desktop") { views().any { it.contentDescription?.toString() == "连接 Local Desktop" && it.isEnabled } }
+        clickDescription("连接 Local Desktop")
+        waitFor("sessions") { get("selected") != null }
+    }
 
     @Test fun accountInputAndPerformance() {
         val context = instrumentation.targetContext
         val fixture = JSONObject(File(context.filesDir, "device-fixture.json").readText())
         result.put("model", Build.MODEL).put("android", Build.VERSION.RELEASE).put("api", Build.VERSION.SDK_INT).put("native_build", InstrumentationRegistry.getArguments().getString("nativeBuild", "debug"))
         // MIUI can block an instrumentation process launching its own Activity from the background.
-        instrumentation.uiAutomation.executeShellCommand("am start -W -n dev.aiterminal.app/.MainActivity").use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
+        instrumentation.uiAutomation.executeShellCommand("am start -W -n dev.aiterminal.app/.MainActivity --ez acceptance_test true").use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
         val launchDeadline=SystemClock.elapsedRealtime()+10000
         var launched: MainActivity? = null
         while (launched==null && SystemClock.elapsedRealtime()<launchDeadline) { launched=main { ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<MainActivity>().firstOrNull() }; if(launched==null) Thread.sleep(30) }
         activity=launched ?: throw AssertionError("Activity did not resume")
         waitFor("AI Terminal foreground focus") { activity.hasWindowFocus() }
         try {
-            if (PairingStore(context,"account").load() != null) { waitFor("restored account") { (get("accountBar") as View).isShown }; click("退出");waitFor("logout before isolated login") { (get("loginBox") as View).isShown } }
+            if (PairingStore(context,"acceptance-account").load() != null) { waitFor("restored account") { (get("workspace") as View).isShown }; logout(); waitFor("logout before isolated login") { (get("loginBox") as View).isShown } }
             main { field("服务器 https://…").setText(fixture.getString("server")); field("账号").setText(fixture.getString("username")); field("密码").setText(fixture.getString("password")) }
             click("登录"); connectDesktop(); select(fixture.getString("session"))
             waitFor("Wi-Fi direct", 15) { core().connectionPath() == "direct" }
@@ -95,22 +110,22 @@ class DeviceAcceptanceTest {
             }
             result.put("direct_benchmarks", runs)
             if (benchmarks.length() > 0) {
-                val method = MainActivity::class.java.getDeclaredMethod("select", String::class.java, Boolean::class.javaPrimitiveType).apply { isAccessible = true }
+                val method = MainActivity::class.java.getDeclaredMethod("select", String::class.java, Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType).apply { isAccessible = true }
                 val executor = get("historyWorker") as java.util.concurrent.ExecutorService
                 val historyGate = java.util.concurrent.CountDownLatch(1)
                 executor.execute { historyGate.await(10, java.util.concurrent.TimeUnit.SECONDS) }
                 try {
                     click("历史")
-                    main { method.invoke(activity, fixture.getString("session"), false) }
+                    main { method.invoke(activity, fixture.getString("session"), false, false) }
                 } finally { historyGate.countDown() }
                 executor.submit {}.get(10, java.util.concurrent.TimeUnit.SECONDS)
                 waitFor("session after delayed history") { get("selected") == fixture.getString("session") }
-                main { assertTrue("Late history opened a dialog for the previous session", activity.hasWindowFocus()) }
+                main { assertNull("Late history opened a panel for the previous session", get("overlay")) }
                 result.put("stale_history_suppressed", true)
                 repeat(6) { index ->
                     val id = if (index % 2 == 0) fixture.getString("session") else benchmarks.getJSONObject(0).getString("id")
                     val intermediate = if (id == fixture.getString("session")) benchmarks.getJSONObject(0).getString("id") else fixture.getString("session")
-                    main { assertForeground(); method.invoke(activity, intermediate, false); method.invoke(activity, id, false) }
+                    main { assertForeground(); method.invoke(activity, intermediate, false, false); method.invoke(activity, id, false, false) }
                     waitFor("rapid session switch") { get("selected") == id }
                     val authority = core().refresh() ?: throw AssertionError("Missing selected state")
                     waitFor("UI equals validated replica after switch") { frame() == authority }
@@ -128,11 +143,11 @@ class DeviceAcceptanceTest {
             val until=SystemClock.elapsedRealtime()+10000
             while (core().hasControl() && SystemClock.elapsedRealtime()<until) Thread.sleep(30)
             assertFalse(core().hasControl())
-            instrumentation.uiAutomation.executeShellCommand("am start -W -n dev.aiterminal.app/.MainActivity").use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
+            instrumentation.uiAutomation.executeShellCommand("am start -W -n dev.aiterminal.app/.MainActivity --ez acceptance_test true").use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
             waitFor("actual foreground") { get("active") == true && activity.hasWindowFocus() }
             connectDesktop(); select(fixture.getString("session")); send("printf 'ANDROID_RESUME_OK\\n'"); click("回车")
             waitFor("resume output") { screenText().contains("ANDROID_RESUME_OK") }; result.put("background_release_reconnect", true)
-            click("退出"); waitFor("logout") { (get("loginBox") as View).visibility == View.VISIBLE }; result.put("logout_ui", true)
+            logout(); waitFor("logout") { (get("loginBox") as View).isShown }; result.put("logout_ui", true)
             result.put("passed", true)
         } finally {
             result.put("last_status", main { (get("status") as TextView).text.toString() })

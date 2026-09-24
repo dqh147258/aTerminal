@@ -78,7 +78,7 @@ class DisplayConsistencyTest {
         assertEquals("The caller's immutable initial snapshot was mutated", "a", first.cells[0].text)
     }
     @Test fun hardwareRowCacheMatchesAFullRedraw() {
-        instrumentation.uiAutomation.executeShellCommand("am start -W -n dev.aiterminal.app/.MainActivity").use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
+        instrumentation.uiAutomation.executeShellCommand("am start -W -n dev.aiterminal.app/.MainActivity --ez isolated_ui true").use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
         var activity: MainActivity? = null
         val deadline = SystemClock.elapsedRealtime() + 10_000
         while (activity == null && SystemClock.elapsedRealtime() < deadline) {
