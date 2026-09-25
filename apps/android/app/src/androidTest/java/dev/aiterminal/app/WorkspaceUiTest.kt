@@ -205,13 +205,16 @@ class WorkspaceUiTest {
                 val terminal = views(activity).filterIsInstance<TerminalView>().first()
                 val keys = mutableListOf<String>()
                 val text = mutableListOf<String>()
+                val ordered = mutableListOf<String>()
                 terminal.canType = { true }
-                terminal.sendKey = { keys.add(it); true }
-                terminal.sendText = { text.add(it); true }
+                terminal.sendKey = { keys.add(it); ordered.add("key:$it"); true }
+                terminal.sendText = { text.add(it); ordered.add("text:$it"); true }
+                terminal.sendPaste = { ordered.add("paste:$it"); true }
                 assertTrue(terminal.focusKeyboard())
                 val selected = MainActivity::class.java.getDeclaredField("selected").apply { isAccessible = true }
                 selected.set(activity, "fixture-session")
                 val history = views(activity).filterIsInstance<Button>().first { it.text == "历史" }
+                history.isFocusableInTouchMode = true
                 assertTrue(history.requestFocus())
                 assertTrue(history.hasFocus())
                 for (code in listOf(KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_TAB, KeyEvent.KEYCODE_A)) {
@@ -220,8 +223,59 @@ class WorkspaceUiTest {
                 }
                 assertEquals(listOf("enter", "tab"), keys)
                 assertEquals(listOf("a"), text)
+                ordered.clear()
+                val connection = terminal.onCreateInputConnection(android.view.inputmethod.EditorInfo())
+                connection.commitText("git sta\t\n", 1)
+                assertEquals(listOf("paste:git sta\t\n"), ordered)
+                ordered.clear()
+                assertTrue(activity.dispatchKeyEvent(KeyEvent(SystemClock.uptimeMillis(), "\t中文", 0, 0)))
+                assertEquals(listOf("paste:\t中文"), ordered)
+                ordered.clear()
+                for (value in listOf("\t", "\n", "\r\n", "中文🙂")) connection.commitText(value, 1)
+                assertEquals(listOf("key:tab", "key:enter", "key:enter", "text:中文🙂"), ordered)
+                ordered.clear()
+                // An IME clipboard batch must be one request, including CRLF and tabs.
+                connection.commitText("printf first\r\nprintf\tsecond\n", 1)
+                assertEquals(listOf("paste:printf first\r\nprintf\tsecond\n"), ordered)
+                ordered.clear()
+                terminal.sendPaste = { ordered.add("rejected:$it"); false }
+                connection.commitText("rejected\tcommand\n", 1)
+                assertEquals(listOf("rejected:rejected\tcommand\n"), ordered)
                 assertTrue(history.hasFocus())
                 assertNull(MainActivity::class.java.getDeclaredField("overlay").apply { isAccessible = true }.get(activity))
+            }
+        }
+    }
+
+    @Test fun explicitPastePreservesControlsAndRespectsReadOnly() {
+        launch().use { scenario ->
+            scenario.onActivity { activity ->
+                val terminal = views(activity).filterIsInstance<TerminalView>().first()
+                val events = mutableListOf<String>()
+                terminal.canType = { true }
+                terminal.sendText = { events.add("text:$it"); true }
+                terminal.sendKey = { events.add("key:$it"); true }
+                terminal.sendPaste = { events.add("paste:$it"); true }
+                val clipboard = activity.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                val saved = clipboard.primaryClip
+                try {
+                    val connection = terminal.onCreateInputConnection(android.view.inputmethod.EditorInfo())
+                    for (value in listOf("\t", "\n", "printf 'one'\r\nprintf 'two'\n", "中文🙂")) {
+                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("test", value))
+                        events.clear()
+                        assertTrue(connection.performContextMenuAction(android.R.id.paste))
+                        assertEquals(listOf("paste:$value"), events)
+                    }
+                    events.clear()
+                    assertTrue(terminal.handleHardwareKey(KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_V, 0, KeyEvent.META_CTRL_ON)))
+                    assertEquals(listOf("paste:中文🙂"), events)
+                    events.clear()
+                    terminal.canType = { false }
+                    assertFalse(terminal.pasteClipboard())
+                    assertTrue(events.isEmpty())
+                } finally {
+                    clipboard.setPrimaryClip(saved ?: android.content.ClipData.newPlainText("", ""))
+                }
             }
         }
     }

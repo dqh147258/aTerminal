@@ -20,6 +20,7 @@ import uniffi.ai_terminal_mobile.*
 class TerminalView(context: Context, private var frame: RenderFrame) : View(context) {
     var canType: () -> Boolean = { false }
     var sendText: (String) -> Boolean = { false }
+    var sendPaste: (String) -> Boolean = { false }
     var sendKey: (String) -> Boolean = { false }
     var keyboardOpened: () -> Unit = {}
     var readOnlyTapped: () -> Unit = {}
@@ -114,21 +115,37 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
                 return sendKey("backspace")
             }
             override fun performEditorAction(actionCode: Int) = sendKey("enter")
+            override fun performContextMenuAction(id: Int): Boolean =
+                if (id == android.R.id.paste || id == android.R.id.pasteAsPlainText) pasteClipboard()
+                else super.performContextMenuAction(id)
             override fun sendKeyEvent(event: KeyEvent): Boolean =
-                if (event.action == KeyEvent.ACTION_DOWN && terminalKey(event)) true
+                if ((event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_MULTIPLE) && terminalKey(event)) true
                 else event.action == KeyEvent.ACTION_UP || super.sendKeyEvent(event)
         }
     }
     private fun committedText(value: String) {
-        val segment = StringBuilder()
-        fun flush() { if (segment.isNotEmpty()) { sendText(segment.toString()); segment.setLength(0) } }
-        for (character in value) {
-            if (character == '\n' || character == '\r') { flush(); sendKey("enter") }
-            else segment.append(character)
+        // IMEs do not identify clipboard commits. Only a standalone control is a
+        // key; preserve mixed/batched text as one paste instead of executing it.
+        when {
+            value == "\t" -> sendKey("tab")
+            value == "\n" || value == "\r" || value == "\r\n" -> sendKey("enter")
+            value.any { it == '\t' || it == '\n' || it == '\r' } -> sendPaste(value)
+            value.isNotEmpty() -> sendText(value)
         }
-        flush()
+    }
+    fun pasteClipboard(): Boolean {
+        if (!canType()) { readOnlyTapped(); return false }
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val clip = clipboard.primaryClip ?: return false
+        if (clip.itemCount == 0) return false
+        val text = clip.getItemAt(0).coerceToText(context)?.toString() ?: return false
+        return text.isNotEmpty() && sendPaste(text)
     }
     private fun terminalKey(event: KeyEvent): Boolean {
+        if (event.keyCode == KeyEvent.KEYCODE_V && event.isCtrlPressed) { pasteClipboard(); return true }
+        if (event.action == KeyEvent.ACTION_MULTIPLE && event.keyCode == KeyEvent.KEYCODE_UNKNOWN) {
+            event.characters?.let { committedText(it); return true }
+        }
         val key = when (event.keyCode) {
             KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> "enter"
             KeyEvent.KEYCODE_TAB -> "tab"
@@ -144,11 +161,12 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
         if (key != null) { sendKey(key); return true }
         if (event.isCtrlPressed || event.isAltPressed) return false
         val codePoint = event.unicodeChar
-        if (codePoint > 0) { sendText(String(Character.toChars(codePoint))); return true }
+        if (codePoint > 0) { committedText(String(Character.toChars(codePoint))); return true }
         return false
     }
     fun handleHardwareKey(event: KeyEvent): Boolean = terminalKey(event)
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean = terminalKey(event) || super.onKeyDown(keyCode, event)
+    override fun onKeyMultiple(keyCode: Int, repeatCount: Int, event: KeyEvent): Boolean = terminalKey(event) || super.onKeyMultiple(keyCode, repeatCount, event)
     private val rowNodes = mutableMapOf<Int, RenderNode>()
     private val changedRows = mutableSetOf<Int>()
     fun zoom(scale: Float) { rowNodes.clear(); paint.textSize = 15f * resources.displayMetrics.scaledDensity * scale; metrics.textSize = paint.textSize; cellWidth = metrics.measureText("M"); cellHeight = metrics.fontSpacing; baseline = -metrics.fontMetrics.top; requestLayout(); invalidate() }

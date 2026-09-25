@@ -257,7 +257,8 @@ final class TerminalModel: ObservableObject {
         }
     }
     // These FFI methods only enqueue bounded work; they never wait for a network acknowledgement.
-    func text(_ value: String) -> Bool { os_signpost(.event, log: performanceLog, name: "InputEnqueue"); do { try core.sendText(text: value, submit: false); return true } catch { status = terminalError(error); return false } }
+    func text(_ value: String) -> Bool { os_signpost(.event, log: performanceLog, name: "InputEnqueue"); do { try core.typeText(text: value); return true } catch { status = terminalError(error); return false } }
+    func paste(_ value: String) -> Bool { do { try core.sendText(text: value, submit: false); return true } catch { status = terminalError(error); return false } }
     func key(_ value: String) { os_signpost(.event, log: performanceLog, name: "InputEnqueue"); do { try core.sendKey(key: value) } catch { status = terminalError(error) } }
     func displayStatus(_ frame: RenderFrame?, _ path: String, _ controlled: Bool, _ error: String?) {
         if hasControl != controlled { hasControl = controlled }

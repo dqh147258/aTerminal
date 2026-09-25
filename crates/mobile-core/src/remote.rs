@@ -418,6 +418,17 @@ impl RemoteTerminal {
         let mut s = state.lock().map_err(ffi)?;
         take_update(&mut s)
     }
+    /// Committed keyboard/IME characters, with no bracketed-paste markers. Special keys
+    /// use send_key; send_text remains the explicit paste/command submission API.
+    pub fn type_text(&self, text: String) -> Result<(), CoreError> {
+        if text.len() > 16000 || text.chars().any(char::is_control) {
+            return Err(ffi("typed text too large or contains control characters"));
+        }
+        self.input(|req| {
+            req.input_kind = 0;
+            req.input = text.into_bytes();
+        })
+    }
     pub fn send_text(&self, text: String, submit: bool) -> Result<(), CoreError> {
         if text.len() > 16000 || text.contains('\x1b') {
             return Err(ffi("input too large or contains escape control"));
@@ -905,6 +916,47 @@ mod tests {
             .unwrap();
         assert!(desktop_available(&info));
         assert!(state.controlled);
+    }
+    #[test]
+    fn typing_preserves_utf8_without_paste_markers_and_rejects_controls() {
+        let (tx, mut rx) = mpsc::channel(8);
+        let state = Arc::new(Mutex::new(State {
+            selected: Some(info("typing", 10, 20)),
+            controlled: true,
+            ..State::default()
+        }));
+        let remote = RemoteTerminal {
+            inner: Mutex::new(Some(Worker {
+                tx,
+                state: state.clone(),
+                task: runtime().spawn(std::future::pending()),
+            })),
+        };
+        remote.type_text("git stat中文🙂".into()).unwrap();
+        let typed = rx.try_recv().unwrap().request;
+        assert_eq!(typed.input_kind, 0);
+        assert_eq!(typed.input, "git stat中文🙂".as_bytes());
+        assert_eq!(typed.input_seq, 1);
+        for invalid in ["\t", "\r", "\n", "\x1b[31m", "\x7f", &"x".repeat(16001)] {
+            assert!(remote.type_text(invalid.into()).is_err());
+        }
+        assert!(rx.try_recv().is_err());
+        assert_eq!(state.lock().unwrap().next_input, 2);
+        remote.send_key("tab".into()).unwrap();
+        let tab = rx.try_recv().unwrap().request;
+        assert_eq!(
+            (tab.input_kind, tab.key.as_str(), tab.input_seq),
+            (2, "tab", 2)
+        );
+        remote.send_text("paste\tcontent".into(), false).unwrap();
+        let pasted = rx.try_recv().unwrap().request;
+        assert_eq!(
+            (pasted.input_kind, pasted.text.as_str()),
+            (1, "paste\tcontent")
+        );
+        state.lock().unwrap().controlled = false;
+        assert!(remote.type_text("rejected".into()).is_err());
+        assert!(rx.try_recv().is_err());
     }
     #[test]
     fn input_queue_backpressure_does_not_consume_sequence_or_change_session_identity() {

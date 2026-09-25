@@ -135,7 +135,7 @@ struct WorkspaceScreen: View {
                 if let frame = model.screen {
                     TerminalSurface(frame: frame, zoom: min(24, max(12, fontSize)) / 15, generation: model.generation, core: model.displayCore,
                         canInput: model.hasControl && model.connected && !model.busy && panel == nil && !drawer, keyboardRequested: inputVisible,
-                        onText: model.text, onKey: model.key, onKeyboardChange: { inputVisible = $0 },
+                        onText: model.text, onPaste: model.paste, onKey: model.key, onKeyboardChange: { inputVisible = $0 },
                         onReadOnly: { model.status = model.readOnlyReason },
                         onStatus: model.displayStatus, onOpenWorkspace: { drawer = true })
                 } else {

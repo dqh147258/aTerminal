@@ -10,22 +10,28 @@ import subprocess
 ROOT = Path(__file__).resolve().parent.parent
 p = argparse.ArgumentParser()
 p.add_argument('--simulator', action='store_true')
+p.add_argument('--input-checks', action='store_true', help='Build an isolated UIKit terminal input regression probe')
 a = p.parse_args()
+if a.input_checks and not a.simulator:
+    p.error('--input-checks requires --simulator')
 sdk = 'iphonesimulator' if a.simulator else 'iphoneos'
 arch = 'x86_64' if a.simulator and os.uname().machine != 'arm64' else 'arm64'
 rust_target = ('x86_64-apple-ios' if arch == 'x86_64' else 'aarch64-apple-ios-sim') if a.simulator else 'aarch64-apple-ios'
 triple = arch + '-apple-ios15.0' + ('-simulator' if a.simulator else '')
 sdkroot = subprocess.check_output(['xcrun','--sdk',sdk,'--show-sdk-path'], text=True).strip()
-app = ROOT / 'build' / ('ios-simulator' if a.simulator else 'ios-device') / 'AITerminal.app'
+app = ROOT / 'build' / ('ios-input-checks' if a.input_checks else ('ios-simulator' if a.simulator else 'ios-device')) / 'AITerminal.app'
 app.mkdir(parents=True, exist_ok=True)
 bindings = ROOT / 'build/bindings'
+sources = sorted((ROOT/'apps/ios/AITerminal').glob('*.swift'))
+if a.input_checks:
+    sources = [ROOT/'apps/ios/AITerminal/TerminalView.swift', ROOT/'apps/ios/Tests/TerminalInputChecks.swift']
 args = ['xcrun','--sdk',sdk,'swiftc','-D','DEBUG','-parse-as-library','-sdk',sdkroot,'-target',triple,
         '-module-cache-path',str(ROOT/'build/swift-module-cache'),
         '-I',str(bindings),'-Xcc','-fmodule-map-file='+str(bindings/'ai_terminal_mobileFFI.modulemap'),
         '-L',str(ROOT/'build/mobile'/rust_target),'-lai_terminal_mobile','-lc++',
         '-framework','UIKit','-framework','SwiftUI','-framework','Foundation','-framework','Security',
         str(bindings/'ai_terminal_mobile.swift'),
-        *map(str,sorted((ROOT/'apps/ios/AITerminal').glob('*.swift'))),'-o',str(app/'AITerminal')]
+        *map(str,sources),'-o',str(app/'AITerminal')]
 subprocess.run(args,cwd=ROOT,check=True)
 shutil.copy2(ROOT/'build/fixtures/screen.pb',app/'screen.pb')
 info = {'CFBundleIdentifier':'dev.aiterminal.app','CFBundleName':'AI Terminal','CFBundleExecutable':'AITerminal',
@@ -33,6 +39,9 @@ info = {'CFBundleIdentifier':'dev.aiterminal.app','CFBundleName':'AI Terminal','
         'MinimumOSVersion':'15.0','LSRequiresIPhoneOS':True,'UIDeviceFamily':[1,2],
         'UILaunchScreen':{},'UIApplicationSceneManifest':{'UIApplicationSupportsMultipleScenes':False},
         'CFBundleSupportedPlatforms':['iPhoneSimulator' if a.simulator else 'iPhoneOS']}
+if a.input_checks:
+    info['CFBundleIdentifier'] = 'dev.aiterminal.inputchecks'
+    info.pop('UIApplicationSceneManifest')
 with (app/'Info.plist').open('wb') as f: plistlib.dump(info,f)
 if a.simulator:
     # This is a linker/render probe only. Use the Xcode project for Keychain and

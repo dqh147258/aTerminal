@@ -306,6 +306,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         inputBox = column(8).apply { visibility = View.GONE; setBackgroundColor(Palette.surface) }
         inputBox.addView(row().apply {
             addView(actionButton("历史") { terminalHistory() })
+            addView(actionButton("粘贴") { terminal?.pasteClipboard() })
             addView(iconButton(R.drawable.ic_x, "隐藏终端键盘") { toggleInput(false) })
         })
         val keys = row()
@@ -429,7 +430,8 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         empty.visibility = View.GONE
         if (terminal == null) { terminal = TerminalView(this, frame).apply {
             canType = { selected != null && controlled }
-            sendText = { text -> enqueue { remote.sendText(text, false) } }
+            sendText = { text -> enqueue { remote.typeText(text) } }
+            sendPaste = { text -> enqueue { remote.sendText(text, false) } }
             sendKey = { key -> enqueue { remote.sendKey(key) } }
             keyboardOpened = { inputBox.visibility = View.VISIBLE }
             readOnlyTapped = { notice(readOnlyReason()) }
@@ -793,10 +795,10 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_UP && terminalKeyUps.remove(event.keyCode)) return true
         val view = terminal
-        if (event.action == KeyEvent.ACTION_DOWN && selected != null && view != null &&
+        if ((event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_MULTIPLE) && selected != null && view != null &&
             overlay == null && workspace.visibility == View.VISIBLE && currentFocus !is EditText &&
             view.handleHardwareKey(event)) {
-            terminalKeyUps.add(event.keyCode)
+            if (event.action == KeyEvent.ACTION_DOWN) terminalKeyUps.add(event.keyCode)
             return true
         }
         return super.dispatchKeyEvent(event)

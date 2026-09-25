@@ -11,6 +11,7 @@ struct TerminalSurface: UIViewRepresentable {
     var canInput = false
     var keyboardRequested = false
     var onText: ((String) -> Bool)? = nil
+    var onPaste: ((String) -> Bool)? = nil
     var onKey: ((String) -> Void)? = nil
     var onKeyboardChange: ((Bool) -> Void)? = nil
     var onReadOnly: (() -> Void)? = nil
@@ -40,6 +41,7 @@ struct TerminalSurface: UIViewRepresentable {
         context.coordinator.onOpenWorkspace = onOpenWorkspace
         view.canInput = canInput
         view.onText = { text in coordinator.followCursor = true; coordinator.revealCursor(); return onText?(text) ?? false }
+        view.onPaste = { text in coordinator.followCursor = true; coordinator.revealCursor(); return onPaste?(text) ?? false }
         view.onKey = { key in coordinator.followCursor = true; coordinator.revealCursor(); onKey?(key) }
         view.onKeyboardChange = { open in
             onKeyboardChange?(open)
@@ -118,6 +120,8 @@ struct TerminalSurface: UIViewRepresentable {
 
 private final class TerminalInputField: UITextField {
     var onSpecialKey: ((String) -> Void)?
+    var onPaste: (() -> Void)?
+    override func paste(_ sender: Any?) { onPaste?() }
     override func deleteBackward() {
         if markedTextRange == nil && (text ?? "").isEmpty { onSpecialKey?("backspace") }
         else { super.deleteBackward() }
@@ -144,6 +148,7 @@ final class TerminalView: UIView, UIContextMenuInteractionDelegate, UITextFieldD
     private let performanceLog = OSLog(subsystem: "dev.aiterminal", category: .pointsOfInterest)
     var canInput = false { didSet { screenElement.accessibilityLabel = canInput ? "终端画面，点击输入" : "终端画面，只读" } }
     var onText: ((String) -> Bool)?
+    var onPaste: ((String) -> Bool)?
     var onKey: ((String) -> Void)?
     var onKeyboardChange: ((Bool) -> Void)?
     var onReadOnly: (() -> Void)?
@@ -241,6 +246,7 @@ final class TerminalView: UIView, UIContextMenuInteractionDelegate, UITextFieldD
         inputField.delegate = self
         inputField.addTarget(self, action: #selector(inputChanged), for: .editingChanged)
         inputField.onSpecialKey = { [weak self] key in self?.onKey?(key) }
+        inputField.onPaste = { [weak self] in self?.paste(nil) }
         addSubview(inputField)
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tapped)))
     }
@@ -264,14 +270,31 @@ final class TerminalView: UIView, UIContextMenuInteractionDelegate, UITextFieldD
     @objc private func inputChanged() {
         guard inputField.markedTextRange == nil, let text = inputField.text, !text.isEmpty else { return }
         inputField.text = ""
-        _ = onText?(text)
+        committedText(text)
+    }
+    func committedText(_ text: String) {
+        guard !text.isEmpty else { return }
+        // Text replacements/IME commits may contain pasted content without a
+        // paste action. Keep batches intact; only standalone controls are keys.
+        switch text {
+        case "\t": onKey?("tab")
+        case "\n", "\r", "\r\n": onKey?("enter")
+        default:
+            if text.contains(where: { $0 == "\t" || $0 == "\n" || $0 == "\r" || $0 == "\r\n" }) { _ = onPaste?(text) }
+            else { _ = onText?(text) }
+        }
+    }
+    override func paste(_ sender: Any?) {
+        guard canInput else { onReadOnly?(); return }
+        guard let text = UIPasteboard.general.string, !text.isEmpty else { return }
+        _ = onPaste?(text)
     }
     func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
         UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
             UIMenu(children: [UIAction(title: "复制屏幕") { _ in
                 guard let screen = self?.screen else { return }
                 UIPasteboard.general.string = (0..<Int(screen.rows)).map { row in screen.cells[(row * Int(screen.cols))..<((row + 1) * Int(screen.cols))].filter { $0.width > 0 }.map(\.text).joined() }.joined(separator: "\n")
-            }])
+            }, UIAction(title: "粘贴", attributes: self?.canInput == true ? [] : .disabled) { _ in self?.paste(nil) }])
         }
     }
     private func rebuildFont() {

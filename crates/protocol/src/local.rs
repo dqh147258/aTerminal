@@ -38,7 +38,7 @@ pub struct Request {
     pub history_offset: u32,
     #[prost(uint32, tag = "15")]
     pub history_limit: u32,
-    /// 0 raw local-terminal bytes, 1 text/paste, 2 named key; encode using authority modes.
+    /// 0 raw terminal/typing bytes, 1 text/paste, 2 named key; encode using authority modes.
     #[prost(uint32, tag = "16")]
     pub input_kind: u32,
     #[prost(string, tag = "17")]

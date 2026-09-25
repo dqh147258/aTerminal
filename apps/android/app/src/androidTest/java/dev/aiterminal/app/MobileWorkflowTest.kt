@@ -59,7 +59,7 @@ class MobileWorkflowTest {
     private fun frame(): RenderFrame? = (get("terminal") as? TerminalView)?.let {
         TerminalView::class.java.getDeclaredField("frame").apply { isAccessible = true }.get(it) as RenderFrame
     }
-    private fun lines() = frame()?.let { f -> f.cells.chunked(f.cols.toInt()).map { line -> line.joinToString("") { it.text }.trim() } }.orEmpty()
+    private fun lines() = frame()?.let { f -> f.cells.chunked(f.cols.toInt()).map { line -> line.filter { it.width > 0u }.joinToString("") { it.text }.trim() } }.orEmpty()
     private fun readyInput() {
         if (!main { (get("inputBox") as View).isShown }) icon("显示或隐藏终端键盘")
         waitFor("input availability") { get("controlled") == true }
@@ -126,6 +126,35 @@ class MobileWorkflowTest {
             input("printf 'GIT_STATUS_COMPLETED\\n'")
             waitFor("git status keeps the live PTY usable") { lines().any { it == "GIT_STATUS_COMPLETED" } }
             result.put("git_status_survived", true)
+            // Check the authoritative cell backgrounds, not just the cursor shape: Zsh
+            // highlights each bracketed paste even when the mobile cursor is a thin beam.
+            input("printf '\\033[2J\\033[H'")
+            waitFor("cleared typing screen") { lines().none { it == "GIT_STATUS_COMPLETED" } }
+            var typed = ""
+            for (character in "git stat") {
+                type(character.toString()); typed += character
+                val expected = typed
+                waitFor("character echoed: $expected") { lines().any { it.endsWith(expected.trimEnd()) } }
+                waitFor("typed character has no paste highlight") {
+                    val f = frame()!!
+                    val row = f.cells.subList((f.cursorRow * f.cols).toInt(), ((f.cursorRow + 1u) * f.cols).toInt())
+                    val start = f.cursorCol.toInt() - expected.length
+                    start >= 0 && row.subList(start, f.cursorCol.toInt()).joinToString("") { it.text } == expected &&
+                        row.subList(start, f.cursorCol.toInt()).all { it.background == row.last().background }
+                }
+            }
+            screenshot("typing-no-highlight")
+            result.put("per_character_typing_no_highlight", true)
+            mutate { assertTrue(activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL))) }
+            waitFor("backspace edits typed text") { lines().any { it.endsWith("git sta") } }
+            type("\t")
+            waitFor("IME Tab shows git completion candidates") { lines().any { it.contains("stash") } && lines().any { it.contains("status") } }
+            screenshot("ime-tab-completion")
+            result.put("ime_tab_git_completion", true)
+            click("Ctrl-C")
+            type("中文🙂")
+            waitFor("Unicode committed text reaches PTY") { lines().any { it.contains("中文🙂") } }
+            click("Ctrl-C")
             if (fixture.optBoolean("check_desktop_detach")) {
                 File(context.filesDir, "desktop-detach-ready").writeText(target)
                 waitFor("Desktop detach makes Mobile read-only") { get("controlled") == false && !(get("remote") as RemoteTerminal).desktopAttached() }
@@ -149,7 +178,12 @@ class MobileWorkflowTest {
             input("echo ANDROID_TAB_READY")
             waitFor("shell finished preparing Tab target") { lines().any { it == "ANDROID_TAB_READY" } }
             type("cat $tabDirectory/comple")
-            click("Tab"); click("回车")
+            mutate {
+                assertTrue(activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_TAB)))
+                assertTrue(activity.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_TAB)))
+            }
+            waitFor("hardware Tab expands the path") { lines().any { it.contains("cat $tabDirectory/complete_marker") } }
+            click("回车")
             waitFor("Tab completes a real shell path") { lines().any { it == "ANDROID_TAB_OK" } }
             input("rm -r $tabDirectory")
             result.put("real_tab_completion", true)

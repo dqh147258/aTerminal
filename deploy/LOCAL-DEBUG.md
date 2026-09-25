@@ -56,6 +56,10 @@ python3 scripts/build-artifacts.py --dry-run desktop,android
 
 用电脑键盘控制 Android/iOS 模拟器时，只要当前终端会话可输入且没有打开弹窗，普通字符、Enter 和 Tab 会直接送到 Shell；即使焦点曾落在终端工具按钮上，Enter 也不会打开“历史”。弹窗中的文本框仍正常接收键盘输入。移动端默认显示细竖线光标，Desktop CLI 将默认光标形状交由宿主 Terminal 的设置决定。
 
+终端键盘和输入法已提交的字符使用 `RemoteTerminal.typeText`，避免 Zsh 把逐字输入当作粘贴而反白显示。输入法提交的 TAB 和模拟器文本事件也会转为终端 Tab 补全；显式粘贴接口 `sendText` 继续保留 bracketed paste 语义。这项修复只需更新手机 App，无需重启 Desktop Agent 或现有 Shell。
+
+Android 可使用键盘栏“粘贴”、Ctrl-V 或系统粘贴动作；iOS 支持系统粘贴及终端长按菜单“粘贴”。这些入口均按原样发送剪贴板文本，不自动按回车。IME 未标明来源时，仅单独的 TAB/换行按键处理；含 TAB/换行的批量文本整体走粘贴。由于 `commitText` 不区分键入和剪贴板，若要粘贴单独一个 TAB/换行，请使用显式粘贴入口。
+
 一键启动完成后，在 Desktop 运行 `git status`、Tab 补全、Ctrl-C 等操作，同时观察手机终端画面和会话列表。要确认设备没有重复注册，可多次运行启动脚本，然后检查 `ai-terminal devices list` 中当前 Desktop 和当前 Android 的 ID 均保持不变，且每个平台仅有一台在线。`adb -s 127.0.0.1:62001 reverse --list` 应为空。手机前台应为 `dev.aiterminal.app/.MainActivity`。Android 最低支持 API 25，构建同时覆盖 arm64-v8a、x86_64 和 x86。
 
 常用检查命令：

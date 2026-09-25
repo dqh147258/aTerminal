@@ -99,6 +99,7 @@ final class LiveServiceUITests: XCTestCase {
         let desktopDetachedFile: String?
         let createCommand: String?
         let closeCommandPrefix: String?
+        let typingMarker: String?
         struct Benchmark: Decodable { let id: String; let cols: Int }
     }
     override func setUp() { continueAfterFailure = false }
@@ -136,6 +137,28 @@ final class LiveServiceUITests: XCTestCase {
         XCTAssertTrue(app.keyboards.buttons["Return"].waitForExistence(timeout: 3))
         app.keyboards.buttons["Return"].tap()
         if hideInput { app.buttons["隐藏键盘"].tap() }
+    }
+    // The coordinator supplies an already authenticated, attached disposable session.
+    // Verify its unique marker before sending input, so no user shell can be touched.
+    func testKeyboardInAttachedFixture() throws {
+        guard let path = ProcessInfo.processInfo.environment["AI_TERMINAL_IOS_FIXTURE"], path.hasPrefix("/"), FileManager.default.fileExists(atPath: path) else { throw XCTSkip("Dedicated integration fixture not supplied") }
+        let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: URL(fileURLWithPath: path)))
+        guard let marker = fixture.typingMarker else { throw XCTSkip("Attached typing fixture not supplied") }
+        let app = XCUIApplication(); app.launchArguments = ["--service-test"]
+        if let caPem = fixture.caPem { app.launchEnvironment["AI_TERMINAL_TEST_CA_PEM"] = caPem }
+        app.launch()
+        wait(30) { self.hasLine(app, marker) }
+        terminal(app).tap()
+        app.typeText("git stat")
+        wait { self.text(app).contains("git stat") }
+        capture("typing-no-paste-highlight")
+        app.typeText(XCUIKeyboardKey.delete.rawValue + "\t")
+        wait { self.text(app).contains("stash") && self.text(app).contains("status") }
+        capture("keyboard-tab-completion")
+        app.buttons["terminal.key.ctrl_c"].tap()
+        command("printf 'IOS_KEYBOARD_FIXED\\n'", app: app)
+        wait { self.hasLine(app, "IOS_KEYBOARD_FIXED") }
+        capture("keyboard-return-executed")
     }
     func testRealTerminalWorkflowAndPlaceholder() throws {
         guard let path = ProcessInfo.processInfo.environment["AI_TERMINAL_IOS_FIXTURE"], path.hasPrefix("/"), FileManager.default.fileExists(atPath: path) else { throw XCTSkip("Dedicated integration fixture not supplied") }
