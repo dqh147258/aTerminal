@@ -19,14 +19,14 @@
 		463263EE470524BC379F8941 /* ai_terminal_mobile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61755E5491772A4DBDE6AECB /* ai_terminal_mobile.swift */; };
 		61657C3ADB284DE314771D24 /* PairingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6AE163B2FCA3046FA19CFEA /* PairingStore.swift */; };
 		77D8E995138A39C40A9B99E2 /* screen.pb in Resources */ = {isa = PBXBuildFile; fileRef = E8C89ABDC01F8217E7774795 /* screen.pb */; };
-		994C1B1B866DFDA3644B3F09 /* AITerminalCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 775FA7E799FB1D6CE1A1A4C7 /* AITerminalCore.xcframework */; };
+		994C1B1B866DFDA3644B3F09 /* aTerminalCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 775FA7E799FB1D6CE1A1A4C7 /* aTerminalCore.xcframework */; };
 		99D0B7BFCDE46CC7EE3C6036 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F6692C8E1B00C5281C2EA7EA /* Foundation.framework */; };
-		BCDD60CB2B924C39F32959F7 /* AITerminalApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E61A9D47D7F9A3E562878563 /* AITerminalApp.swift */; };
+		BCDD60CB2B924C39F32959F7 /* aTerminalApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E61A9D47D7F9A3E562878563 /* aTerminalApp.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		BBCCDDEE0000000000000002 /* WorkspaceUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/WorkspaceUITests.swift; sourceTree = "<group>"; };
-		BBCCDDEE0000000000000003 /* AITerminalUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = AITerminalUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		BBCCDDEE0000000000000003 /* aTerminalUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = aTerminalUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AABBCCDD0000000000000021 /* ChatStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStore.swift; sourceTree = "<group>"; };
 		AABBCCDD0000000000000022 /* AssistantModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantModel.swift; sourceTree = "<group>"; };
 		AABBCCDD0000000000000023 /* SpeechDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechDraft.swift; sourceTree = "<group>"; };
@@ -35,11 +35,11 @@
 		AABBCCDD0000000000000026 /* WorkspaceScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceScreen.swift; sourceTree = "<group>"; };
 		AABBCCDD0000000000000027 /* ChatPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatPanel.swift; sourceTree = "<group>"; };
 		61755E5491772A4DBDE6AECB /* ai_terminal_mobile.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ai_terminal_mobile.swift; path = ../../build/bindings/ai_terminal_mobile.swift; sourceTree = "<group>"; };
-		775FA7E799FB1D6CE1A1A4C7 /* AITerminalCore.xcframework */ = {isa = PBXFileReference; includeInIndex = 1; name = AITerminalCore.xcframework; path = ../../build/AITerminalCore.xcframework; sourceTree = "<group>"; };
-		8B426614BE9F4E8D712529B8 /* AITerminal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AITerminal.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		775FA7E799FB1D6CE1A1A4C7 /* aTerminalCore.xcframework */ = {isa = PBXFileReference; includeInIndex = 1; name = aTerminalCore.xcframework; path = ../../build/aTerminalCore.xcframework; sourceTree = "<group>"; };
+		8B426614BE9F4E8D712529B8 /* aTerminal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = aTerminal.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		907E6EABCDB6D1F4CBDDD6C9 /* TerminalView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TerminalView.swift; sourceTree = "<group>"; };
 		C6AE163B2FCA3046FA19CFEA /* PairingStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PairingStore.swift; sourceTree = "<group>"; };
-		E61A9D47D7F9A3E562878563 /* AITerminalApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AITerminalApp.swift; sourceTree = "<group>"; };
+		E61A9D47D7F9A3E562878563 /* aTerminalApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = aTerminalApp.swift; sourceTree = "<group>"; };
 		E8C89ABDC01F8217E7774795 /* screen.pb */ = {isa = PBXFileReference; includeInIndex = 1; name = screen.pb; path = ../../build/fixtures/screen.pb; sourceTree = "<group>"; };
 		F6692C8E1B00C5281C2EA7EA /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 /* End PBXFileReference section */
@@ -51,7 +51,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				99D0B7BFCDE46CC7EE3C6036 /* Foundation.framework in Frameworks */,
-				994C1B1B866DFDA3644B3F09 /* AITerminalCore.xcframework in Frameworks */,
+				994C1B1B866DFDA3644B3F09 /* aTerminalCore.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -80,16 +80,16 @@
 				BBCCDDEE0000000000000002 /* WorkspaceUITests.swift */,
 				DE7652F0A809344784C6793D /* Products */,
 				F237E9ED0528496B51926266 /* Frameworks */,
-				BA87ED45B9F295883E96DB8F /* AITerminal */,
+				BA87ED45B9F295883E96DB8F /* aTerminal */,
 				1095BC25BBF1355B6982987F /* Rust Bindings */,
 				E8C89ABDC01F8217E7774795 /* screen.pb */,
 			);
 			sourceTree = "<group>";
 		};
-		BA87ED45B9F295883E96DB8F /* AITerminal */ = {
+		BA87ED45B9F295883E96DB8F /* aTerminal */ = {
 			isa = PBXGroup;
 			children = (
-				E61A9D47D7F9A3E562878563 /* AITerminalApp.swift */,
+				E61A9D47D7F9A3E562878563 /* aTerminalApp.swift */,
 				AABBCCDD0000000000000021 /* ChatStore.swift */,
 				AABBCCDD0000000000000022 /* AssistantModel.swift */,
 				AABBCCDD0000000000000023 /* SpeechDraft.swift */,
@@ -100,15 +100,15 @@
 				C6AE163B2FCA3046FA19CFEA /* PairingStore.swift */,
 				907E6EABCDB6D1F4CBDDD6C9 /* TerminalView.swift */,
 			);
-			name = AITerminal;
-			path = AITerminal;
+			name = aTerminal;
+			path = aTerminal;
 			sourceTree = "<group>";
 		};
 		DE7652F0A809344784C6793D /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				BBCCDDEE0000000000000003 /* AITerminalUITests.xctest */,
-				8B426614BE9F4E8D712529B8 /* AITerminal.app */,
+				BBCCDDEE0000000000000003 /* aTerminalUITests.xctest */,
+				8B426614BE9F4E8D712529B8 /* aTerminal.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -117,7 +117,7 @@
 			isa = PBXGroup;
 			children = (
 				151E30FCC47E75936A5CD7FA /* iOS */,
-				775FA7E799FB1D6CE1A1A4C7 /* AITerminalCore.xcframework */,
+				775FA7E799FB1D6CE1A1A4C7 /* aTerminalCore.xcframework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -125,20 +125,20 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		BBCCDDEE0000000000000005 /* AITerminalUITests */ = {
+		BBCCDDEE0000000000000005 /* aTerminalUITests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = BBCCDDEE0000000000000006;
 			buildPhases = (BBCCDDEE0000000000000007, BBCCDDEE0000000000000004);
 			buildRules = ();
 			dependencies = (BBCCDDEE0000000000000008);
-			name = AITerminalUITests;
-			productName = AITerminalUITests;
+			name = aTerminalUITests;
+			productName = aTerminalUITests;
 			productReference = BBCCDDEE0000000000000003;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
-		F2A5B55D1F67A87A847D6649 /* AITerminal */ = {
+		F2A5B55D1F67A87A847D6649 /* aTerminal */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 84742A3FD492A6C2FB5FAC3C /* Build configuration list for PBXNativeTarget "AITerminal" */;
+			buildConfigurationList = 84742A3FD492A6C2FB5FAC3C /* Build configuration list for PBXNativeTarget "aTerminal" */;
 			buildPhases = (
 				24FF5D3872BDEB9CF76EA913 /* Sources */,
 				E8D2D8EBA10061BFD2EAB8C2 /* Frameworks */,
@@ -148,9 +148,9 @@
 			);
 			dependencies = (
 			);
-			name = AITerminal;
-			productName = AITerminal;
-			productReference = 8B426614BE9F4E8D712529B8 /* AITerminal.app */;
+			name = aTerminal;
+			productName = aTerminal;
+			productReference = 8B426614BE9F4E8D712529B8 /* aTerminal.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -162,7 +162,7 @@
 				LastSwiftUpdateCheck = 1600;
 				LastUpgradeCheck = 1600;
 			};
-			buildConfigurationList = 3119B6264979F4441D938792 /* Build configuration list for PBXProject "AITerminal" */;
+			buildConfigurationList = 3119B6264979F4441D938792 /* Build configuration list for PBXProject "aTerminal" */;
 			compatibilityVersion = "Xcode 3.2";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -177,8 +177,8 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				F2A5B55D1F67A87A847D6649 /* AITerminal */,
-				BBCCDDEE0000000000000005 /* AITerminalUITests */,
+				F2A5B55D1F67A87A847D6649 /* aTerminal */,
+				BBCCDDEE0000000000000005 /* aTerminalUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -200,7 +200,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				BCDD60CB2B924C39F32959F7 /* AITerminalApp.swift in Sources */,
+				BCDD60CB2B924C39F32959F7 /* aTerminalApp.swift in Sources */,
 				AABBCCDD0000000000000011 /* ChatStore.swift in Sources */,
 				AABBCCDD0000000000000012 /* AssistantModel.swift in Sources */,
 				AABBCCDD0000000000000013 /* SpeechDraft.swift in Sources */,
@@ -219,12 +219,12 @@
 /* Begin XCBuildConfiguration section */
 		BBCCDDEE0000000000000010 = {
 			isa = XCBuildConfiguration;
-			buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 15.0; PRODUCT_BUNDLE_IDENTIFIER = dev.aiterminal.app.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = AITerminal; };
+			buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 15.0; PRODUCT_BUNDLE_IDENTIFIER = com.yxf.aterminal.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = aTerminal; };
 			name = Debug;
 		};
 		BBCCDDEE0000000000000011 = {
 			isa = XCBuildConfiguration;
-			buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 15.0; PRODUCT_BUNDLE_IDENTIFIER = dev.aiterminal.app.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = AITerminal; };
+			buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 15.0; PRODUCT_BUNDLE_IDENTIFIER = com.yxf.aterminal.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_TARGET_NAME = aTerminal; };
 			name = Release;
 		};
 		131F19B01D5A837F196F34AB /* Release */ = {
@@ -294,7 +294,7 @@
 					"$(inherited)",
 					"$(SRCROOT)/../../build/bindings",
 				);
-				INFOPLIST_KEY_CFBundleDisplayName = "AI Terminal";
+				INFOPLIST_KEY_CFBundleDisplayName = "aTerminal";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -307,7 +307,7 @@
 					Security,
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -fmodule-map-file=$(SRCROOT)/../../build/bindings/ai_terminal_mobileFFI.modulemap";
-				PRODUCT_BUNDLE_IDENTIFIER = dev.aiterminal.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yxf.aterminal;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG";
 				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/../../build/bindings";
@@ -329,7 +329,7 @@
 					"$(inherited)",
 					"$(SRCROOT)/../../build/bindings",
 				);
-				INFOPLIST_KEY_CFBundleDisplayName = "AI Terminal";
+				INFOPLIST_KEY_CFBundleDisplayName = "aTerminal";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -342,7 +342,7 @@
 					Security,
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -fmodule-map-file=$(SRCROOT)/../../build/bindings/ai_terminal_mobileFFI.modulemap";
-				PRODUCT_BUNDLE_IDENTIFIER = dev.aiterminal.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yxf.aterminal;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited)";
 				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/../../build/bindings";
@@ -417,7 +417,7 @@
 
 /* Begin XCConfigurationList section */
 		BBCCDDEE0000000000000006 = {isa = XCConfigurationList; buildConfigurations = (BBCCDDEE0000000000000010, BBCCDDEE0000000000000011); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		3119B6264979F4441D938792 /* Build configuration list for PBXProject "AITerminal" */ = {
+		3119B6264979F4441D938792 /* Build configuration list for PBXProject "aTerminal" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				C45215FDB0E4C07381E86520 /* Debug */,
@@ -426,7 +426,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		84742A3FD492A6C2FB5FAC3C /* Build configuration list for PBXNativeTarget "AITerminal" */ = {
+		84742A3FD492A6C2FB5FAC3C /* Build configuration list for PBXNativeTarget "aTerminal" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				BB8AC95C3F727CA8327AA1AF /* Release */,
@@ -437,7 +437,7 @@
 		};
 /* End XCConfigurationList section */
 		BBCCDDEE0000000000000008 = {isa = PBXTargetDependency; target = F2A5B55D1F67A87A847D6649; targetProxy = BBCCDDEE0000000000000009; };
-		BBCCDDEE0000000000000009 = {isa = PBXContainerItemProxy; containerPortal = 80940F1C73564AEDD4B9917C; proxyType = 1; remoteGlobalIDString = F2A5B55D1F67A87A847D6649; remoteInfo = AITerminal; };
+		BBCCDDEE0000000000000009 = {isa = PBXContainerItemProxy; containerPortal = 80940F1C73564AEDD4B9917C; proxyType = 1; remoteGlobalIDString = F2A5B55D1F67A87A847D6649; remoteInfo = aTerminal; };
 	};
 	rootObject = 80940F1C73564AEDD4B9917C /* Project object */;
 }

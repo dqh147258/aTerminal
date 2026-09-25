@@ -1,4 +1,4 @@
-package dev.aiterminal.app
+package com.yxf.aterminal
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -81,20 +81,20 @@ class DisplayConsistencyTest {
     }
     @Test fun hardwareRowCacheMatchesAFullRedraw() {
         assumeTrue("RenderNode cache requires API 29", Build.VERSION.SDK_INT >= 29)
-        instrumentation.uiAutomation.executeShellCommand("am start -W -n dev.aiterminal.app/.MainActivity --ez isolated_ui true").use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
+        instrumentation.uiAutomation.executeShellCommand("am start -W -n com.yxf.aterminal/.MainActivity --ez isolated_ui true").use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
         var activity: MainActivity? = null
         val deadline = SystemClock.elapsedRealtime() + 10_000
         while (activity == null && SystemClock.elapsedRealtime() < deadline) {
             main { activity = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<MainActivity>().firstOrNull() }
             if (activity == null) Thread.sleep(30)
         }
-        val host = activity ?: throw AssertionError("No resumed AI Terminal Activity")
+        val host = activity ?: throw AssertionError("No resumed aTerminal Activity")
         lateinit var incremental: TerminalView
         lateinit var reference: TerminalView
         try {
             val first = screen()
             main {
-                assertEquals("dev.aiterminal.app", host.packageName)
+                assertEquals("com.yxf.aterminal", host.packageName)
                 incremental = TerminalView(host, first)
                 reference = TerminalView(host, first)
                 val column = LinearLayout(host).apply { orientation = LinearLayout.VERTICAL; addView(incremental); addView(reference) }

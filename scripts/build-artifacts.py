@@ -51,7 +51,7 @@ def android_ndk():
 
 
 if "desktop" in requested:
-    run(["cargo", "+" + args.toolchain, "build", "--locked", "-p", "ai-terminal", "--bin", "ai-terminal"])
+    run(["cargo", "+" + args.toolchain, "build", "--locked", "-p", "ai-terminal", "--bin", "aTerminal"])
 
 if "android" in requested:
     ndk = android_ndk()
@@ -77,10 +77,10 @@ if "ios" in requested:
     simulator_target = "aarch64-apple-ios-sim" if platform.machine() == "arm64" else "x86_64-apple-ios"
     architecture = "arm64" if platform.machine() == "arm64" else "x86_64"
     run(["python3", "scripts/package-ios.py", "--simulator-target", simulator_target, "--replace"])
-    run(["xcodebuild", "-project", "apps/ios/AITerminal.xcodeproj", "-scheme", "AITerminal",
+    run(["xcodebuild", "-project", "apps/ios/aTerminal.xcodeproj", "-scheme", "aTerminal",
          "-sdk", "iphonesimulator", "-configuration", "Debug", "-derivedDataPath", "build/xcode",
          "ARCHS=" + architecture, "CODE_SIGN_IDENTITY=-", "build"])
-    print("iOS App: build/xcode/Build/Products/Debug-iphonesimulator/AITerminal.app")
+    print("iOS App: build/xcode/Build/Products/Debug-iphonesimulator/aTerminal.app")
 
 if "server" in requested:
     run(["docker", "compose", "-p", "ai-terminal-dev", "-f", "deploy/compose.local.yaml", "build", "server"])

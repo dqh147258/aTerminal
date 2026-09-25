@@ -26,7 +26,7 @@ fn host_with_model(model_url: Option<&str>) -> (Host, Client) {
         "ai-terminal-test-{:x}",
         ai_terminal_agent::random_id()
     ));
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ai-terminal"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_aTerminal"));
     command
         .env_remove("AI_TERMINAL_AI_BASE_URL")
         .env_remove("AI_TERMINAL_AI_MODEL")

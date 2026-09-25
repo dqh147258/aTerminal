@@ -5,6 +5,6 @@
   "admin_token_file": "deploy/secrets/admin-token",
   "state_dir": ".local/ios-lan",
   "simulator_id": "A04FFCA0-1F31-4851-86E6-160D8D6A81C6",
-  "bundle_id": "dev.aiterminal.app",
-  "app": "build/xcode/Build/Products/Debug-iphonesimulator/AITerminal.app"
+  "bundle_id": "com.yxf.aterminal",
+  "app": "build/xcode/Build/Products/Debug-iphonesimulator/aTerminal.app"
 }

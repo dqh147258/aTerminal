@@ -24,7 +24,7 @@ parser.add_argument('--serial', required=True)
 parser.add_argument('--output', type=Path, required=True)
 args = parser.parse_args()
 args.output.mkdir(parents=True, exist_ok=True)
-package = 'dev.aiterminal.app'
+package = 'com.yxf.aterminal'
 
 
 def adb(*command, **kwargs):
@@ -62,7 +62,7 @@ with tempfile.TemporaryDirectory(prefix='aiterminal-autoconnect-') as directory:
     username = 'autoconnect_' + secrets.token_hex(4)
     env = dict(os.environ, AI_TERMINAL_BIND=f'127.0.0.1:{port}', AI_TERMINAL_DB=str(work / 'server.db'),
                AI_TERMINAL_ADMIN_TOKEN=token, AI_TERMINAL_CREDENTIAL_STORE='file', XDG_CONFIG_HOME=str(work / 'config'))
-    cli = [str(ROOT / 'target/debug/ai-terminal'), '--state-dir', str(work / 'agent')]
+    cli = [str(ROOT / 'target/debug/aTerminal'), '--state-dir', str(work / 'agent')]
     terminals, masters = [], []
     server = None
     reversed_port = False
@@ -106,7 +106,7 @@ with tempfile.TemporaryDirectory(prefix='aiterminal-autoconnect-') as directory:
         adb('shell', 'input', 'keyevent', 'KEYCODE_WAKEUP')
         adb('shell', 'wm', 'dismiss-keyguard')
         with (args.output / 'instrumentation.log').open('wb') as log:
-            adb('shell', 'am', 'instrument', '-w', '-r', '-e', 'class', 'dev.aiterminal.app.AutoConnectTest',
+            adb('shell', 'am', 'instrument', '-w', '-r', '-e', 'class', 'com.yxf.aterminal.AutoConnectTest',
                 package + '.test/androidx.test.runner.AndroidJUnitRunner', stdout=log, stderr=subprocess.STDOUT, timeout=180)
         transcript = (args.output / 'instrumentation.log').read_text()
         for name in ['latest', 'devices', 'reconnected']:

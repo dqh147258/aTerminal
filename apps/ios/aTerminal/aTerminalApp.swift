@@ -2,7 +2,7 @@ import SwiftUI
 import os.signpost
 
 @main
-struct AITerminalApp: App {
+struct aTerminalApp: App {
     init() { UITextView.appearance().backgroundColor = .clear }
     var body: some Scene { WindowGroup { WorkspaceScreen().defaultAppStorage(WorkspacePreferences.defaults).preferredColorScheme(.dark) } }
 }

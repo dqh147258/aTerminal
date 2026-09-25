@@ -1,4 +1,4 @@
-package dev.aiterminal.app
+package com.yxf.aterminal
 
 import android.Manifest
 import android.app.Activity

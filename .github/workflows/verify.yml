@@ -28,7 +28,7 @@ jobs:
       - if: runner.os != 'Windows'
         run: |
           cargo build --locked -p ai-terminal
-          python3 scripts/test-host-terminal.py target/debug/ai-terminal
+          python3 scripts/test-host-terminal.py target/debug/aTerminal
   mobile-native:
     runs-on: macos-latest
     steps:

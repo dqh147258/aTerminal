@@ -15,7 +15,7 @@ use std::{
 
 /// A managed terminal with one authoritative screen. P0 local prototype.
 #[derive(Parser)]
-#[command(version)]
+#[command(name = "aTerminal", version)]
 pub(crate) struct Args {
     #[command(subcommand)]
     management: Option<account::Management>,
@@ -67,7 +67,7 @@ fn main() {
     let code = match run() {
         Ok(code) => code,
         Err(error) => {
-            eprintln!("ai-terminal: {error:#}");
+            eprintln!("aTerminal: {error:#}");
             1
         }
     };

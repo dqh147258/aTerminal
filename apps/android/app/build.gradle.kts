@@ -1,9 +1,9 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android {
-    namespace = "dev.aiterminal.app"
+    namespace = "com.yxf.aterminal"
     compileSdk = 35
     defaultConfig {
-        applicationId = "dev.aiterminal.app"
+        applicationId = "com.yxf.aterminal"
         minSdk = 25
         targetSdk = 35
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

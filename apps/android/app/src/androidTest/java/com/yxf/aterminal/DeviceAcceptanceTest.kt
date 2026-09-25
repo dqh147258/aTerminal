@@ -1,4 +1,4 @@
-package dev.aiterminal.app
+package com.yxf.aterminal
 
 import android.os.*
 import android.view.*
@@ -22,9 +22,9 @@ class DeviceAcceptanceTest {
     private lateinit var activity: MainActivity
     private val result = JSONObject()
     private fun assertForeground() {
-        assertEquals("Unexpected target package", "dev.aiterminal.app", activity.packageName)
-        assertTrue("AI Terminal lost foreground focus; stop input injection", activity.hasWindowFocus())
-        assertTrue("AI Terminal is not active", get("active") == true)
+        assertEquals("Unexpected target package", "com.yxf.aterminal", activity.packageName)
+        assertTrue("aTerminal lost foreground focus; stop input injection", activity.hasWindowFocus())
+        assertTrue("aTerminal is not active", get("active") == true)
     }
     private fun <T> main(action: () -> T): T { var answer: T? = null; var error: Throwable? = null; instrumentation.runOnMainSync { try { answer = action() } catch (e: Throwable) { error = e } }; error?.let { throw it }; @Suppress("UNCHECKED_CAST") return answer as T }
     private fun all(view: View): List<View> = listOf(view) + if (view is android.view.ViewGroup) (0 until view.childCount).flatMap { all(view.getChildAt(it)) } else emptyList()
@@ -68,12 +68,12 @@ class DeviceAcceptanceTest {
         val fixture = JSONObject(File(context.filesDir, "device-fixture.json").readText())
         result.put("model", Build.MODEL).put("android", Build.VERSION.RELEASE).put("api", Build.VERSION.SDK_INT).put("native_build", InstrumentationRegistry.getArguments().getString("nativeBuild", "debug"))
         // MIUI can block an instrumentation process launching its own Activity from the background.
-        instrumentation.uiAutomation.executeShellCommand("am start -W -n dev.aiterminal.app/.MainActivity --ez acceptance_test true").use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
+        instrumentation.uiAutomation.executeShellCommand("am start -W -n com.yxf.aterminal/.MainActivity --ez acceptance_test true").use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
         val launchDeadline=SystemClock.elapsedRealtime()+10000
         var launched: MainActivity? = null
         while (launched==null && SystemClock.elapsedRealtime()<launchDeadline) { launched=main { ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<MainActivity>().firstOrNull() }; if(launched==null) Thread.sleep(30) }
         activity=launched ?: throw AssertionError("Activity did not resume")
-        waitFor("AI Terminal foreground focus") { activity.hasWindowFocus() }
+        waitFor("aTerminal foreground focus") { activity.hasWindowFocus() }
         try {
             if (PairingStore(context,"acceptance-account").load() != null) { waitFor("restored account") { (get("workspace") as View).isShown }; logout(); waitFor("logout before isolated login") { (get("loginBox") as View).isShown } }
             main { field("服务器 https://…").setText(fixture.getString("server")); field("账号").setText(fixture.getString("username")); field("密码").setText(fixture.getString("password")) }
@@ -145,7 +145,7 @@ class DeviceAcceptanceTest {
             val until=SystemClock.elapsedRealtime()+10000
             while (core().hasControl() && SystemClock.elapsedRealtime()<until) Thread.sleep(30)
             assertFalse(core().hasControl())
-            instrumentation.uiAutomation.executeShellCommand("am start -W -n dev.aiterminal.app/.MainActivity --ez acceptance_test true").use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
+            instrumentation.uiAutomation.executeShellCommand("am start -W -n com.yxf.aterminal/.MainActivity --ez acceptance_test true").use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
             waitFor("actual foreground") { get("active") == true && activity.hasWindowFocus() }
             connectDesktop(); select(fixture.getString("session")); send("printf 'ANDROID_RESUME_OK\\n'"); click("回车")
             waitFor("resume output") { screenText().contains("ANDROID_RESUME_OK") }; result.put("background_release_reconnect", true)

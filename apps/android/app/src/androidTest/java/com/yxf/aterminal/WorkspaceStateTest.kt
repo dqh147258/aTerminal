@@ -1,4 +1,4 @@
-package dev.aiterminal.app
+package com.yxf.aterminal
 
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONObject

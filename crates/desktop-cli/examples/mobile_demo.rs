@@ -86,7 +86,7 @@ async fn main() -> Result<()> {
             .open(&invitation_path)?
             .write_all(invite.export()?.as_bytes())?;
     }
-    #[cfg(unix)]let command=vec!["/bin/sh".into(),"-c".into(),r"printf '\033[32mAI Terminal remote session\033[0m\r\nDesktop PTY connected\r\n'; exec /bin/sh -i".into()];
+    #[cfg(unix)]let command=vec!["/bin/sh".into(),"-c".into(),r"printf '\033[32maTerminal remote session\033[0m\r\nDesktop PTY connected\r\n'; exec /bin/sh -i".into()];
     #[cfg(windows)]
     let command = vec!["powershell.exe".into(), "-NoProfile".into()];
     let reply = client.call(Request {

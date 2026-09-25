@@ -2,7 +2,9 @@
 
 配置日期：2026-09-22。固定主机 IP：`192.168.0.36`。
 
-本文是独立 iOS 试用环境的启动与关闭步骤；实时运行状态以本页的检查命令为准。数据卷、证书、配对、Keychain 和构建产物可跨重启保留。以下命令均在 `/Volumes/Code/My/AITerminal` 项目根目录执行。
+本文是独立 iOS 试用环境的启动与关闭步骤；实时运行状态以本页的检查命令为准。数据卷、证书、配对、Keychain 和构建产物可跨重启保留。以下命令均在 `/Volumes/Code/My/aTerminal` 项目根目录执行。
+
+从旧名称迁移后需要重新构建并安装 App（使用下文的 `--build`），新包名为 `com.yxf.aterminal`，原 App 数据不会自动迁移。如果项目目录也从 `AITerminal` 改为 `aTerminal`，旧 Swift 模块缓存会记录原绝对路径；构建出现 `PCH was compiled with module cache path` 时，先清理生成的缓存 `build/xcode/ModuleCache.noindex` 和 `build/swift-module-cache`，再重新构建。
 
 ## 已配置入口
 
@@ -19,20 +21,20 @@ Docker 项目名 `ai-terminal-dev`，运行 `server` 与 `lan_tls` 两个容器�
 先启动环境和模拟器：
 
 ```sh
-cd /Volumes/Code/My/AITerminal
+cd /Volumes/Code/My/aTerminal
 python3 scripts/prepare-lan.py
 python3 scripts/run-ios-lan.py --toolchain stable --restore --interactive
 ```
 
 `prepare-lan.py` 启动本项目 Docker 服务，复用证书和数据库，不更改其他服务。`run-ios-lan.py` 启动 Agent，沿用配对，在完整关闭后创建新的 Shell，会话 ID 随之更新。
 
-iPhone SE 模拟器已安装 AI Terminal，配对已保存到 Keychain。可写配对打开会话后即可点击终端画面输入并按 Return，Tab、Esc、方向键和 Ctrl-C 由特殊键工具栏或硬键盘提供；只读配对仅能观察。`--interactive` 不会自动发送测试命令。
+iPhone SE 模拟器已安装 aTerminal，配对已保存到 Keychain。可写配对打开会话后即可点击终端画面输入并按 Return，Tab、Esc、方向键和 Ctrl-C 由特殊键工具栏或硬键盘提供；只读配对仅能观察。`--interactive` 不会自动发送测试命令。
 
 桌面只观察同一会话：
 
 ```sh
 SESSION_ID="$(python3 -c 'import json; print(json.load(open(".local/ios-lan/demo.json"))["session_id"])')"
-./target/debug/ai-terminal --state-dir "$PWD/.local/ios-lan" --attach "$SESSION_ID" --watch
+./target/debug/aTerminal --state-dir "$PWD/.local/ios-lan" --attach "$SESSION_ID" --watch
 ```
 
 去掉 `--watch` 即可从桌面附着并与手机同时输入；Ctrl+] 脱离后 Shell 继续运行，但新版 Agent 会把手机转为只读历史，重新 `--attach` 恢复输入。当前会话 ID 和连接地址保存在 `.local/ios-lan/demo.json`。
@@ -62,10 +64,10 @@ python3 scripts/run-ios-lan.py --toolchain stable --build --restore --interactiv
 
 先停止旧 Agent，避免新 CLI 连接到仍运行的旧代码。`--build` 重建桌面 CLI、iOS 双静态库、bindings、XCFramework 和 Xcode App。若模拟器/Keychain 是新的，去掉 `--restore`，脚本会导入当前邀请。
 
-只改 Swift UI 时，可打开 `apps/ios/AITerminal.xcodeproj`，选择 AITerminal scheme 和 iPhone SE 模拟器运行，或执行：
+只改 Swift UI 时，可打开 `apps/ios/aTerminal.xcodeproj`，选择 aTerminal scheme 和 iPhone SE 模拟器运行，或执行：
 
 ```sh
-xcodebuild -project apps/ios/AITerminal.xcodeproj -scheme AITerminal \
+xcodebuild -project apps/ios/aTerminal.xcodeproj -scheme aTerminal \
   -sdk iphonesimulator -configuration Debug -derivedDataPath build/xcode \
   ARCHS=x86_64 CODE_SIGN_IDENTITY=- build
 python3 scripts/run-ios-lan.py --toolchain stable --restore --interactive
@@ -117,7 +119,7 @@ docker compose -p ai-terminal-dev -f deploy/compose.lan.yaml -f deploy/compose.t
 
 # 桌面 Agent 日志和会话列表
 tail -n 100 .local/ios-lan/agent.log
-./target/debug/ai-terminal --state-dir "$PWD/.local/ios-lan" --list
+./target/debug/aTerminal --state-dir "$PWD/.local/ios-lan" --list
 
 # 定向自动化检查
 cargo +stable test --locked -p ai-terminal --test agent
@@ -125,7 +127,7 @@ cargo +stable test --locked -p ai-terminal-remote --features webrtc
 cargo +stable clippy --workspace --all-targets --exclude ai-terminal-bindgen -- -D warnings
 ```
 
-Swift 断点放在 `apps/ios/AITerminal/AITerminalApp.swift` 的连接、选择会话、发送与刷新方法；网络状态在 `crates/mobile-core/src/remote.rs`，传输选路在 `crates/remote/src/channel.rs`，终端权威状态在 `crates/desktop-agent/src/service.rs`。网络/FFI 调用运行于后台队列；不要为了调试把阻塞请求移到 UI 主线程。
+Swift 断点放在 `apps/ios/aTerminal/aTerminalApp.swift` 的连接、选择会话、发送与刷新方法；网络状态在 `crates/mobile-core/src/remote.rs`，传输选路在 `crates/remote/src/channel.rs`，终端权威状态在 `crates/desktop-agent/src/service.rs`。网络/FFI 调用运行于后台队列；不要为了调试把阻塞请求移到 UI 主线程。
 
 自动试用截图位于 `build/screenshots/ios-lan-*.png`。不要打印 `invitation.txt`、`pairs/*.json` 或管理员 token 到公开日志。
 

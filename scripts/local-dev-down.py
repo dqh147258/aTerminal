@@ -9,8 +9,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / ".local/local-dev/agent-next"
-CLI = ROOT / "target/debug/ai-terminal"
-PACKAGE = "dev.aiterminal.app"
+CLI = ROOT / "target/debug/aTerminal"
+PACKAGE = "com.yxf.aterminal"
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--android-serial", default="127.0.0.1:62001")

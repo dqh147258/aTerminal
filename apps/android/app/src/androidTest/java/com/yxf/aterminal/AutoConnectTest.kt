@@ -1,4 +1,4 @@
-package dev.aiterminal.app
+package com.yxf.aterminal
 
 import android.content.Intent
 import android.graphics.Bitmap

@@ -115,7 +115,7 @@ struct WorkspaceScreen: View {
                 HStack(spacing: 8) {
                     ToolButton(symbol: "sidebar.left", label: "工作空间") { drawer = true }.accessibilityIdentifier("workspace.drawer")
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(model.currentSession?.displayName ?? "AI Terminal").font(.system(size: 16, weight: .semibold)).lineLimit(1).accessibilityAddTraits(.isHeader)
+                        Text(model.currentSession?.displayName ?? "aTerminal").font(.system(size: 16, weight: .semibold)).lineLimit(1).accessibilityAddTraits(.isHeader)
                         Text(model.deviceID.isEmpty ? "工作空间" : model.deviceName).font(.caption2).foregroundColor(WorkspaceStyle.muted).lineLimit(1)
                     }
                     Spacer()

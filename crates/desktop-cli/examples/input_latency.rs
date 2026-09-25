@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
     directory.create(&dir)?;
     let executable = std::env::var_os("AI_TERMINAL_BENCH_CLI")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("target/debug/ai-terminal"));
+        .unwrap_or_else(|| PathBuf::from("target/debug/aTerminal"));
     let mut child = Command::new(executable)
         .env("AI_TERMINAL_CREDENTIAL_STORE", "file")
         .env("XDG_CONFIG_HOME", dir.join("config"))

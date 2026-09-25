@@ -1,4 +1,4 @@
-package dev.aiterminal.app
+package com.yxf.aterminal
 
 import android.content.Intent
 import android.content.pm.ActivityInfo
@@ -30,7 +30,7 @@ class WorkspaceUiTest {
     @After fun restoreDisplay() { DisplayPreferences(context, "acceptance-display").apply { fontSize = savedFont; opacity = savedOpacity } }
     private fun all(view: View): List<View> = listOf(view) + if (view is ViewGroup) (0 until view.childCount).flatMap { all(view.getChildAt(it)) } else emptyList()
     private fun views(activity: MainActivity): List<View> {
-        assertEquals("dev.aiterminal.app", activity.packageName)
+        assertEquals("com.yxf.aterminal", activity.packageName)
         assertTrue("Target lost foreground focus; stop UI actions", activity.hasWindowFocus())
         return all(activity.window.decorView)
     }
@@ -39,7 +39,7 @@ class WorkspaceUiTest {
         override fun close() { onActivity { it.finish() }; InstrumentationRegistry.getInstrumentation().waitForIdleSync() }
     }
     private fun launch(fixture: Boolean = true): Scenario {
-        instrumentation.uiAutomation.executeShellCommand("am start -W -n dev.aiterminal.app/.MainActivity --ez isolated_ui true --ez render_fixture $fixture")
+        instrumentation.uiAutomation.executeShellCommand("am start -W -n com.yxf.aterminal/.MainActivity --ez isolated_ui true --ez render_fixture $fixture")
             .use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
         var activity: MainActivity? = null
         waitFor {

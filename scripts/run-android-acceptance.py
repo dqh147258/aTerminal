@@ -29,8 +29,8 @@ port = config['server'].rsplit(':', 1)[1]
 assert config['server'].startswith('http://127.0.0.1:') and port.isdigit()
 adb('install', '-r', str(args.apk), capture_output=True)
 adb('install', '-r', str(ROOT / 'apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk'), capture_output=True)
-adb('shell', 'run-as', 'dev.aiterminal.app', 'mkdir', '-p', 'files')
-adb('shell', "run-as dev.aiterminal.app sh -c 'cat > files/device-fixture.json'", input=fixture)
+adb('shell', 'run-as', 'com.yxf.aterminal', 'mkdir', '-p', 'files')
+adb('shell', "run-as com.yxf.aterminal sh -c 'cat > files/device-fixture.json'", input=fixture)
 adb('reverse', 'tcp:' + port, 'tcp:' + port, capture_output=True)
 try:
     for label, command in [('thermal-before', 'thermalservice'), ('battery-before', 'battery')]:
@@ -38,29 +38,29 @@ try:
             adb('shell', 'dumpsys', command, stdout=output)
     adb('shell', 'input', 'keyevent', 'KEYCODE_WAKEUP')
     adb('shell', 'wm', 'dismiss-keyguard')
-    adb('shell', 'am', 'start', '-W', '-n', 'dev.aiterminal.app/.MainActivity', capture_output=True)
+    adb('shell', 'am', 'start', '-W', '-n', 'com.yxf.aterminal/.MainActivity', capture_output=True)
     deadline = time.monotonic() + 5
     while True:
         window = adb('shell', 'dumpsys', 'window', capture_output=True, text=True).stdout
         focus = [line for line in window.splitlines() if 'mFocusedApp=' in line]
-        if focus and all('dev.aiterminal.app/' in line for line in focus):
+        if focus and all('com.yxf.aterminal/' in line for line in focus):
             break
         if time.monotonic() > deadline:
-            raise RuntimeError('AI Terminal not in foreground; input test cancelled')
+            raise RuntimeError('aTerminal not in foreground; input test cancelled')
         time.sleep(0.1)
     with (args.output / 'instrumentation.log').open('wb') as output:
         adb('shell', 'am', 'instrument', '-w', '-r', '-e', 'mode', args.mode,
             '-e', 'nativeBuild', 'release', '-e', 'inputIntervalMs', str(args.input_interval_ms), '-e', 'class',
-            'dev.aiterminal.app.DeviceAcceptanceTest',
-            'dev.aiterminal.app.test/androidx.test.runner.AndroidJUnitRunner',
+            'com.yxf.aterminal.DeviceAcceptanceTest',
+            'com.yxf.aterminal.test/androidx.test.runner.AndroidJUnitRunner',
             stdout=output, stderr=subprocess.STDOUT, timeout=180)
-    report = adb('exec-out', 'run-as', 'dev.aiterminal.app', 'cat',
+    report = adb('exec-out', 'run-as', 'com.yxf.aterminal', 'cat',
                  'files/device-results.json', capture_output=True).stdout
     (args.output / 'results.json').write_bytes(report)
     transcript = (args.output / 'instrumentation.log').read_text()
     assert 'OK (1 test)' in transcript and json.loads(report).get('passed'), 'Acceptance failed; inspect instrumentation.log'
     print('PASS: device acceptance; report:', args.output / 'results.json')
 finally:
-    adb('shell', 'am', 'force-stop', 'dev.aiterminal.app')
-    adb('shell', 'run-as', 'dev.aiterminal.app', 'rm', '-f', 'files/device-fixture.json')
+    adb('shell', 'am', 'force-stop', 'com.yxf.aterminal')
+    adb('shell', 'run-as', 'com.yxf.aterminal', 'rm', '-f', 'files/device-fixture.json')
     adb('reverse', '--remove', 'tcp:' + port)

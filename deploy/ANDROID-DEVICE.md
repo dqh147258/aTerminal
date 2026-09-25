@@ -24,29 +24,29 @@ adb -s dmronjvo9pwsbinf shell input swipe 540 2000 540 500 350
 
 ```sh
 adb -s 127.0.0.1:62001 install -r apps/android/app/build/outputs/apk/debug/app-debug.apk
-adb -s 127.0.0.1:62001 shell am start -W -n dev.aiterminal.app/.MainActivity
+adb -s 127.0.0.1:62001 shell am start -W -n com.yxf.aterminal/.MainActivity
 ```
 
 真实本地部署验收使用 `https://192.168.0.36:7200`，设备直接走局域网，不设置 `adb reverse`。本机部署采用私有 CA；Debug 验收模式（`--ez acceptance_test true`）可从 App 私有目录的 `files/acceptance-ca.pem` 读取 CA，由 Rust TLS 正常验证链和 IP 主机名。测试后删除该文件。普通登录路径不读取此文件；正式使用私有 CA 的服务需要另行提供可信证书导入能力，或部署 Rust TLS 默认根证书信任的证书。完整结果见 `doc/task/0924-local-deployment-test/RESULTS.md`。
 
 ```sh
-adb -s 127.0.0.1:62001 shell run-as dev.aiterminal.app mkdir -p files
-adb -s 127.0.0.1:62001 shell "run-as dev.aiterminal.app sh -c 'cat > files/acceptance-ca.pem'" < deploy/secrets/lan-ca.crt
-adb -s 127.0.0.1:62001 shell am start -W -n dev.aiterminal.app/.MainActivity --ez acceptance_test true
+adb -s 127.0.0.1:62001 shell run-as com.yxf.aterminal mkdir -p files
+adb -s 127.0.0.1:62001 shell "run-as com.yxf.aterminal sh -c 'cat > files/acceptance-ca.pem'" < deploy/secrets/lan-ca.crt
+adb -s 127.0.0.1:62001 shell am start -W -n com.yxf.aterminal/.MainActivity --ez acceptance_test true
 # 验收完成后：
-adb -s 127.0.0.1:62001 shell run-as dev.aiterminal.app rm -f files/acceptance-ca.pem
+adb -s 127.0.0.1:62001 shell run-as com.yxf.aterminal rm -f files/acceptance-ca.pem
 ```
 
 ## 当前开发包
 
 ```sh
 adb -s dmronjvo9pwsbinf install -r apps/android/app/build/outputs/apk/debug/app-debug.apk
-adb -s dmronjvo9pwsbinf shell am start -W -n dev.aiterminal.app/.MainActivity
+adb -s dmronjvo9pwsbinf shell am start -W -n com.yxf.aterminal/.MainActivity
 ```
 
 使用 `-r` 更新，保留 App 数据；不要为了重测直接 `pm clear`、卸载应用或修改手机其他应用的数据。若签名冲突，先确认旧版本用途。
 
-**操作前核对前台包名。** 用户曾指出坐标操作误开其他应用并手动返回桌面。禁止在测试超时、退出、自动锁屏或用户切换页面后继续沿用旧坐标。启动目标必须使用 `dev.aiterminal.app/.MainActivity`；检查 `dumpsys window` 的 `mFocusedApp` / `mCurrentFocus`，确认 AI Terminal 活跃且有焦点后再输入。软键盘弹出时还需确认输入目标仍是本应用。
+**操作前核对前台包名。** 用户曾指出坐标操作误开其他应用并手动返回桌面。禁止在测试超时、退出、自动锁屏或用户切换页面后继续沿用旧坐标。启动目标必须使用 `com.yxf.aterminal/.MainActivity`；检查 `dumpsys window` 的 `mFocusedApp` / `mCurrentFocus`，确认 aTerminal 活跃且有焦点后再输入。软键盘弹出时还需确认输入目标仍是本应用。
 
 测试失败或失去前台时立即停止输入注入，不自动点击桌面图标寻找应用。当前 instrumentation 在按钮操作和按键注入前检查本应用焦点；不再保留等待外部坐标点击的 keyboard 模式。
 
@@ -69,7 +69,7 @@ MIUI 上测试进程从后台调用 `startActivitySync` 可能超时。当前测
 ```sh
 ./apps/android/gradlew -p apps/android :app:assembleDebug :app:assembleDebugAndroidTest
 adb -s dmronjvo9pwsbinf install -r apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-adb -s dmronjvo9pwsbinf shell am instrument -w -r -e class dev.aiterminal.app.DeviceAcceptanceTest dev.aiterminal.app.test/androidx.test.runner.AndroidJUnitRunner
+adb -s dmronjvo9pwsbinf shell am instrument -w -r -e class com.yxf.aterminal.DeviceAcceptanceTest com.yxf.aterminal.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 编译原生性能版本使用 `scripts/build-mobile.py android --release --webrtc --ndk PATH`，随后重新执行 `prepare-bindings.py` 和 App 构建，以便打入最新 `.so`。保持可调试 App 方便采样，明确记录原生库是 Debug 还是 Release，不能混用两个构建的结果。
@@ -81,7 +81,7 @@ adb -s dmronjvo9pwsbinf shell am instrument -w -r -e class dev.aiterminal.app.De
 显示一致性测试可单独执行，无需账号夹具：
 
 ```sh
-adb -s dmronjvo9pwsbinf shell am instrument -w -r -e class dev.aiterminal.app.DisplayConsistencyTest dev.aiterminal.app.test/androidx.test.runner.AndroidJUnitRunner
+adb -s dmronjvo9pwsbinf shell am instrument -w -r -e class com.yxf.aterminal.DisplayConsistencyTest com.yxf.aterminal.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 最新数据和未达标项目见 [一致性优先的续作报告](../doc/task/0922-account-input/FOLLOWUP.md)。

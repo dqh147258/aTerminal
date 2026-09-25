@@ -24,11 +24,11 @@ docker compose exec server ai-terminal-server user add alice
 ## Desktop
 
 ```sh
-ai-terminal auth login --server https://terminal.example.com --username alice --name 'My Desktop'
-ai-terminal auth status
-ai-terminal devices list
-ai-terminal devices revoke DEVICE_ID
-ai-terminal auth logout
+aTerminal auth login --server https://terminal.example.com --username alice --name 'My Desktop'
+aTerminal auth status
+aTerminal devices list
+aTerminal devices revoke DEVICE_ID
+aTerminal auth logout
 ```
 
 CLI 登录后后台 Agent 负责在线状态、凭据刷新和远程连接；可以继续使用 `--list`、`--attach`、`--watch`、`--close` 等原命令。未登录时本地 Shell 仍可用。关闭 CLI 不会关闭 Agent；退出账号关闭远程访问但保留本地 Shell。
@@ -36,7 +36,7 @@ CLI 登录后后台 Agent 负责在线状态、凭据刷新和远程连接；可
 使用独立 Agent 状态目录时，所有命令指定相同目录，参数放在子命令之前：
 
 ```sh
-ai-terminal --state-dir /private/path/to/agent auth login --server https://terminal.example.com
+aTerminal --state-dir /private/path/to/agent auth login --server https://terminal.example.com
 ```
 
 macOS 使用 Keychain，Windows 使用系统凭据存储；Linux 桌面使用 Secret Service。无 DBus 的 Linux 自动使用私有配置文件。macOS/Linux 无可用系统凭据库时，可在启动 Agent **之前**显式设置 `AI_TERMINAL_CREDENTIAL_STORE=file`，凭据保存到 `$XDG_CONFIG_HOME/ai-terminal` 或 `~/.config/ai-terminal` 的 0600 文件，目录为 0700。Windows 不提供普通文件回退。`auth status` 显示当前存储方式。不要把这些文件或 App 凭据导出放进 Git。
@@ -74,7 +74,7 @@ Access token 有效 15 分钟，refresh token 随刷新轮换；Server 保存摘
 ```sh
 cargo +stable test --locked --workspace --exclude ai-terminal-bindgen
 cargo +stable clippy --locked --workspace --all-targets --exclude ai-terminal-bindgen -- -D warnings
-cargo +stable build -p ai-terminal --bin ai-terminal --example input_latency
+cargo +stable build -p ai-terminal --bin aTerminal --example input_latency
 target/debug/examples/input_latency direct 0 normal 1000
 target/debug/examples/input_latency relay 80 normal 1000 40 120 output
 target/debug/examples/input_latency relay 80 normal 1000 40 120 history

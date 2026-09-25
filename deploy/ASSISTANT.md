@@ -10,7 +10,7 @@ AI 请求在 Desktop Agent 发起，模型密钥只存在于 Desktop 进程环�
 export AI_TERMINAL_AI_BASE_URL=https://your-model-provider.example/v1
 export AI_TERMINAL_AI_MODEL=your-model-name
 # 从本地私有凭据管理工具注入 AI_TERMINAL_AI_API_KEY，不把真实值提交到代码或文档。
-ai-terminal
+aTerminal
 ```
 
 端点使用非流式 `POST /chat/completions`，支持 HTTPS 或本机回环 HTTP。解释与监控需要文本 messages；开启“允许操作”还要求模型支持 function tools。现有 Agent 不会重新读取新环境，需要在结束/保存当前工作后重启 Agent，重启会关闭其 Shell，因此不要在运行任务时为应用配置直接停止它。

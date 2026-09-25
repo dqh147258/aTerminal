@@ -17,7 +17,7 @@ admin.chmod(0o444)
 ca_key, ca_cert = private / 'lan-ca.key', private / 'lan-ca.crt'
 if not ca_key.exists() and not ca_cert.exists():
     subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-sha256','-days','365',
-                    '-subj','/CN=AI Terminal Development CA','-keyout',str(ca_key),'-out',str(ca_cert),
+                    '-subj','/CN=aTerminal Development CA','-keyout',str(ca_key),'-out',str(ca_cert),
                     '-addext','basicConstraints=critical,CA:TRUE','-addext','keyUsage=critical,keyCertSign,cRLSign'],check=True,capture_output=True)
 if not ca_key.exists() or not ca_cert.exists():
     raise SystemExit('Incomplete existing CA; refusing to silently rotate trust')

@@ -1,4 +1,4 @@
-package dev.aiterminal.app
+package com.yxf.aterminal
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -197,7 +197,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         }
         loginBox.addView(brand); loginBox.gap(24)
         loginBox.addView(label("YOUR WORKSPACE, CONNECTED.", 12f, Palette.muted))
-        loginBox.addView(label("AI Terminal", 32f).apply { setTypeface(typeface, Typeface.BOLD) })
+        loginBox.addView(label("aTerminal", 32f).apply { setTypeface(typeface, Typeface.BOLD) })
         loginBox.addView(label("登录，回到你的工作现场。", 16f, Palette.muted)); loginBox.gap(20)
         val server = field("服务器 https://…").apply { setText(serverUrl); inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI; if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) setAutofillHints(View.AUTOFILL_HINT_USERNAME) }
         val username = field("账号").apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) setAutofillHints(View.AUTOFILL_HINT_USERNAME) }
@@ -263,7 +263,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private fun buildWorkspace() {
         workspace = column().apply { visibility = View.GONE }
         val header = column(4)
-        sessionTitle = heading("AI Terminal").apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
+        sessionTitle = heading("aTerminal").apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
         sessionMeta = label("选择 Desktop", 12f, Palette.muted).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
         connection = label("未连接", 12f, Palette.muted)
         header.addView(row().apply {
@@ -781,7 +781,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         aiStatus.visibility = View.GONE
         connection.text = "未连接"; connection.setTextColor(Palette.muted)
         toggleInput(false); surface.removeAllViews(); terminal = null; empty.visibility = View.VISIBLE
-        sessionTitle.text = "AI Terminal"; sessionMeta.text = deviceName.ifEmpty { "选择 Desktop" }
+        sessionTitle.text = "aTerminal"; sessionMeta.text = deviceName.ifEmpty { "选择 Desktop" }
         work { remote.disconnect() }
     }
     override fun onStart() {

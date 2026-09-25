@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "F2A5B55D1F67A87A847D6649"
-               BuildableName = "AITerminal.app"
-               BlueprintName = "AITerminal"
-               ReferencedContainer = "container:AITerminal.xcodeproj">
+               BuildableName = "aTerminal.app"
+               BlueprintName = "aTerminal"
+               ReferencedContainer = "container:aTerminal.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -31,14 +31,14 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "F2A5B55D1F67A87A847D6649"
-            BuildableName = "AITerminal.app"
-            BlueprintName = "AITerminal"
-            ReferencedContainer = "container:AITerminal.xcodeproj">
+            BuildableName = "aTerminal.app"
+            BlueprintName = "aTerminal"
+            ReferencedContainer = "container:aTerminal.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
       <Testables>
          <TestableReference skipped = "NO">
-            <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "BBCCDDEE0000000000000005" BuildableName = "AITerminalUITests.xctest" BlueprintName = "AITerminalUITests" ReferencedContainer = "container:AITerminal.xcodeproj" />
+            <BuildableReference BuildableIdentifier = "primary" BlueprintIdentifier = "BBCCDDEE0000000000000005" BuildableName = "aTerminalUITests.xctest" BlueprintName = "aTerminalUITests" ReferencedContainer = "container:aTerminal.xcodeproj" />
          </TestableReference>
       </Testables>
       <EnvironmentVariables>
@@ -60,9 +60,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "F2A5B55D1F67A87A847D6649"
-            BuildableName = "AITerminal.app"
-            BlueprintName = "AITerminal"
-            ReferencedContainer = "container:AITerminal.xcodeproj">
+            BuildableName = "aTerminal.app"
+            BlueprintName = "aTerminal"
+            ReferencedContainer = "container:aTerminal.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -77,9 +77,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "F2A5B55D1F67A87A847D6649"
-            BuildableName = "AITerminal.app"
-            BlueprintName = "AITerminal"
-            ReferencedContainer = "container:AITerminal.xcodeproj">
+            BuildableName = "aTerminal.app"
+            BlueprintName = "aTerminal"
+            ReferencedContainer = "container:aTerminal.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

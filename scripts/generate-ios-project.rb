@@ -5,26 +5,26 @@ require 'pathname'
 require 'rexml/document'
 
 root = Pathname.new(__dir__).parent
-path = root.join('apps/ios/AITerminal.xcodeproj')
+path = root.join('apps/ios/aTerminal.xcodeproj')
 abort 'Project already exists; preserve local signing changes instead of overwriting it' if path.exist?
 project = Xcodeproj::Project.new(path.to_s)
-target = project.new_target(:application, 'AITerminal', :ios, '15.0')
-group = project.main_group.new_group('AITerminal', 'AITerminal')
-root.join('apps/ios/AITerminal').glob('*.swift').sort.each do |file|
+target = project.new_target(:application, 'aTerminal', :ios, '15.0')
+group = project.main_group.new_group('aTerminal', 'aTerminal')
+root.join('apps/ios/aTerminal').glob('*.swift').sort.each do |file|
   target.source_build_phase.add_file_reference(group.new_file(file.basename.to_s))
 end
 generated = project.main_group.new_group('Rust Bindings')
 target.source_build_phase.add_file_reference(generated.new_file('../../build/bindings/ai_terminal_mobile.swift'))
-core = project.frameworks_group.new_file('../../build/AITerminalCore.xcframework')
+core = project.frameworks_group.new_file('../../build/aTerminalCore.xcframework')
 target.frameworks_build_phase.add_file_reference(core)
 fixture = project.main_group.new_file('../../build/fixtures/screen.pb')
 target.resources_build_phase.add_file_reference(fixture)
 target.build_configurations.each do |config|
   config.build_settings.merge!({
-    'PRODUCT_BUNDLE_IDENTIFIER' => 'dev.aiterminal.app',
+    'PRODUCT_BUNDLE_IDENTIFIER' => 'com.yxf.aterminal',
     'SWIFT_VERSION' => '5.0',
     'GENERATE_INFOPLIST_FILE' => 'YES',
-    'INFOPLIST_KEY_CFBundleDisplayName' => 'AI Terminal',
+    'INFOPLIST_KEY_CFBundleDisplayName' => 'aTerminal',
     'INFOPLIST_KEY_UILaunchScreen_Generation' => 'YES',
     'INFOPLIST_KEY_UIApplicationSceneManifest_Generation' => 'YES',
     'TARGETED_DEVICE_FAMILY' => '1,2',
@@ -38,15 +38,15 @@ target.build_configurations.each do |config|
     'OTHER_SWIFT_FLAGS' => ['$(inherited)', '-Xcc', '-fmodule-map-file=$(SRCROOT)/../../build/bindings/ai_terminal_mobileFFI.modulemap']
   })
 end
-ui_tests = project.new_target(:ui_test_bundle, 'AITerminalUITests', :ios, '15.0')
+ui_tests = project.new_target(:ui_test_bundle, 'aTerminalUITests', :ios, '15.0')
 ui_tests.add_dependency(target)
 ui_tests.source_build_phase.add_file_reference(project.main_group.new_file('UITests/WorkspaceUITests.swift'))
 ui_tests.build_configurations.each do |config|
   config.build_settings.merge!({
-    'PRODUCT_BUNDLE_IDENTIFIER' => 'dev.aiterminal.app.uitests',
+    'PRODUCT_BUNDLE_IDENTIFIER' => 'com.yxf.aterminal.uitests',
     'GENERATE_INFOPLIST_FILE' => 'YES',
     'SWIFT_VERSION' => '5.0',
-    'TEST_TARGET_NAME' => 'AITerminal',
+    'TEST_TARGET_NAME' => 'aTerminal',
     'TARGETED_DEVICE_FAMILY' => '1,2'
   })
 end
@@ -55,8 +55,8 @@ scheme = Xcodeproj::XCScheme.new
 scheme.add_build_target(target)
 scheme.add_test_target(ui_tests)
 scheme.set_launch_target(target)
-scheme.save_as(path.to_s, 'AITerminal', true)
-scheme_path = path.join('xcshareddata/xcschemes/AITerminal.xcscheme')
+scheme.save_as(path.to_s, 'aTerminal', true)
+scheme_path = path.join('xcshareddata/xcschemes/aTerminal.xcscheme')
 document = REXML::Document.new(scheme_path.read)
 test_action = document.elements['Scheme/TestAction']
 test_action.attributes['shouldUseLaunchSchemeArgsEnv'] = 'NO'

@@ -19,7 +19,7 @@ struct LoginScreen: View {
                     }.font(.subheadline)
                     VStack(alignment: .leading, spacing: 12) {
                         Text("YOUR WORKSPACE, CONNECTED.").font(.system(size: 12, design: .monospaced)).foregroundColor(WorkspaceStyle.accent)
-                        Text("AI Terminal").font(.system(size: 32, weight: .semibold)).accessibilityAddTraits(.isHeader)
+                        Text("aTerminal").font(.system(size: 32, weight: .semibold)).accessibilityAddTraits(.isHeader)
                         Text("登录，回到你的工作现场。").foregroundColor(WorkspaceStyle.muted)
                     }.padding(.top, 12)
                     VStack(alignment: .leading, spacing: 20) {

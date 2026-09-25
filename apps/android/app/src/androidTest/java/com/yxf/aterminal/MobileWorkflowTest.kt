@@ -1,4 +1,4 @@
-package dev.aiterminal.app
+package com.yxf.aterminal
 
 import android.graphics.Bitmap
 import android.graphics.Paint
@@ -31,8 +31,8 @@ class MobileWorkflowTest {
         failure?.let { throw it }; @Suppress("UNCHECKED_CAST") return answer as T
     }
     private fun focus() {
-        assertEquals("dev.aiterminal.app", activity.packageName)
-        assertTrue("Lost foreground; stop input", main { activity.hasWindowFocus() } || instrumentation.uiAutomation.rootInActiveWindow?.packageName == "dev.aiterminal.app")
+        assertEquals("com.yxf.aterminal", activity.packageName)
+        assertTrue("Lost foreground; stop input", main { activity.hasWindowFocus() } || instrumentation.uiAutomation.rootInActiveWindow?.packageName == "com.yxf.aterminal")
     }
     private fun mutate(action: () -> Unit) { focus(); main(action) }
     private fun all(view: View): List<View> = listOf(view) + if (view is ViewGroup) (0 until view.childCount).flatMap { all(view.getChildAt(it)) } else emptyList()
@@ -47,14 +47,14 @@ class MobileWorkflowTest {
     private fun icon(description: String) = mutate { views().first { it.contentDescription?.toString() == description && it.isEnabled && it !is EditText }.performClick() }
     private fun field(hint: String) = views().filterIsInstance<EditText>().first { it.hint?.toString() == hint }
     private fun launch() {
-        instrumentation.uiAutomation.executeShellCommand("am start -W -n dev.aiterminal.app/.MainActivity --ez terminal_input_test true")
+        instrumentation.uiAutomation.executeShellCommand("am start -W -n com.yxf.aterminal/.MainActivity --ez terminal_input_test true")
             .use { fd -> java.io.FileInputStream(fd.fileDescriptor).use { it.readBytes() } }
         val deadline = SystemClock.elapsedRealtime() + 10000
         while (SystemClock.elapsedRealtime() < deadline) {
             val current = main { ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<MainActivity>().firstOrNull { it.hasWindowFocus() } }
             if (current != null) { activity = current; return }; Thread.sleep(40)
         }
-        fail("AI Terminal did not enter foreground")
+        fail("aTerminal did not enter foreground")
     }
     private fun frame(): RenderFrame? = (get("terminal") as? TerminalView)?.let {
         TerminalView::class.java.getDeclaredField("frame").apply { isAccessible = true }.get(it) as RenderFrame
@@ -89,7 +89,7 @@ class MobileWorkflowTest {
     private fun logout() {
         icon("账号与设备"); click("退出登录"); instrumentation.waitForIdleSync(); focus()
         val root = instrumentation.uiAutomation.rootInActiveWindow
-        assertEquals("dev.aiterminal.app", root.packageName)
+        assertEquals("com.yxf.aterminal", root.packageName)
         root.findAccessibilityNodeInfosByText("退出").last { it.isClickable }.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         waitFor("test account logout") { (get("loginBox") as View).isShown }
     }
@@ -237,7 +237,7 @@ class MobileWorkflowTest {
             mutate { views().first { it.tag == "close-$target" && it.isEnabled }.performClick() }
             instrumentation.waitForIdleSync(); focus()
             val closeDialog = instrumentation.uiAutomation.rootInActiveWindow
-            assertEquals("dev.aiterminal.app", closeDialog.packageName)
+            assertEquals("com.yxf.aterminal", closeDialog.packageName)
             closeDialog.findAccessibilityNodeInfosByText("关闭会话").last { it.isClickable }.performAction(AccessibilityNodeInfo.ACTION_CLICK)
             waitFor("dedicated PTY closed") {
                 @Suppress("UNCHECKED_CAST") val sessions = get("sessions") as List<RemoteSession>

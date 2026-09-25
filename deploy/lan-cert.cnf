@@ -3,7 +3,7 @@ distinguished_name = dn
 prompt = no
 req_extensions = server
 [dn]
-CN = AI Terminal Local Test
+CN = aTerminal Local Test
 [server]
 subjectAltName = IP:192.168.0.36,IP:127.0.0.1,DNS:localhost
 basicConstraints = critical,CA:FALSE

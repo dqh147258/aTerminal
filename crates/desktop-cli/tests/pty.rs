@@ -4,7 +4,7 @@ use std::process::Command;
 #[test]
 fn actual_pty_output_survives_the_engine_and_binary_protocol() {
     let file = std::env::temp_dir().join(format!("ai-terminal-pty-{}.pb", std::process::id()));
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_ai-terminal"));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_aTerminal"));
     cmd.args([
         "--rows",
         "8",
@@ -49,7 +49,7 @@ fn actual_pty_output_survives_the_engine_and_binary_protocol() {
 #[test]
 fn child_failure_is_not_reported_as_success() {
     let file = std::env::temp_dir().join(format!("ai-terminal-exit-{}.pb", std::process::id()));
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_ai-terminal"));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_aTerminal"));
     cmd.arg("--snapshot").arg(&file).arg("--");
     #[cfg(unix)]
     cmd.args(["/bin/sh", "-c", "exit 7"]);

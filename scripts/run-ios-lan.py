@@ -35,17 +35,17 @@ if not device: raise SystemExit('Configured simulator is unavailable; edit deplo
 if device['state'] != 'Booted': run(['xcrun','simctl','boot',udid])
 run(['xcrun','simctl','bootstatus',udid,'-b'])
 if a.build:
-    run(['cargo','+'+a.toolchain,'build','--locked','-p','ai-terminal','--bin','ai-terminal','--example','mobile_demo'])
+    run(['cargo','+'+a.toolchain,'build','--locked','-p','ai-terminal','--bin','aTerminal','--example','mobile_demo'])
     run(['python3','scripts/build-mobile.py','ios','--toolchain',a.toolchain,'--webrtc'])
     run(['python3','scripts/build-mobile.py','ios','--toolchain',a.toolchain,'--webrtc','--simulator'])
     run(['python3','scripts/prepare-bindings.py','--toolchain',a.toolchain])
     target = 'aarch64-apple-ios-sim' if platform.machine()=='arm64' else 'x86_64-apple-ios'
     run(['python3','scripts/package-ios.py','--simulator-target',target,'--replace'])
-    run(['xcodebuild','-project','apps/ios/AITerminal.xcodeproj','-scheme','AITerminal',
+    run(['xcodebuild','-project','apps/ios/aTerminal.xcodeproj','-scheme','aTerminal',
          '-sdk','iphonesimulator','-destination','platform=iOS Simulator,id='+udid,
          '-configuration','Debug','-derivedDataPath','build/xcode','CODE_SIGNING_ALLOWED=YES','CODE_SIGN_IDENTITY=-','build'])
 
-cli = ROOT/'target/debug/ai-terminal'
+cli = ROOT/'target/debug/aTerminal'
 demo = ROOT/'target/debug/examples/mobile_demo'
 state = ROOT/config['state_dir']
 if not cli.exists() or not demo.exists(): raise SystemExit('Build the CLI and mobile_demo first, or pass --build')

@@ -15,14 +15,14 @@ headers = root/'build/xcframework-headers'
 headers.mkdir(parents=True,exist_ok=True)
 shutil.copy2(root/'build/bindings/ai_terminal_mobileFFI.h',headers/'ai_terminal_mobileFFI.h')
 shutil.copy2(root/'build/bindings/ai_terminal_mobileFFI.modulemap',headers/'module.modulemap')
-output = root/'build/AITerminalCore.xcframework'
+output = root/'build/aTerminalCore.xcframework'
 if output.exists() and not a.replace:
     raise SystemExit('Output already exists; choose a clean packaging directory before rebuilding')
 command=['xcodebuild','-create-xcframework']
 for target in ['aarch64-apple-ios',a.simulator_target]:
     command+=['-library',str(root/'build/mobile'/target/'libai_terminal_mobile.a'),'-headers',str(headers)]
 with tempfile.TemporaryDirectory(prefix='xcframework-',dir=root/'build') as temp:
-    staged=Path(temp)/'AITerminalCore.xcframework'
+    staged=Path(temp)/'aTerminalCore.xcframework'
     subprocess.run(command+['-output',str(staged)],check=True)
     if output.exists(): shutil.rmtree(output)
     shutil.move(str(staged),str(output))

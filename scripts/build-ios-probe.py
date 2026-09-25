@@ -19,22 +19,22 @@ arch = 'x86_64' if a.simulator and os.uname().machine != 'arm64' else 'arm64'
 rust_target = ('x86_64-apple-ios' if arch == 'x86_64' else 'aarch64-apple-ios-sim') if a.simulator else 'aarch64-apple-ios'
 triple = arch + '-apple-ios15.0' + ('-simulator' if a.simulator else '')
 sdkroot = subprocess.check_output(['xcrun','--sdk',sdk,'--show-sdk-path'], text=True).strip()
-app = ROOT / 'build' / ('ios-input-checks' if a.input_checks else ('ios-simulator' if a.simulator else 'ios-device')) / 'AITerminal.app'
+app = ROOT / 'build' / ('ios-input-checks' if a.input_checks else ('ios-simulator' if a.simulator else 'ios-device')) / 'aTerminal.app'
 app.mkdir(parents=True, exist_ok=True)
 bindings = ROOT / 'build/bindings'
-sources = sorted((ROOT/'apps/ios/AITerminal').glob('*.swift'))
+sources = sorted((ROOT/'apps/ios/aTerminal').glob('*.swift'))
 if a.input_checks:
-    sources = [ROOT/'apps/ios/AITerminal/TerminalView.swift', ROOT/'apps/ios/Tests/TerminalInputChecks.swift']
+    sources = [ROOT/'apps/ios/aTerminal/TerminalView.swift', ROOT/'apps/ios/Tests/TerminalInputChecks.swift']
 args = ['xcrun','--sdk',sdk,'swiftc','-D','DEBUG','-parse-as-library','-sdk',sdkroot,'-target',triple,
         '-module-cache-path',str(ROOT/'build/swift-module-cache'),
         '-I',str(bindings),'-Xcc','-fmodule-map-file='+str(bindings/'ai_terminal_mobileFFI.modulemap'),
         '-L',str(ROOT/'build/mobile'/rust_target),'-lai_terminal_mobile','-lc++',
         '-framework','UIKit','-framework','SwiftUI','-framework','Foundation','-framework','Security',
         str(bindings/'ai_terminal_mobile.swift'),
-        *map(str,sources),'-o',str(app/'AITerminal')]
+        *map(str,sources),'-o',str(app/'aTerminal')]
 subprocess.run(args,cwd=ROOT,check=True)
 shutil.copy2(ROOT/'build/fixtures/screen.pb',app/'screen.pb')
-info = {'CFBundleIdentifier':'dev.aiterminal.app','CFBundleName':'AI Terminal','CFBundleExecutable':'AITerminal',
+info = {'CFBundleIdentifier':'com.yxf.aterminal','CFBundleName':'aTerminal','CFBundleExecutable':'aTerminal',
         'CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.1.0','CFBundleVersion':'1',
         'MinimumOSVersion':'15.0','LSRequiresIPhoneOS':True,'UIDeviceFamily':[1,2],
         'UILaunchScreen':{},'UIApplicationSceneManifest':{'UIApplicationSupportsMultipleScenes':False},
