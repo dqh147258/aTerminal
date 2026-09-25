@@ -1,6 +1,7 @@
 # Rust builds, generated bindings, benchmarks, and local test state.
 /target/
 /build/
+/artifacts/
 /.local/
 
 # Local configuration and credentials; keep documented templates versioned.

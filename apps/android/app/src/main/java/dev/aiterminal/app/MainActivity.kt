@@ -351,7 +351,11 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 if (localDebugAutoLogin && !connected && !connecting) {
                     val desktop = list.firstOrNull { it.platform == "desktop" && it.online && it.name == localDebugDesktop }
                     if (desktop == null) localDebugStatus("error", "$localDebugDesktop 未在线") else connectDevice(desktop.id)
-                } else restoreLastSession()
+                } else {
+                    val desktop = list.filter { it.online && !it.current && it.platform == "desktop" }.singleOrNull()
+                    if (active && !connected && !connecting && desktop != null) connectDevice(desktop.id)
+                    else restoreLastSession()
+                }
             } }
         } finally { persist() }
     }
@@ -584,7 +588,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             }.apply { isEnabled = !deviceBusy && accountName.isNotEmpty() })
             addView(actionButton("改密码") { passwordDialog() }.apply { isEnabled = accountName.isNotEmpty() })
         }); accountBar.gap(16)
-        val onlineDevices = devices.filter { it.online }
+        val onlineDevices = devices.filter { it.online && !it.current }
         if (onlineDevices.isEmpty()) accountBar.addView(label("暂无在线设备", 14f, Palette.muted))
         onlineDevices.forEach { device ->
             accountBar.addView(label(device.name, 16f))

@@ -255,6 +255,7 @@ struct Host {
     account: Arc<crate::account::AccountManager>,
     assistant: crate::assistant::Assistant,
     sessions: Mutex<HashMap<String, Actor>>,
+    session_order: Mutex<Vec<String>>,
     owners: Mutex<HashMap<String, String>>,
     stop: Arc<AtomicBool>,
     workers: AtomicUsize,
@@ -289,6 +290,7 @@ pub fn run_agent(dir: &Path) -> Result<()> {
         account: account.clone(),
         assistant: crate::assistant::Assistant::default(),
         sessions: Mutex::new(HashMap::new()),
+        session_order: Mutex::new(Vec::new()),
         owners: Mutex::new(HashMap::new()),
         stop: Arc::new(AtomicBool::new(false)),
         workers: AtomicUsize::new(0),
@@ -479,7 +481,18 @@ fn dispatch(host: &Host, request: Request) -> Result<Reply> {
             })
         }
         Operation::List => {
-            let sessions: Vec<_> = host.sessions.lock().unwrap().values().cloned().collect();
+            // Session IDs are random, so preserve creation order explicitly. Mobile clients
+            // select the first live session when opening a workspace.
+            let sessions: Vec<_> = {
+                let sessions = host.sessions.lock().unwrap();
+                host.session_order
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .rev()
+                    .filter_map(|id| sessions.get(id).cloned())
+                    .collect()
+            };
             let mut reply = Reply::default();
             for actor in sessions {
                 if let Ok(r) = request_actor(
@@ -498,7 +511,6 @@ fn dispatch(host: &Host, request: Request) -> Result<Reply> {
                     reply.sessions.push(info);
                 }
             }
-            reply.sessions.sort_by(|a, b| a.id.cmp(&b.id));
             Ok(reply)
         }
         Operation::Create => {
@@ -534,6 +546,7 @@ fn dispatch(host: &Host, request: Request) -> Result<Reply> {
                     request.account_scope.clone()
                 },
             );
+            host.session_order.lock().unwrap().push(id.clone());
             sessions.insert(id, tx.clone());
             drop(sessions);
             request_actor(
@@ -560,6 +573,10 @@ fn dispatch(host: &Host, request: Request) -> Result<Reply> {
             let reply = request_actor(&actor, request.clone())?;
             if op == Operation::Close && reply.error.is_empty() {
                 host.sessions.lock().unwrap().remove(&request.session);
+                host.session_order
+                    .lock()
+                    .unwrap()
+                    .retain(|id| id != &request.session);
                 host.owners.lock().unwrap().remove(&request.session);
             }
             Ok(reply)
@@ -899,6 +916,80 @@ fn encode_input(request: &Request, engine: &Engine) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod service_tests {
     use super::*;
+
+    #[test]
+    fn session_list_returns_newest_first_and_removes_closed_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Host {
+            account: crate::account::AccountManager::new(dir.path()).unwrap(),
+            assistant: crate::assistant::Assistant::default(),
+            sessions: Mutex::new(HashMap::new()),
+            session_order: Mutex::new(Vec::new()),
+            owners: Mutex::new(HashMap::new()),
+            stop: Arc::new(AtomicBool::new(false)),
+            workers: AtomicUsize::new(0),
+        };
+        // Deliberately different from ID order; the latest session has exited.
+        let mut workers = Vec::new();
+        for (id, exited) in [("z-old", false), ("a-new", false), ("m-exited", true)] {
+            let (tx, rx) = mpsc::sync_channel::<(Request, SyncSender<Reply>)>(8);
+            host.sessions.lock().unwrap().insert(id.into(), tx);
+            host.session_order.lock().unwrap().push(id.into());
+            workers.push(thread::spawn(move || {
+                while let Ok((_, reply)) = rx.recv() {
+                    let _ = reply.send(Reply {
+                        info: Some(SessionInfo {
+                            id: id.into(),
+                            exited,
+                            ..SessionInfo::default()
+                        }),
+                        ..Reply::default()
+                    });
+                }
+            }));
+        }
+        let list = || {
+            dispatch(
+                &host,
+                Request {
+                    operation: Operation::List as i32,
+                    client: 1,
+                    ..Request::default()
+                },
+            )
+            .unwrap()
+            .sessions
+        };
+        let sessions = list();
+        assert_eq!(
+            sessions.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            ["m-exited", "a-new", "z-old"]
+        );
+        assert_eq!(sessions.iter().find(|s| !s.exited).unwrap().id, "a-new");
+        dispatch(
+            &host,
+            Request {
+                operation: Operation::Close as i32,
+                client: 1,
+                session: "a-new".into(),
+                ..Request::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(list().iter().find(|s| !s.exited).unwrap().id, "z-old");
+        assert!(
+            !host
+                .session_order
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|id| id == "a-new")
+        );
+        drop(host);
+        for worker in workers {
+            worker.join().unwrap();
+        }
+    }
 
     #[test]
     fn invalid_intermediate_frame_does_not_poison_the_baseline() {

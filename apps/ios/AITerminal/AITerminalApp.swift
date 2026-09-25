@@ -121,7 +121,12 @@ final class TerminalModel: ObservableObject {
         let devices = try account.devices()
         DispatchQueue.main.async {
             self.devices = devices; self.username = name; self.accountBusy = false; self.busy = false
-            if !self.connected { self.status = "选择在线 Desktop"; self.restoreLastTerminal() }
+            if !self.connected {
+                self.status = "选择在线 Desktop"
+                let desktops = devices.filter { $0.online && !$0.current && $0.platform == "desktop" }
+                if desktops.count == 1 { self.connectDevice(desktops[0].id) }
+                else { self.restoreLastTerminal() }
+            }
         }
     }
     nonisolated private func failed(_ error: Error, version: Int? = nil) {

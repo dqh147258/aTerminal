@@ -308,7 +308,7 @@ struct WorkspaceScreen: View {
         }
     }
     private var devicesPanel: some View {
-        let onlineDevices = model.devices.filter(\.online)
+        let onlineDevices = model.devices.filter { $0.online && !$0.current }
         return VStack(spacing: 0) {
             HStack { Text(model.busy ? "正在连接" : "已登录设备").font(.subheadline).foregroundColor(WorkspaceStyle.muted); Spacer(); if model.busy { ProgressView() }; ToolButton(symbol: "arrow.clockwise", label: "刷新设备") { model.refreshDevices() }.disabled(model.busy) }.padding(.horizontal, 16)
             ScrollView {
