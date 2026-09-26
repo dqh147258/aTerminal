@@ -19,7 +19,7 @@ struct ToolButton: View {
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 19, weight: .regular))
+            Image(systemName: symbol).font(.system(size: 16, weight: .regular))
                 .frame(width: 44, height: 44).foregroundColor(active ? WorkspaceStyle.background : WorkspaceStyle.accent)
                 .background(active ? WorkspaceStyle.accent : Color.clear).cornerRadius(6)
         }.buttonStyle(.plain).accessibilityLabel(label).help(label)

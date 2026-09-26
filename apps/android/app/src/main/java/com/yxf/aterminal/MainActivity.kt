@@ -3,6 +3,7 @@ package com.yxf.aterminal
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
+import android.content.res.Configuration
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
@@ -34,6 +35,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private var active = false
     @Volatile private var generation = 0
     @Volatile private var accountEpoch = 0
+    private val accountPersistenceLock = Any()
     private var selected: String? = null
     private var controlled = false
     private var desktopAttached = false
@@ -58,17 +60,32 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private lateinit var dimensions: TextView
     private lateinit var empty: LinearLayout
     private lateinit var surface: HorizontalScrollView
-    private lateinit var inputBox: LinearLayout
-    private lateinit var keysBar: HorizontalScrollView
+    private lateinit var workspaceHeader: LinearLayout
+    private lateinit var workspaceFooter: LinearLayout
+    private lateinit var headerLine: View
+    private lateinit var footerLine: View
+    private lateinit var sideWorkspace: View
+    private lateinit var sideAccount: View
+    private lateinit var toolRail: LinearLayout
+    private var keyboardOpen = false
     private lateinit var store: PairingStore
     private lateinit var display: DisplayPreferences
     private var terminal: TerminalView? = null
     private var overlay: FrameLayout? = null
     private var overlayPanel: View? = null
     private var assistant: AssistantPanel? = null
+    private var agentPanel: AgentPanel? = null
+    private var skillPicker: ((android.net.Uri) -> Unit)? = null
     private var chatStore: ChatStore? = null
+    private var agentArchives:List<Conversation> = emptyList()
+    private var archiveLoading=false
     private var drawerTab = false
     private var loginBusy = false
+    private var heartbeatBusy = false
+    private var entryPending = false
+    private lateinit var entryScreen: LinearLayout
+    private lateinit var entryStatus: TextView
+    private lateinit var resetLogin: () -> Unit
     private var deviceBusy = false
     private var sessionBusy = false
     private val uncertainSessions = mutableSetOf<Pair<String, String>>()
@@ -101,14 +118,15 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         super.onCreate(savedInstanceState)
         window.statusBarColor = Palette.background
         window.navigationBarColor = Palette.background
-        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)
         store = PairingStore(this, if (terminalTest) "terminal-input-account" else if (localDebugAutoLogin) "account" else if (testMode || isolatedUi) "acceptance-account" else "account")
         display = DisplayPreferences(this, if (terminalTest) "terminal-input-display" else if (localDebugAutoLogin) "display" else if (testMode || isolatedUi) "acceptance-display" else "display")
-        serverUrl = if (isolatedUi) "" else connectionPreferences.getString("server", "") ?: ""
+        serverUrl = if (isolatedUi) BuildConfig.DEFAULT_SERVER_URL else connectionPreferences.getString("server", null) ?: BuildConfig.DEFAULT_SERVER_URL
         root = FrameLayout(this).apply {
             isFocusableInTouchMode = true
             setBackgroundColor(Palette.background)
             setOnApplyWindowInsetsListener { view, insets ->
+                if (Build.VERSION.SDK_INT >= 30) keyboardOpen = insets.isVisible(android.view.WindowInsets.Type.ime())
                 view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop,
                     insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
                 insets.consumeSystemWindowInsets()
@@ -116,7 +134,17 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         }
         buildWorkspace()
         buildLogin()
+        entryScreen = column(24).apply {
+            gravity = Gravity.CENTER
+            setBackgroundColor(Palette.background)
+            addView(ProgressBar(this@MainActivity))
+            entryStatus = label("正在恢复工作空间…", 16f).apply { gravity = Gravity.CENTER }
+            addView(entryStatus)
+            visibility = View.GONE
+        }
+        root.addView(entryScreen, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
+        applyWorkspaceLayout()
         if (BuildConfig.TERMINAL_DEBUG && intent.getBooleanExtra("render_fixture", false)) {
             (loginBox.parent as View).visibility = View.GONE; workspace.visibility = View.VISIBLE
             val replica = TerminalReplica()
@@ -125,16 +153,18 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         } else if (localDebugAutoLogin) {
             autoLoginLocalDebug()
         } else if (!isolatedUi) {
+            loginBusy = true
+            beginEntry("正在恢复工作空间…")
             val epoch = accountEpoch
             work {
-                store.load()?.let { value ->
+                try { store.load()?.let { value ->
                     account.restore(value)
                     val name = account.username()
                     val exported = JSONObject(value)
                     val restoredServer = exported.optString("server", serverUrl)
                     post { if (epoch == accountEpoch) signedIn(name, restoredServer) }
                     loadDevices(epoch)
-                }
+                } ?: post { if (epoch == accountEpoch) finishEntry() } } finally { post { if (epoch == accountEpoch) loginBusy = false } }
             }
         }
     }
@@ -170,7 +200,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                         }
                         account.restore(saved)
                     }
-                    persist()
+                    persist(epoch)
                     connectionPreferences.edit().putString("server", server).apply()
                     post { if (epoch == accountEpoch) signedIn(username, server) }
                     loadDevices(epoch)
@@ -199,10 +229,27 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         loginBox.addView(label("YOUR WORKSPACE, CONNECTED.", 12f, Palette.muted))
         loginBox.addView(label("aTerminal", 32f).apply { setTypeface(typeface, Typeface.BOLD) })
         loginBox.addView(label("登录，回到你的工作现场。", 16f, Palette.muted)); loginBox.gap(20)
-        val server = field("服务器 https://…").apply { setText(serverUrl); inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI; if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) setAutofillHints(View.AUTOFILL_HINT_USERNAME) }
+        val server = field("服务器 https://…").apply { setText(serverUrl); inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI }
         val username = field("账号").apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) setAutofillHints(View.AUTOFILL_HINT_USERNAME) }
         val password = field("密码", true).apply { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) setAutofillHints(View.AUTOFILL_HINT_PASSWORD) }
-        loginBox.addView(label("服务地址")); loginBox.addView(server); loginBox.gap(16)
+        val serverAddress = label(serverUrl.ifBlank { "未配置服务器" }, 14f, Palette.muted).apply { tag = "login.server.address" }
+        server.visibility = View.GONE
+        val editServer = actionButton("修改服务器地址") {}.apply {
+            textSize = 12f; setTextColor(Palette.accent); background = null; gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            setOnClickListener {
+                if (server.visibility == View.GONE) {
+                    server.visibility = View.VISIBLE; serverAddress.visibility = View.GONE; text = "保存服务器地址"
+                    server.requestFocus()
+                } else try {
+                    val value = ChatStore.canonicalServer(server.text.toString())
+                    connectionPreferences.edit().putString("server", value).apply()
+                    serverUrl = value; server.setText(value); serverAddress.text = value
+                    server.visibility = View.GONE; serverAddress.visibility = View.VISIBLE; text = "修改服务器地址"; hideKeyboard()
+                } catch (e: Exception) { server.error = e.message ?: "请输入有效的服务地址" }
+            }
+        }
+        loginBox.addView(label("登录地址", 12f, Palette.muted)); loginBox.addView(serverAddress)
+        loginBox.addView(server); loginBox.addView(editServer); loginBox.gap(16)
         loginBox.addView(label("账号")); loginBox.addView(username); loginBox.gap(16)
         loginBox.addView(label("密码"))
         loginBox.addView(row().apply {
@@ -235,9 +282,9 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                             // The local deployment test pins its private CA without changing normal login trust.
                             val testCa = if (testMode) {
                                 java.io.File(filesDir, "acceptance-ca.pem").takeIf { it.isFile }?.readText().orEmpty()
-                            } else ""
+                            } else BuildConfig.DEFAULT_SERVER_CA_PEM
                             account.login(url, name, secret, android.os.Build.MODEL, "android", testCa)
-                            persist()
+                            persist(epoch)
                             connectionPreferences.edit().putString("server", url).apply()
                             val actualName = account.username()
                             post { if (epoch == accountEpoch) { password.setText(""); signedIn(actualName, url) } }
@@ -248,12 +295,13 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                                 else { error.visibility = View.VISIBLE; error.text = e.message ?: "登录失败，请重试" }
                             } }
                         } finally {
-                            post { loginBusy = false; submit.isEnabled = true; submit.text = "登录"; progress.visibility = View.GONE }
+                            post { if (epoch == accountEpoch) resetLogin() }
                         }
                     }
                 } catch (e: Exception) { error.visibility = View.VISIBLE; error.text = e.message }
             }
         }
+        resetLogin = { loginBusy = false; submit.isEnabled = true; submit.text = "登录"; progress.visibility = View.GONE }
         loginBox.addView(submit, LinearLayout.LayoutParams(-1, dp(52)))
         loginBox.gap(32)
         loginBox.addView(label("桌面工作，随身连接", 12f, Palette.muted))
@@ -263,6 +311,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private fun buildWorkspace() {
         workspace = column().apply { visibility = View.GONE }
         val header = column(4)
+        workspaceHeader = header
         sessionTitle = heading("aTerminal").apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
         sessionMeta = label("选择 Desktop", 12f, Palette.muted).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
         connection = label("未连接", 12f, Palette.muted)
@@ -271,7 +320,8 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             fill(column(8).apply { addView(sessionTitle); addView(sessionMeta) })
             addView(iconButton(R.drawable.ic_user_round, "账号与设备") { accountPanel() })
         })
-        workspace.addView(header); workspace.addView(divider())
+        headerLine = divider()
+        workspace.addView(header); workspace.addView(headerLine)
         val region = FrameLayout(this)
         var scrollStartX = 0f
         surface = HorizontalScrollView(this).apply {
@@ -295,29 +345,21 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             addView(label("尚未连接终端", 18f)); addView(actionButton("选择设备", true) { accountPanel() })
         }
         region.addView(empty, FrameLayout.LayoutParams(-1, -1))
-        val tools = column(4).apply {
-            background = shape(Palette.surface, true)
-            addView(iconButton(R.drawable.ic_sliders_horizontal, "终端设置") { settingsPanel() }); gap(6)
-            addView(iconButton(R.drawable.ic_message_circle, "AI 对话") { openChat() }); gap(6)
-            addView(iconButton(R.drawable.ic_keyboard, "显示或隐藏终端键盘") { toggleInput() })
+        toolRail = column(2).apply {
+            background = shape(panelColor(), true)
+            sideWorkspace = iconButton(R.drawable.ic_panel_left, "打开工作空间") { openDrawer() }
+            sideAccount = iconButton(R.drawable.ic_user_round, "账号与设备") { accountPanel() }
+            addView(sideWorkspace); addView(sideAccount)
+            addView(iconButton(R.drawable.ic_sliders_horizontal, "终端设置") { settingsPanel() })
+            addView(iconButton(R.drawable.ic_message_circle, "AI 对话") { openChat() })
+            addView(iconButton(R.drawable.ic_keyboard, "特殊按键") { specialKeys() })
+            for (i in 0 until childCount) getChildAt(i).background = null
         }
-        region.addView(tools, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.CENTER_VERTICAL).apply { marginEnd = dp(12) })
+        region.addView(scroll(toolRail).apply { isFillViewport = false }, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.CENTER_VERTICAL).apply { marginEnd = dp(6) })
         workspace.grow(region)
-        inputBox = column(8).apply { visibility = View.GONE; setBackgroundColor(Palette.surface) }
-        inputBox.addView(row().apply {
-            addView(actionButton("历史") { terminalHistory() })
-            addView(actionButton("粘贴") { terminal?.pasteClipboard() })
-            addView(iconButton(R.drawable.ic_x, "隐藏终端键盘") { toggleInput(false) })
-        })
-        val keys = row()
-        for ((name, key) in listOf("回车" to "enter", "Tab" to "tab", "退格" to "backspace", "Ctrl-C" to "ctrl_c", "Esc" to "escape", "↑" to "up", "↓" to "down", "←" to "left", "→" to "right")) {
-            keys.addView(actionButton(name) { enqueue { remote.sendKey(key) } })
-        }
-        keysBar = HorizontalScrollView(this).apply { addView(keys); visibility = View.GONE }
-        inputBox.addView(keysBar)
-        workspace.addView(inputBox)
-        workspace.addView(divider())
+        footerLine = divider(); workspace.addView(footerLine)
         val footer = column(6)
+        workspaceFooter = footer
         status = label("登录后选择 Desktop", 12f, Palette.muted).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
         dimensions = label("UTF-8", 12f, Palette.muted)
         footer.addView(row().apply { fill(status); addView(connection) })
@@ -329,19 +371,41 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
 
     private fun divider() = View(this).apply { setBackgroundColor(Palette.line); layoutParams = LinearLayout.LayoutParams(-1, dp(1)) }
     private fun post(action: () -> Unit) { ui.post { if (!isDestroyed) action() } }
-    private fun work(action: () -> Unit) { worker.execute { try { action() } catch (e: Exception) { post { notice(e.message ?: "操作失败") } } } }
+    private fun work(action: () -> Unit) {
+        val epoch = accountEpoch
+        worker.execute { try { action() } catch (e: Exception) { post { if (epoch == accountEpoch) notice(e.message ?: "操作失败") } } }
+    }
+    private fun beginEntry(message: String = "正在连接终端…") {
+        entryPending = true; entryStatus.text = message
+        (loginBox.parent as View).visibility = View.GONE; workspace.visibility = View.GONE; entryScreen.visibility = View.VISIBLE
+    }
+    private fun finishEntry() {
+        entryPending = false; entryScreen.visibility = View.GONE
+        val signedIn = accountName.isNotEmpty()
+        (loginBox.parent as View).visibility = if (signedIn) View.GONE else View.VISIBLE
+        workspace.visibility = if (signedIn) View.VISIBLE else View.GONE
+    }
     private fun notice(message: String) {
+        if (entryPending) finishEntry()
         status.text = message; toast?.cancel()
         toast = Toast.makeText(this, message, Toast.LENGTH_LONG).also { it.show() }
     }
-    private fun persist() { val value = account.export(); if (value.isEmpty()) store.clear() else store.save(value) }
+    private fun persist(epoch: Int) {
+        // Export can wait for network work inside Account; never hold the UI logout lock there.
+        val value = account.export()
+        synchronized(accountPersistenceLock) {
+            if (epoch != accountEpoch) return
+            if (value.isEmpty()) store.clear() else store.save(value)
+        }
+    }
     private fun signedIn(name: String, server: String) {
-        accountName = name; serverUrl = server; chatStore = ChatStore(this, server, name, if (terminalTest) "terminal-input" else "")
+        accountName = name; serverUrl = server; chatStore = null
         memory = WorkspaceMemory(this, server, name, if (terminalTest) "terminal-input" else ""); restorePending = true
-        (loginBox.parent as View).visibility = View.GONE; workspace.visibility = View.VISIBLE
+        beginEntry()
         status.text = "$name · 选择在线 Desktop"
     }
-    private fun loadDevices(epoch: Int = accountEpoch) {
+    private fun loadDevices(epoch: Int) {
+        if (epoch != accountEpoch) return
         try {
             val list = account.devices()
             post { if (epoch == accountEpoch) {
@@ -350,16 +414,20 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 if (overlay?.tag == "account") accountPanel()
                 if (localDebugAutoLogin && !connected && !connecting) {
                     val desktop = list.firstOrNull { it.platform == "desktop" && it.online && it.name == localDebugDesktop }
-                    if (desktop == null) localDebugStatus("error", "$localDebugDesktop 未在线") else connectDevice(desktop.id)
+                    if (desktop == null) { finishEntry(); localDebugStatus("error", "$localDebugDesktop 未在线") } else if (active) connectDevice(desktop.id)
                 } else {
                     val desktop = list.filter { it.online && !it.current && it.platform == "desktop" }.singleOrNull()
                     if (active && !connected && !connecting && desktop != null) connectDevice(desktop.id)
-                    else restoreLastSession()
+                    else {
+                        restoreLastSession()
+                        if (active && !connecting && entryPending) finishEntry()
+                    }
                 }
             } }
-        } finally { persist() }
+        } finally { persist(epoch) }
     }
     private fun connectDevice(id: String, resumeSession: String? = null, resumeChat: Boolean = false) {
+        beginEntry()
         disconnect(); closeOverlay()
         deviceId = id; deviceName = devices.firstOrNull { it.id == id }?.name ?: "Desktop"
         connecting = true; restorePending = false
@@ -372,13 +440,16 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 val list = remote.sessions()
                 post { if (active && generation == version && epoch == accountEpoch) {
                     connecting = false; connected = true; sessions = list; uncertainSessions.removeAll { it.first == id }; memory?.record(id, list.associate { it.id to it.exited }); connection.text = "已连接"; connection.setTextColor(Palette.green)
-                    if (localDebugAutoLogin) localDebugStatus("ready", "已连接 $deviceName")
                     val target = list.firstOrNull { it.id == resumeSession && !it.exited } ?: if (resumeSession == null) list.firstOrNull { !it.exited } else null
                     if (target != null) select(target.id, true, resumeChat)
-                    else { status.text = if (resumeSession == null) "已连接，创建或选择会话" else "原会话已关闭，历史仍可查阅"; openDrawer() }
+                    else {
+                        status.text = if (resumeSession == null) "已连接，暂无运行中的终端" else "原会话已关闭，历史仍可查阅"
+                        finishEntry()
+                        if (localDebugAutoLogin) localDebugStatus("ready", "已连接 $deviceName，暂无运行中的终端")
+                    }
                 } }
             } catch (e: Exception) { post { if (generation == version) { connecting = false; connection.text = "未连接"; if (localDebugAutoLogin) localDebugStatus("error", e.message ?: "连接失败"); notice(e.message ?: "连接失败") } } }
-            finally { persist() }
+            finally { persist(epoch) }
         }
     }
     private fun refreshSessions(manual: Boolean = false) {
@@ -397,6 +468,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                         memory?.record(device, list.associate { it.id to it.exited })
                         updateSessionHeader()
                         refreshDrawer?.invoke()
+                        if (selected == null && !sessionBusy) list.firstOrNull { !it.exited }?.let { select(it.id, true) }
                     }
                 }
             } catch (e: Exception) { post { sessionRefreshBusy = false; if (manual && generation == version) notice(e.message ?: "刷新会话失败") } }
@@ -408,7 +480,8 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         sessionMeta.text = "$deviceName · ${session.cwd}"
     }
     private fun select(id: String, control: Boolean, chat: Boolean = false) {
-        val reopenKeyboard = control && inputBox.visibility == View.VISIBLE
+        val reopenKeyboard = control && keyboardOpen
+        beginEntry("正在打开终端…")
         closeOverlay(); toggleInput(false); generation++; val version = generation
         selected = null; controlled = false; desktopAttached = false; sessionExited = false
         surface.removeAllViews(); terminal = null
@@ -419,11 +492,12 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 val attached = remote.desktopAttached(); val exited = remote.sessionExited()
                 post { if (generation == version && active) {
                     selected = id; controlled = hasControl; desktopAttached = attached; sessionExited = exited
-                    keysBar.visibility = if (controlled) View.VISIBLE else View.GONE
                     memory?.remember(deviceId, id)
                     updateSessionHeader()
                     if (sessions.none { it.id == id }) { sessionTitle.text = "终端"; sessionMeta.text = "$deviceName · $id" }
                     show(frame)
+                    finishEntry()
+                    if (localDebugAutoLogin) localDebugStatus("ready", "已打开 $deviceName 的终端")
                     if (reopenKeyboard) terminal?.focusKeyboard()
                     if (chat) openChat()
                 } }
@@ -433,11 +507,11 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private fun show(frame: RenderFrame) {
         empty.visibility = View.GONE
         if (terminal == null) { terminal = TerminalView(this, frame).apply {
-            canType = { selected != null && controlled }
+            canType = { selected != null && controlled && (this@MainActivity.overlay == null || this@MainActivity.overlay?.tag == "keys") }
             sendText = { text -> enqueue { remote.typeText(text) } }
             sendPaste = { text -> enqueue { remote.sendText(text, false) } }
             sendKey = { key -> enqueue { remote.sendKey(key) } }
-            keyboardOpened = { inputBox.visibility = View.VISIBLE }
+            keyboardOpened = { keyboardOpen = true }
             readOnlyTapped = { notice(readOnlyReason()) }
             zoom(this@MainActivity.display.fontSize / 15f)
         }; surface.addView(terminal) }
@@ -454,11 +528,58 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         !desktopAttached -> "Desktop 已离开；在桌面重新 --attach 后可输入"
         else -> "当前设备只有只读权限"
     }
-    private fun toggleInput(show: Boolean = inputBox.visibility != View.VISIBLE) {
-        inputBox.visibility = if (show) View.VISIBLE else View.GONE
+    private fun toggleInput(show: Boolean = !keyboardOpen) {
         if (show) terminal?.focusKeyboard() else hideKeyboard()
     }
-    private fun hideKeyboard() { (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(root.windowToken, 0); root.requestFocus(); terminal?.clearFocus() }
+    private fun hideKeyboard() {
+        keyboardOpen = false
+        (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(root.windowToken, 0)
+        root.requestFocus(); terminal?.clearFocus()
+    }
+    private fun specialKeys() {
+        if (overlay?.tag == "keys") { closeOverlay(hideIme = false); return }
+        val body = panel("特殊按键")
+        overlay?.tag = "keys"
+        val grid = GridLayout(this).apply { columnCount = 4; setPadding(dp(8), dp(8), dp(8), dp(8)) }
+        fun key(icon: Int, label: String, action: () -> Unit) {
+            grid.addView(iconButton(icon, label) { closeOverlay(hideIme = false); action() }.apply {
+                layoutParams = GridLayout.LayoutParams().apply { width = dp(48); height = dp(48) }
+                setPadding(dp(15), dp(15), dp(15), dp(15)); background = null
+            })
+        }
+        for ((icon, label, value) in listOf(
+            Triple(R.drawable.ic_key_enter, "回车", "enter"), Triple(R.drawable.ic_key_tab, "Tab", "tab"),
+            Triple(R.drawable.ic_key_backspace, "退格", "backspace"), Triple(R.drawable.ic_key_escape, "Esc", "escape"),
+            Triple(R.drawable.ic_arrow_left, "向左", "left"), Triple(R.drawable.ic_arrow_up, "向上", "up"),
+            Triple(R.drawable.ic_arrow_down, "向下", "down"), Triple(R.drawable.ic_arrow_right, "向右", "right"),
+            Triple(R.drawable.ic_key_stop, "Ctrl-C", "ctrl_c"))) {
+            key(icon, label) { enqueue { remote.sendKey(value) } }
+        }
+        key(R.drawable.ic_clipboard, "粘贴") { terminal?.pasteClipboard() }
+        key(R.drawable.ic_history, "终端历史") { terminalHistory() }
+        key(R.drawable.ic_keyboard, if (keyboardOpen) "收起系统键盘" else "显示系统键盘") { toggleInput() }
+        body.grow(scroll(grid))
+    }
+    private fun applyWorkspaceLayout() {
+        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        if (Build.VERSION.SDK_INT >= 30) {
+            // Hide status bars without FLAG_FULLSCREEN, which disables IME resize.
+            window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            window.insetsController?.let { controller ->
+                controller.systemBarsBehavior = android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                if (landscape) controller.hide(android.view.WindowInsets.Type.statusBars())
+                else controller.show(android.view.WindowInsets.Type.statusBars())
+            }
+        } else if (landscape) window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+        listOf(workspaceHeader, workspaceFooter, headerLine, footerLine).forEach { it.visibility = if (landscape) View.GONE else View.VISIBLE }
+        listOf(sideWorkspace, sideAccount).forEach { it.visibility = if (landscape) View.VISIBLE else View.GONE }
+        root.requestApplyInsets()
+    }
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applyWorkspaceLayout()
+    }
 
     private fun createSession() {
         if (!connected) { accountPanel(); return }
@@ -522,6 +643,14 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
 
     private fun openDrawer() {
         val body = panel("工作空间", drawer = true); overlay?.tag = "drawer"
+        if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            body.addView(column(12).apply {
+                addView(label(sessionTitle.text.toString(), 14f))
+                addView(label(sessionMeta.text.toString(), 11f, Palette.muted))
+                addView(label("${status.text} · ${dimensions.text}", 11f, Palette.muted))
+                addView(iconButton(R.drawable.ic_user_round, "账号与设备") { accountPanel() })
+            })
+        }
         val tabs = RadioGroup(this).apply { orientation = RadioGroup.HORIZONTAL; setPadding(dp(12), dp(12), dp(12), 0) }
         fun tab(title: String) = RadioButton(this).apply {
             id = View.generateViewId(); text = title; buttonDrawable = null; gravity = Gravity.CENTER; minHeight = dp(44)
@@ -541,12 +670,13 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             list.removeAllViews()
             val search = query.text.toString()
             if (drawerTab) {
-                val history = chatStore?.list(search).orEmpty()
-                if (history.isEmpty()) list.addView(label("暂无匹配的对话", 14f, Palette.muted))
-                for (chat in history) {
-                    list.addView(actionButton(chat.title + " · " + sessionAvailability(chat.deviceId, chat.sessionId) + "\n" + chat.messages.last().content.take(100)) { openChat(chat) }.apply { gravity = Gravity.START; maxLines = 4 })
-                    list.gap(8)
+                list.addView(actionButton("全局 / 当前终端 Agent 历史") { openChat() })
+                list.addView(actionButton("旧手机归档 · 只读") { val owner=accountName;val server=serverUrl;LegacyAgentHistory(this,server,owner,if (terminalTest) "terminal-input" else "",{accountName==owner&&serverUrl==server}).open() })
+                for (archive in agentArchives.filter {it.title.contains(search,true)}) {list.addView(actionButton(archive.title+" · 持久历史") {openChat(archive)})}
+                for (session in sessions.filter { it.cwd.contains(search, true) || it.id.contains(search, true) }) {
+                    list.addView(actionButton(session.cwd + " · 对话与证据") { openChat(Conversation(deviceId = deviceId, sessionId = session.id, title = session.cwd)) })
                 }
+
             } else {
                 list.addView(row().apply {
                     fill(label(if (connected) deviceName else "尚未连接设备", 12f, Palette.muted))
@@ -563,7 +693,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 }
             }
         }
-        tabs.setOnCheckedChangeListener { _, id -> drawerTab = id == historyTab.id; render() }
+        tabs.setOnCheckedChangeListener { _, id -> drawerTab = id == historyTab.id; render();if(drawerTab)loadAgentArchives() }
         query.addTextChangedListener(watcher { render() }); render()
         body.addView(divider())
         body.addView(row().apply {
@@ -572,19 +702,29 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         })
         refreshDrawer = { if (overlay?.tag == "drawer") render() }
         if (connected) {
+            if(drawerTab)loadAgentArchives()
             if (!drawerTab) refreshSessions()
             ui.removeCallbacks(drawerRefresh)
             ui.postDelayed(drawerRefresh, 3000)
         }
     }
 
+    private fun loadAgentArchives() {
+        if(!connected||archiveLoading)return
+        archiveLoading=true;val version=generation;val device=deviceId
+        historyWorker.execute{try {
+            val rows=JSONObject(remote.agent("",JSONObject().put("version",1).put("action","list").toString())).getJSONArray("agents")
+            val archives=(0 until rows.length()).map { val scope=rows.getJSONObject(it).getJSONObject("scope");val id=scope.optString("session").takeUnless {it=="null"}.orEmpty();Conversation(device,id,if(id.isEmpty())"全局 Agent" else "终端 "+id.take(8)) }
+            post{archiveLoading=false;if(version==generation&&device==deviceId){agentArchives=archives;refreshDrawer?.invoke()}}
+        }catch(_:Exception){post{archiveLoading=false}}}
+    }
     private fun accountPanel() {
         val body = panel("账号与设备"); overlay?.tag = "account"
         accountBar = column(16)
         accountBar.addView(heading(accountName.ifEmpty { "旧版配对" })); accountBar.addView(label(serverUrl, 12f, Palette.muted))
         accountBar.addView(row().apply {
             fill(actionButton(if (deviceBusy) "刷新中…" else "刷新设备") {
-                if (!deviceBusy) { deviceBusy = true; accountPanel(); work { try { loadDevices() } finally { post { deviceBusy = false; if (this@MainActivity.overlay?.tag == "account") accountPanel() } } } }
+                if (!deviceBusy) { deviceBusy = true; accountPanel(); val epoch = accountEpoch; work { try { loadDevices(epoch) } finally { post { if (epoch == accountEpoch) { deviceBusy = false; if (this@MainActivity.overlay?.tag == "account") accountPanel() } } } } }
             }.apply { isEnabled = !deviceBusy && accountName.isNotEmpty() })
             addView(actionButton("改密码") { passwordDialog() }.apply { isEnabled = accountName.isNotEmpty() })
         }); accountBar.gap(16)
@@ -599,7 +739,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                     AlertDialog.Builder(this@MainActivity).setTitle("移除 ${device.name}？").setMessage("该设备的登录和连接将失效，桌面 Shell 会保留。")
                         .setNegativeButton("取消", null).setPositiveButton("移除") { _, _ ->
                             disconnect(); val epoch = accountEpoch
-                            work { try { account.revoke(device.id); if (account.username().isEmpty()) post { if (epoch == accountEpoch) signedOut() } else loadDevices(epoch) } finally { persist() } }
+                            work { try { account.revoke(device.id); if (account.username().isEmpty()) post { if (epoch == accountEpoch) signedOut() } else loadDevices(epoch) } finally { persist(epoch) } }
                         }.show()
                 })
             }); accountBar.gap(16)
@@ -610,12 +750,16 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     }
     private fun logout() {
         AlertDialog.Builder(this).setTitle("退出登录？").setNegativeButton("取消", null).setPositiveButton("退出") { _, _ ->
-            accountEpoch++; disconnect(); signedOut()
-            work { try { account.logout() } finally { store.clear() } }
+            try {
+                synchronized(accountPersistenceLock) { store.clear(); accountEpoch++ }
+                disconnect(); signedOut()
+                work { account.logout() }
+            } catch (e: Exception) { notice(e.message ?: "无法清除登录信息，请重试") }
         }.show()
     }
     private fun signedOut() {
-        closeOverlay(); chatStore = null; memory = null; uncertainSessions.clear(); restorePending = false; accountName = ""; devices = emptyList(); deviceId = ""; deviceName = ""
+        resetLogin(); deviceBusy = false; entryPending = false; entryScreen.visibility = View.GONE
+        closeOverlay(); chatStore = null; agentArchives=emptyList(); memory = null; uncertainSessions.clear(); restorePending = false; accountName = ""; devices = emptyList(); deviceId = ""; deviceName = ""
         workspace.visibility = View.GONE; (loginBox.parent as View).visibility = View.VISIBLE
         surface.removeAllViews(); terminal = null; toggleInput(false); status.text = "已退出登录"
     }
@@ -627,8 +771,9 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             val current = old.text.toString(); val password = next.text.toString()
             if (password.toByteArray().size < 12 || current.isEmpty()) { next.error = "请输入当前密码，新密码至少 12 字节"; return@setOnClickListener }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
+            val epoch = accountEpoch
             worker.execute {
-                try { account.changePassword(current, password); persist(); post { dialog.dismiss(); accountEpoch++; disconnect(); signedOut(); notice("密码已更新，请重新登录") } }
+                try { account.changePassword(current, password); persist(epoch); post { if (epoch == accountEpoch) { dialog.dismiss(); accountEpoch++; disconnect(); signedOut(); notice("密码已更新，请重新登录") } } }
                 catch (e: Exception) { post { next.error = e.message; dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true } }
             }
         } }; dialog.show()
@@ -661,26 +806,28 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             }, LinearLayout.LayoutParams(-1, dp(48)))
             settings.addView(row().apply { fill(label("$min$suffix", 12f, Palette.muted).apply { setBackgroundColor(Palette.surface) }); addView(label("$max$suffix", 12f, Palette.muted).apply { setBackgroundColor(Palette.surface) }) }); settings.gap(24)
         }
-        slider("文字大小", 12, 24, display.fontSize, " sp") { display.fontSize = it; terminal?.zoom(it / 15f) }
-        slider("浮层不透明度", 60, 96, display.opacity, "%") { display.opacity = it; (overlayPanel?.background as? android.graphics.drawable.GradientDrawable)?.setColor(panelColor()) }
-        settings.addView(actionButton("恢复默认") { display.reset(); terminal?.zoom(16 / 15f); settingsPanel() }.apply { setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_rotate_ccw, 0, 0, 0) })
+        slider("文字大小", 6, 24, display.fontSize, " sp") { display.fontSize = it; terminal?.zoom(it / 15f) }
+        slider("浮层不透明度", 0, 100, display.opacity, "%") { display.opacity = it; (overlayPanel?.background as? android.graphics.drawable.GradientDrawable)?.setColor(panelColor()); toolRail.background = shape(panelColor(), true) }
+        settings.addView(actionButton("恢复默认") { display.reset(); terminal?.zoom(16 / 15f); toolRail.background = shape(panelColor(), true); settingsPanel() }.apply { setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_rotate_ccw, 0, 0, 0) })
         body.grow(scroll(settings))
     }
     private fun panelColor() = Color.argb(display.opacity * 255 / 100, 26, 29, 32)
     private fun panel(title: String, drawer: Boolean = false): LinearLayout {
-        closeOverlay(); hideKeyboard()
+        val special = title == "特殊按键"
+        closeOverlay(hideIme = !special)
         workspace.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-        val floating = !drawer && title in setOf("终端设置", "AI Agent", "对话记录")
+        toolRail.visibility = View.INVISIBLE
+        val floating = !drawer && title in setOf("终端设置", "特殊按键")
         val layer = FrameLayout(this).apply { setBackgroundColor(if (drawer) 0x66000000 else Color.TRANSPARENT); isClickable = true }
         val body = column().apply { background = shape(if (drawer) Palette.surface else panelColor(), floating); isClickable = true; clipToOutline = floating }
         body.addView(row().apply {
             setPadding(dp(16), dp(10), dp(12), dp(10)); setBackgroundColor(Palette.surface)
-            fill(heading(title)); addView(iconButton(R.drawable.ic_x, "关闭$title") { closeOverlay() })
+            fill(heading(title)); addView(iconButton(R.drawable.ic_x, "关闭$title") { closeOverlay(hideIme = !special) })
         }); body.addView(divider())
         fun layoutPanel(width: Int, height: Int) = FrameLayout.LayoutParams(
-            if (drawer) (width * .88f).toInt().coerceAtMost(dp(420)) else if (floating) (width - dp(24)).coerceAtMost(dp(520)) else -1,
-            if (floating) (height * .72f).toInt() else -1,
-            if (floating) Gravity.BOTTOM or Gravity.END else Gravity.START
+            if (special) (width - dp(24)).coerceAtMost(dp(232)) else if (drawer) (width * .88f).toInt().coerceAtMost(dp(420)) else if (floating) (width - dp(24)).coerceAtMost(dp(520)) else -1,
+            if (special) (height - dp(24)).coerceAtMost(dp(224)).coerceAtLeast(dp(80)) else if (floating) (height * .72f).toInt() else -1,
+            if (special) Gravity.CENTER_VERTICAL or Gravity.END else if (floating) Gravity.BOTTOM or Gravity.END else Gravity.START
         ).apply { if (floating) { marginStart = dp(12); marginEnd = dp(12); bottomMargin = dp(12) } }
         layer.addView(body, layoutPanel(root.width, root.height))
         layer.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
@@ -688,35 +835,41 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 body.layoutParams = layoutPanel(right - left, bottom - top)
             }
         }
-        layer.setOnClickListener { closeOverlay() }
+        layer.setOnClickListener { closeOverlay(hideIme = !special) }
         root.addView(layer, FrameLayout.LayoutParams(-1, -1)); overlay = layer; overlayPanel = body
         body.announceForAccessibility(title)
         return body
     }
-    private fun closeOverlay() {
+    private fun closeOverlay(hideIme: Boolean = true) {
         assistant?.close(); assistant = null
+        agentPanel?.close(); agentPanel = null
         refreshDrawer = null; ui.removeCallbacks(drawerRefresh)
         overlay?.let { root.removeView(it) }; overlay = null; overlayPanel = null
         workspace.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
-        hideKeyboard()
+        toolRail.visibility = View.VISIBLE
+        if (hideIme) hideKeyboard()
+        if (controlled && keyboardOpen) terminal?.requestFocus() else root.requestFocus()
     }
     private fun openChat(history: Conversation? = null) {
-        val body = panel(if (history == null) "AI Agent" else "对话记录")
-        val content = column(16)
-        content.addView(label("AI 助手即将开放", 16f, Palette.accent))
-        content.addView(label("当前版本专注终端操作，AI 对话与语音输入稍后提供。", 14f, Palette.muted))
-        if (history != null) {
-            content.addView(label(history.title + " · " + sessionAvailability(history.deviceId, history.sessionId), 12f, Palette.muted))
-            history.messages.forEach { message ->
-                content.addView(label((if (message.role == "user") "你" else "AI Agent") + "\n" + message.content).apply { setTextIsSelectable(true) })
-                content.gap(12)
-            }
-        }
-        body.grow(scroll(content))
-        body.addView(column(12).apply {
-            setBackgroundColor(Palette.surface)
-            addView(field("AI 对话暂未开放").apply { isEnabled = false })
-            addView(actionButton("即将开放", true) {}.apply { isEnabled = false })
+        val body = panel("AI Agent")
+        val device = deviceId; val account = accountName; val version = generation
+        agentPanel = AgentPanel(this, body, listOf(serverUrl, accountName, deviceId), history?.sessionId ?: selected.orEmpty(),
+            { connected && deviceId == device && accountName == account && generation == version },
+            { session, json ->
+                check(connected && deviceId == device && accountName == account && generation == version) { "连接已变化" }
+                remote.agent(session, json)
+            }, { agentSettings() }, history != null)
+    }
+    private fun agentSettings() {
+        val body = panel("Agent 设置")
+        body.addView(label("$accountName · $deviceName",12f,Palette.muted))
+        val device=deviceId; val account=accountName;val version=generation
+        AgentSettingsPanel(this, body, { json ->
+            check(connected && device==deviceId && account==accountName && version==generation) { "连接已变化" }
+            remote.configuration(json)
+        }, selected.orEmpty(), { callback ->
+            skillPicker=callback
+            startActivityForResult(android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT_TREE),830)
         })
     }
 
@@ -750,11 +903,26 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     override fun doFrame(frameTimeNanos: Long) {
         if (!active) return
         val now = android.os.SystemClock.elapsedRealtime()
-        if (accountName.isNotEmpty() && now - lastHeartbeatAt >= 10_000) {
-            lastHeartbeatAt = now
+        if (accountName.isNotEmpty() && !heartbeatBusy && !entryPending && !connecting && now - lastHeartbeatAt >= 10_000) {
+            lastHeartbeatAt = now; heartbeatBusy = true
+            val epoch = accountEpoch
+            val discover = !connected && !deviceBusy
+            if (discover) deviceBusy = true
             worker.execute {
-                try { account.heartbeat() } catch (_: Exception) { /* The next tick retries. */ }
-                finally { persist() }
+                try {
+                    if (epoch != accountEpoch) return@execute
+                    try { account.heartbeat() } catch (_: Exception) { /* Discovery may still recover. */ }
+                    if (discover) loadDevices(epoch)
+                } catch (_: Exception) { /* The next tick retries without queuing more work. */ }
+                finally {
+                    try { persist(epoch) } finally { post {
+                        heartbeatBusy = false
+                        if (epoch == accountEpoch) {
+                            if (discover) deviceBusy = false
+                            if (connected && selected == null && !entryPending && !sessionBusy) refreshSessions()
+                        }
+                    } }
+                }
             }
         }
         if (selected != null) try {
@@ -762,7 +930,6 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 batch.update?.let { terminal?.apply(it); dimensions.text = "${it.cols} 列 × ${it.rows} 行 · UTF-8" }
                 val lostControl = controlled && !batch.controlled
                 controlled = batch.controlled; desktopAttached = batch.desktopAttached; sessionExited = batch.exited
-                keysBar.visibility = if (controlled) View.VISIBLE else View.GONE
                 if (lostControl) toggleInput(false)
                 val next = (if (batch.path == "direct") "直连" else "中转") + " · " + when {
                     sessionExited -> "会话已结束 · 只读历史"
@@ -786,13 +953,14 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     }
     override fun onStart() {
         super.onStart(); active = true; Choreographer.getInstance().postFrameCallback(this)
-        if (accountName.isNotEmpty() && !connected) { restorePending = true; work { loadDevices() } }
+        if (accountName.isNotEmpty() && !connected) { beginEntry(); restorePending = true; val epoch = accountEpoch; work { loadDevices(epoch) } }
     }
     override fun onStop() {
         active = false; terminalKeyUps.clear(); toast?.cancel(); closeOverlay(); Choreographer.getInstance().removeFrameCallback(this)
         disconnect(); super.onStop()
     }
     override fun onDestroy() {
+        synchronized(accountPersistenceLock) { accountEpoch++ }
         assistant?.close(); worker.execute { remote.close(); account.close() }; worker.shutdown(); historyWorker.shutdown()
         super.onDestroy()
     }
@@ -800,14 +968,19 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         if (event.action == KeyEvent.ACTION_UP && terminalKeyUps.remove(event.keyCode)) return true
         val view = terminal
         if ((event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_MULTIPLE) && selected != null && view != null &&
-            overlay == null && workspace.visibility == View.VISIBLE && currentFocus !is EditText &&
+            (overlay == null || overlay?.tag == "keys") && workspace.visibility == View.VISIBLE && currentFocus !is EditText &&
             view.handleHardwareKey(event)) {
             if (event.action == KeyEvent.ACTION_DOWN) terminalKeyUps.add(event.keyCode)
             return true
         }
         return super.dispatchKeyEvent(event)
     }
-    override fun onBackPressed() { if (overlay != null) closeOverlay() else if (inputBox.visibility == View.VISIBLE) toggleInput(false) else super.onBackPressed() }
+    override fun onBackPressed() { if (overlay != null) closeOverlay() else if (keyboardOpen) toggleInput(false) else super.onBackPressed() }
+    @Deprecated("Legacy activity result bridge")
+    override fun onActivityResult(requestCode:Int,resultCode:Int,data:android.content.Intent?) {
+        super.onActivityResult(requestCode,resultCode,data)
+        if(requestCode==830) {val callback=skillPicker;skillPicker=null;if(resultCode==RESULT_OK)data?.data?.let{callback?.invoke(it)}}
+    }
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         assistant?.permissionResult(requestCode, grantResults)

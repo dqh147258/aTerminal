@@ -1,8 +1,10 @@
 # AI Terminal：未来 AI 助手定义
 
-- Status: Definition only
+- Status: Superseded
 - Updated: 2026-09-21
 - Scope: 不进入第一版实现，不构成 AI 开发批准
+
+> 以下保留为 2026-09-21 的历史定义。当前已批准并实现的产品边界以 [双层 Agent 计划](../0925-terminal-agents/PLAN.md) 与 [使用说明](../../../deploy/ASSISTANT.md) 为准，允许受控通用终端输入，不再限定为外部 AI TUI。
 
 ## 1. 产品定位与已确认需求
 

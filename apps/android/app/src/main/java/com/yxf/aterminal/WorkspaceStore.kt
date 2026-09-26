@@ -9,11 +9,11 @@ import java.security.MessageDigest
 class DisplayPreferences(context: Context, namespace: String = "display") {
     private val prefs = context.getSharedPreferences(namespace, Context.MODE_PRIVATE)
     var fontSize: Int
-        get() = prefs.getInt("font", 16).coerceIn(12, 24)
-        set(value) { prefs.edit().putInt("font", value.coerceIn(12, 24)).apply() }
+        get() = prefs.getInt("font", 16).coerceIn(6, 24)
+        set(value) { prefs.edit().putInt("font", value.coerceIn(6, 24)).apply() }
     var opacity: Int
-        get() = prefs.getInt("opacity", 88).coerceIn(60, 96)
-        set(value) { prefs.edit().putInt("opacity", value.coerceIn(60, 96)).apply() }
+        get() = prefs.getInt("opacity", 88).coerceIn(0, 100)
+        set(value) { prefs.edit().putInt("opacity", value.coerceIn(0, 100)).apply() }
     fun reset() { prefs.edit().clear().apply() }
 }
 

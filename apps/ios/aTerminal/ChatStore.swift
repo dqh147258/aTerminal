@@ -2,6 +2,12 @@ import Foundation
 import CryptoKit
 
 enum WorkspacePreferences {
+    static var defaultServer: String { Bundle.main.object(forInfoDictionaryKey: "ATerminalServerURL") as? String ?? "" }
+    static var serverCA: String {
+        let encoded = Bundle.main.object(forInfoDictionaryKey: "ATerminalServerCABase64") as? String ?? ""
+        return Data(base64Encoded: encoded).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+    }
+
     static var serviceTest: Bool {
         #if DEBUG
         return ProcessInfo.processInfo.arguments.contains("--service-test")

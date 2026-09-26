@@ -153,6 +153,10 @@ final class TerminalView: UIView, UIContextMenuInteractionDelegate, UITextFieldD
     var onKeyboardChange: ((Bool) -> Void)?
     var onReadOnly: (() -> Void)?
     private let inputField = TerminalInputField(frame: .zero)
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil { focusHardwareKeyboard() }
+    }
     override var canBecomeFirstResponder: Bool { canInput }
     override var keyCommands: [UIKeyCommand]? {
         guard canInput && !inputField.isFirstResponder else { return nil }

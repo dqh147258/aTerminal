@@ -2,6 +2,7 @@
 """Build one or more project artifacts without changing the active services."""
 
 import argparse
+import base64
 import os
 from pathlib import Path
 import platform
@@ -15,8 +16,19 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("platforms", nargs="+", help="desktop, android, ios, server, or all; separate with spaces or commas")
 parser.add_argument("--toolchain", default="stable")
 parser.add_argument("--ndk", type=Path, help="Android NDK r28+; autodetected when omitted")
+parser.add_argument("--server-url", default=os.environ.get("ATERMINAL_SERVER_URL", "https://192.168.0.36:7200"), help="Default mobile login server")
+parser.add_argument("--server-ca", type=Path, default=os.environ.get("ATERMINAL_SERVER_CA_FILE"), help="Optional public CA certificate for the mobile login server")
 parser.add_argument("--dry-run", action="store_true", help="print the build steps without running them")
 args = parser.parse_args()
+server_ca = args.server_ca
+if server_ca is None and args.server_url == "https://192.168.0.36:7200":
+    local_ca = ROOT / "deploy/secrets/lan-ca.crt"
+    if local_ca.is_file():
+        server_ca = local_ca
+if server_ca is not None:
+    server_ca = server_ca.resolve()
+    if not server_ca.is_file():
+        parser.error("Server CA certificate does not exist")
 
 requested = {name for value in args.platforms for name in value.split(",")}
 if "all" in requested:
@@ -70,7 +82,8 @@ if requested.intersection(("android", "ios")):
 
 if "android" in requested:
     run(["./apps/android/gradlew", "-p", "apps/android", ":app:assembleDebug",
-         ":app:assembleDebugAndroidTest", ":app:lintDebug", "--offline"])
+         ":app:assembleDebugAndroidTest", ":app:lintDebug", "--offline", "-PterminalServerUrl=" + args.server_url,
+         *(["-PterminalServerCaFile=" + str(server_ca)] if server_ca else [])])
     print("Android APK: apps/android/app/build/outputs/apk/debug/app-debug.apk")
 
 if "ios" in requested:
@@ -79,7 +92,8 @@ if "ios" in requested:
     run(["python3", "scripts/package-ios.py", "--simulator-target", simulator_target, "--replace"])
     run(["xcodebuild", "-project", "apps/ios/aTerminal.xcodeproj", "-scheme", "aTerminal",
          "-sdk", "iphonesimulator", "-configuration", "Debug", "-derivedDataPath", "build/xcode",
-         "ARCHS=" + architecture, "CODE_SIGN_IDENTITY=-", "build"])
+         "ARCHS=" + architecture, "CODE_SIGN_IDENTITY=-", "ATERMINAL_SERVER_URL=" + args.server_url,
+         "ATERMINAL_SERVER_CA_BASE64=" + (base64.b64encode(server_ca.read_bytes()).decode() if server_ca else ""), "build"])
     print("iOS App: build/xcode/Build/Products/Debug-iphonesimulator/aTerminal.app")
 
 if "server" in requested:

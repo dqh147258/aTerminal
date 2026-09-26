@@ -18,15 +18,36 @@ pub struct Session {
     writer: Option<SyncSender<Vec<u8>>>,
     writer_error: Receiver<String>,
     child: Box<dyn Child + Send + Sync>,
+    pub process_identity: String,
+    shell: Option<crate::shell::Integration>,
     master: Option<Box<dyn MasterPty + Send>>,
 }
 impl Session {
     pub fn spawn(command: &[OsString], cwd: Option<&Path>, rows: u16, cols: u16) -> Result<Self> {
+        Self::spawn_integrated(command, cwd, rows, cols, None)
+    }
+    pub(crate) fn spawn_integrated(
+        command: &[OsString],
+        cwd: Option<&Path>,
+        rows: u16,
+        cols: u16,
+        integration: Option<&Path>,
+    ) -> Result<Self> {
         ai_terminal_engine::check_size(rows, cols)?;
         let pair = native_pty_system()
             .openpty(size(rows, cols))
             .context("open PTY")?;
-        let mut cmd = if let Some(executable) = command.first() {
+        let prepared = integration
+            .map(|root| crate::shell::Integration::prepare(root, command))
+            .transpose()?;
+        let (shell, prepared) = if let Some((shell, cmd)) = prepared {
+            (Some(shell), Some(cmd))
+        } else {
+            (None, None)
+        };
+        let mut cmd = if let Some(cmd) = prepared {
+            cmd
+        } else if let Some(executable) = command.first() {
             let mut cmd = CommandBuilder::new(executable);
             cmd.args(&command[1..]);
             cmd
@@ -85,13 +106,38 @@ impl Session {
                     }
                 }
             })?;
+        let process_identity = child
+            .process_id()
+            .and_then(crate::process::identity)
+            .unwrap_or_default();
         Ok(Self {
             output,
+            process_identity,
+            shell,
             writer: Some(input_tx),
             writer_error,
             child,
             master: Some(pair.master),
         })
+    }
+    pub fn shell_observation(&self) -> Option<serde_json::Value> {
+        self.shell.as_ref()?.observation()
+    }
+    pub fn process_id(&self) -> Option<u32> {
+        self.child.process_id()
+    }
+    pub fn foreground_group(&self) -> Option<u32> {
+        #[cfg(unix)]
+        {
+            self.master
+                .as_ref()?
+                .process_group_leader()
+                .and_then(|p| u32::try_from(p).ok())
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
     }
     pub fn write(&self, bytes: Vec<u8>) -> Result<()> {
         if bytes.len() > 1024 * 1024 {
@@ -142,11 +188,11 @@ fn size(rows: u16, cols: u16) -> PtySize {
 }
 
 #[cfg(unix)]
-fn default_shell() -> OsString {
+pub(crate) fn default_shell() -> OsString {
     std::env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into())
 }
 #[cfg(windows)]
-fn default_shell() -> OsString {
+pub(crate) fn default_shell() -> OsString {
     if let Some(path) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path) {
             let candidate = dir.join("pwsh.exe");

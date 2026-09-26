@@ -12,9 +12,18 @@ final class WorkspaceUITests: XCTestCase {
     }
     func testLoginValidationAndPasswordVisibility() {
         let app = launch(["--login-fixture"])
-        app.buttons["login.submit"].tap()
+        XCTAssertFalse(app.textFields["login.server"].exists)
+        app.buttons["login.server.edit"].tap()
+        let server = app.textFields["login.server"]; server.tap()
+        server.press(forDuration: 1.2)
+        if app.menuItems["Select All"].exists { app.menuItems["Select All"].tap() }
+        else if app.menuItems["全选"].exists { app.menuItems["全选"].tap() }
+        server.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: (server.value as? String ?? "").count) + "invalid")
+        app.buttons["login.server.edit"].tap()
         XCTAssertTrue(app.staticTexts["请输入有效的服务地址"].waitForExistence(timeout: 3))
-        let server = app.textFields["login.server"]; server.tap(); server.typeText("https://example.invalid")
+        server.tap(); server.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 7) + "https://example.invalid")
+        app.buttons["login.server.edit"].tap()
+        XCTAssertFalse(app.textFields["login.server"].exists)
         app.textFields["login.username"].tap(); app.textFields["login.username"].typeText("layout-check")
         app.secureTextFields["login.password"].tap(); app.secureTextFields["login.password"].typeText("fixture-only")
         app.buttons["显示密码"].tap()
@@ -28,18 +37,18 @@ final class WorkspaceUITests: XCTestCase {
         XCTAssertTrue(app.buttons["恢复默认"].waitForExistence(timeout: 3))
         XCTAssertGreaterThan(app.buttons["关闭终端设置"].frame.minY, app.frame.minY + 100)
         app.buttons["恢复默认"].tap()
-        XCTAssertTrue(app.staticTexts["16 px"].exists)
+        XCTAssertTrue(app.staticTexts["16 pt"].exists)
         XCTAssertTrue(app.staticTexts["88%"].exists)
         app.sliders["文字大小"].adjust(toNormalizedSliderPosition: 1)
         app.sliders["浮窗不透明度"].adjust(toNormalizedSliderPosition: 0)
-        XCTAssertTrue(app.staticTexts["24 px"].exists)
-        XCTAssertTrue(app.staticTexts["60%"].exists)
+        XCTAssertTrue(app.staticTexts["24 pt"].exists)
+        XCTAssertTrue(app.staticTexts["0%"].exists)
         app.terminate()
         app = launch(["--workspace-fixture", "--show-settings"])
-        XCTAssertTrue(app.staticTexts["60%"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["24 px"].exists)
+        XCTAssertTrue(app.staticTexts["0%"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["24 pt"].exists)
         app.buttons["恢复默认"].tap()
-        XCTAssertTrue(app.staticTexts["16 px"].exists)
+        XCTAssertTrue(app.staticTexts["16 pt"].exists)
         XCTAssertTrue(app.staticTexts["88%"].exists)
         capture("settings-restored")
     }
@@ -127,16 +136,21 @@ final class LiveServiceUITests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 10)); row.tap()
         XCTAssertTrue(terminal(app).waitForExistence(timeout: 20))
     }
+    private func specialKey(_ key: String, app: XCUIApplication) {
+        app.buttons["workspace.keys"].tap()
+        app.buttons["terminal.key." + key].tap()
+        XCTAssertFalse(app.otherElements["terminal.specialKeys"].exists)
+    }
     private func command(_ command: String, app: XCUIApplication, hideInput: Bool = true) {
         XCTAssertFalse(app.switches["接管输入"].exists)
         let screen = terminal(app); screen.tap()
-        XCTAssertTrue(app.buttons["隐藏键盘"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3))
         XCTAssertTrue(app.textFields["terminal.input"].exists)
         XCTAssertFalse(app.textFields["terminal.draft"].exists)
         app.typeText(command)
         XCTAssertTrue(app.keyboards.buttons["Return"].waitForExistence(timeout: 3))
         app.keyboards.buttons["Return"].tap()
-        if hideInput { app.buttons["隐藏键盘"].tap() }
+        if hideInput { app.buttons["workspace.keys"].tap(); app.buttons["收起系统键盘"].tap() }
     }
     // The coordinator supplies an already authenticated, attached disposable session.
     // Verify its unique marker before sending input, so no user shell can be touched.
@@ -155,7 +169,7 @@ final class LiveServiceUITests: XCTestCase {
         app.typeText(XCUIKeyboardKey.delete.rawValue + "\t")
         wait { self.text(app).contains("stash") && self.text(app).contains("status") }
         capture("keyboard-tab-completion")
-        app.buttons["terminal.key.ctrl_c"].tap()
+        specialKey("ctrl_c", app: app)
         command("printf 'IOS_KEYBOARD_FIXED\\n'", app: app)
         wait { self.hasLine(app, "IOS_KEYBOARD_FIXED") }
         capture("keyboard-return-executed")
@@ -166,13 +180,16 @@ final class LiveServiceUITests: XCTestCase {
         let app = XCUIApplication(); app.launchArguments = ["--service-test"]
         if let caPem = fixture.caPem { app.launchEnvironment["AI_TERMINAL_TEST_CA_PEM"] = caPem }
         app.launch()
-        if !app.textFields["login.server"].waitForExistence(timeout: 5) {
+        if !app.buttons["login.server.edit"].waitForExistence(timeout: 5) {
             if app.buttons["关闭设备"].exists { app.buttons["关闭设备"].tap() }
             XCTAssertTrue(app.buttons["workspace.drawer"].waitForExistence(timeout: 15)); app.buttons["workspace.drawer"].tap()
             wait { app.buttons["退出登录"].isEnabled }; app.buttons["退出登录"].tap(); app.alerts.buttons["退出登录"].tap()
         }
-        XCTAssertTrue(app.textFields["login.server"].waitForExistence(timeout: 10))
-        app.textFields["login.server"].tap(); app.textFields["login.server"].typeText(fixture.server)
+        XCTAssertTrue(app.buttons["login.server.edit"].waitForExistence(timeout: 10))
+        app.buttons["login.server.edit"].tap()
+        let server = app.textFields["login.server"]; server.tap()
+        server.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: (server.value as? String ?? "").count) + fixture.server)
+        app.buttons["login.server.edit"].tap()
         app.textFields["login.username"].tap(); app.textFields["login.username"].typeText(fixture.username)
         app.secureTextFields["login.password"].tap(); app.secureTextFields["login.password"].typeText(fixture.password)
         app.buttons["login.submit"].tap()
@@ -209,7 +226,7 @@ final class LiveServiceUITests: XCTestCase {
         wait { self.hasLine(app, "IOS_TAB_READY") }
         terminal(app).tap()
         app.typeText("cat \(tabDirectory)/comple")
-        app.buttons["terminal.key.tab"].tap(); app.buttons["terminal.key.enter"].tap()
+        specialKey("tab", app: app); specialKey("enter", app: app)
         wait { self.hasLine(app, "IOS_TAB_OK") }
         command("rm -r \(tabDirectory)", app: app)
         if let createCommand = fixture.createCommand, let closeCommandPrefix = fixture.closeCommandPrefix {
@@ -265,10 +282,11 @@ final class LiveServiceUITests: XCTestCase {
         XCTAssertEqual(metrics(app)["columns"], 120)
         capture("live-last-terminal-restored")
         command("sleep 30", app: app, hideInput: false)
-        app.buttons["terminal.key.ctrl_c"].tap()
+        specialKey("ctrl_c", app: app)
         command("printf '\\nIOS_CTRL_C_OK\\n'", app: app)
         wait { self.hasLine(app, "IOS_CTRL_C_OK") }
         capture("live-ctrl-c-shell-continues")
+        if !app.buttons["关闭会话"].exists { app.buttons["workspace.drawer"].tap() }
         app.buttons["关闭会话"].tap(); app.alerts.buttons["关闭会话"].tap()
         wait { app.staticTexts["会话已关闭"].exists }
         app.buttons["workspace.drawer"].tap()
@@ -281,7 +299,7 @@ final class LiveServiceUITests: XCTestCase {
         }
         capture("live-terminal-closed-channel-retained")
         app.buttons["退出登录"].tap(); app.alerts.buttons["退出登录"].tap()
-        XCTAssertTrue(app.textFields["login.server"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["login.server.edit"].waitForExistence(timeout: 15))
         XCTAssertFalse(app.staticTexts["AI_DEVICE_DONE"].exists)
     }
 }

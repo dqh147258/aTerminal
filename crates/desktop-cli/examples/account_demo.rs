@@ -23,6 +23,7 @@ async fn main() -> Result<()> {
     builder.create(&dir)?;
     let password = ai_terminal_security::random_secret()?;
     let assistant_test = args.iter().any(|value| value == "--assistant-test");
+    let agent_test = args.iter().any(|value| value == "--agent-test");
     let db = dir.join("demo.db");
     ai_terminal_server::account::manage_user(&db, "demo", &password, false)?;
     let mut router = ai_terminal_server::router(&db, &ai_terminal_security::random_secret()?)?;
@@ -43,6 +44,24 @@ async fn main() -> Result<()> {
             axum::Json(serde_json::json!({"choices":[{"message":message}]}))
         }));
     }
+    if agent_test {
+        router=router.route("/agent-model/chat/completions",axum::routing::post(|axum::Json(body):axum::Json<serde_json::Value>|async move{
+            use serde_json::{Value,json};
+            let messages=body["messages"].as_array().unwrap();
+            let analyzing=messages.last().and_then(|m|m["content"].as_str()).is_some_and(|s|s.starts_with("Application analysis stage"));
+            let observed=messages.iter().rev().filter(|m|m["role"]=="tool").find_map(|m|serde_json::from_str::<Value>(m["content"].as_str()?).ok());
+            let tool=observed.is_none()&&!analyzing;
+            let delta=if analyzing {
+                let text=observed.as_ref().and_then(|v|v["body"].as_str()).unwrap_or("");
+                let tui=text.lines().filter(|line|line.starts_with("TUI status:")||line.trim_end().ends_with('$')).collect::<Vec<_>>();
+                json!({"content":json!({"summary":"Read fixture logs; interactive rows are separate search exclusions.","key_quotes":[],"facts":[],"tui_lines":tui,"open_questions":[]}).to_string()})
+            }else if tool {json!({"role":"assistant","tool_calls":[{"index":0,"id":"device-read","type":"function","function":{"name":"read_terminal","arguments":"{\"mode\":\"tail\",\"max_lines\":100}"}}]})}
+            else{json!({"content":"UI_FIXTURE_DONE"})};
+            let first=json!({"id":"device-response","object":"chat.completion.chunk","created":0,"model":"fixture","choices":[{"index":0,"delta":delta,"finish_reason":null}]});
+            let end=json!({"id":"device-response","object":"chat.completion.chunk","created":0,"model":"fixture","choices":[{"index":0,"delta":{},"finish_reason":if tool{"tool_calls"}else{"stop"}}],"usage":{"prompt_tokens":20,"completion_tokens":10,"total_tokens":30}});
+            ([("content-type","text/event-stream")],format!("data: {first}\n\ndata: {end}\n\ndata: [DONE]\n\n"))
+        }));
+    }
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let url = format!("http://{}", listener.local_addr()?);
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
@@ -52,6 +71,9 @@ async fn main() -> Result<()> {
             .env("AI_TERMINAL_AI_BASE_URL", format!("{url}/model"))
             .env("AI_TERMINAL_AI_MODEL", "deterministic-device-test")
             .env_remove("AI_TERMINAL_AI_API_KEY");
+    }
+    if agent_test {
+        command.env("HOME", &dir);
     }
     let mut child = command
         .env("AI_TERMINAL_CREDENTIAL_STORE", "file")
@@ -84,7 +106,22 @@ async fn main() -> Result<()> {
     let info = local
         .call(Request {
             operation: Operation::Create as i32,
-            command: if cfg!(unix) {
+            cwd: if agent_test {
+                dir.to_string_lossy().into_owned()
+            } else {
+                String::new()
+            },
+            command: if cfg!(unix) && agent_test {
+                let lines = (0..60)
+                    .map(|i| format!("UI_LOG_{i:03}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                vec![
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    format!("printf '%s\\n' {lines}; printf 'TUI status: 01\\n'; exec /bin/sh -i"),
+                ]
+            } else if cfg!(unix) {
                 vec!["/bin/sh".into(), "-i".into()]
             } else {
                 Vec::new()
@@ -96,10 +133,24 @@ async fn main() -> Result<()> {
         .info
         .context("missing session")?;
     local.call(Request {
-        operation: Operation::Detach as i32,
+        operation: if agent_test {
+            Operation::AttachDesktop as i32
+        } else {
+            Operation::Detach as i32
+        },
         session: info.id.clone(),
         ..Request::default()
     })?;
+    if agent_test {
+        let view = local.call(Request {
+            operation: Operation::Configuration as i32,
+            text: serde_json::json!({"action":"show"}).to_string(),
+            ..Default::default()
+        })?;
+        let view: serde_json::Value = serde_json::from_str(&view.history[0])?;
+        let config = serde_json::json!({"providers":{"fixture":{"id":"fixture","name":"Isolated UI fixture","connection":{"protocol":"openai_chat","endpoint":format!("{url}/agent-model")},"credential_revision":0}},"models":{"fixture":{"id":"fixture","name":"Deterministic device fixture","provider_id":"fixture","model":"fixture","context_window":128000,"max_tokens":2048,"capabilities":{"tools":true,"streaming":true},"max_rounds":8,"max_seconds":60,"read_only":false}},"bindings":{"global":{"model_id":"fixture"},"session-default":{"model_id":"fixture"}}});
+        local.call(Request{operation:Operation::Configuration as i32,text:serde_json::json!({"action":"replace","expected_revision":view["revision"],"config":config}).to_string(),..Default::default()})?;
+    }
     let mut benchmarks = Vec::new();
     if args.iter().any(|value| value == "--bench") {
         for (name, rows, cols, output) in [
@@ -158,10 +209,16 @@ async fn main() -> Result<()> {
     let file = options.open(dir.join("account-fixture.json"))?;
     serde_json::to_writer(
         file,
-        &serde_json::json!({"server":url,"username":"demo","password":password,"session":info.id,"benchmarks":benchmarks,"assistant_test":assistant_test}),
+        &serde_json::json!({"server":url,"username":"demo","password":password,"session":info.id,"benchmarks":benchmarks,"assistant_test":assistant_test,"agent_test":agent_test}),
     )?;
     println!("Account fixture ready; credentials written to private fixture file");
-    tokio::signal::ctrl_c().await?;
+    if agent_test {
+        loop {
+            tokio::select! {signal=tokio::signal::ctrl_c()=>{signal?;break;},_=tokio::time::sleep(Duration::from_secs(2))=>{local.call(Request{operation:Operation::Poll as i32,session:info.id.clone(),revision:u64::MAX,..Default::default()})?;}}
+        }
+    } else {
+        tokio::signal::ctrl_c().await?;
+    }
     let _ = local.call(Request {
         operation: Operation::Shutdown as i32,
         ..Request::default()

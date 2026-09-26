@@ -1,6 +1,6 @@
 # 本机快速启动、调试与测试
 
-本页针对这台 Mac 的真实局域网部署：Server `https://192.168.0.36:7200`，Android 设备 `127.0.0.1:62001`。手机直接访问主机的局域网 IP，不使用 `adb reverse`。Server、Desktop Agent、手机 App 和终端 Shell 都是真实进程。移动端 AI 对话和语音输入目前仍是不可交互的占位功能。
+本页针对这台 Mac 的真实局域网部署：Server `https://192.168.0.36:7200`，Android 设备 `127.0.0.1:62001`。手机直接访问主机的局域网 IP，不使用 `adb reverse`。Server、Desktop Agent、手机 App 和终端 Shell 都是真实进程。移动端已开放 Agent 对话与设置，语音入口关闭；模型与读取锚点配置见 [Agent 说明](ASSISTANT.md)。
 
 ## 一键启动与关闭
 
@@ -70,8 +70,24 @@ aTerminal auth status
 aTerminal devices list
 docker compose -p ai-terminal-dev -f deploy/compose.lan.yaml -f deploy/compose.test-network.yaml ps -a
 docker compose -p ai-terminal-dev -f deploy/compose.lan.yaml -f deploy/compose.test-network.yaml logs --tail 100 server lan_tls
-tail -n 100 .local/local-dev/agent-next/agent.log
+tail -n 100 .local/local-dev/agent-next/logs/agent.log
 adb -s 127.0.0.1:62001 logcat -d -s AndroidRuntime
 ```
 
 Rust 与本机终端回归可运行 `cargo +stable test --locked --workspace --exclude ai-terminal-bindgen`、`cargo +stable clippy --locked --workspace --all-targets --exclude ai-terminal-bindgen -- -D warnings`、`python3 scripts/test-host-terminal.py target/debug/aTerminal`。完整的 API 25/x86 本地部署验收记录见 [验收报告](../doc/task/0924-local-deployment-test/RESULTS.md)。
+
+## 指定模拟器上的隔离 Agent 测试
+
+用户指定的 Android SDK 模拟器 `emulator-5586`（Android 16 / x86_64）已验证配置首尾行数与 Agent 读取流程。可用 `python3 scripts/test-android-agent.py --serial emulator-5586 --output .local/emulator-5586-agent` 复跑；该脚本仅控制指定设备，使用临时账号/服务/PTY，不清除 App 数据，并在结束时移除本次端口转发。与上面的真实 LAN 部署不同，隔离测试使用临时 loopback 服务和限定端口的 adb reverse。完整证据与构建前置条件见 [Android Agent 验收](../doc/task/0925-terminal-agents/ANDROID-AGENT-UI.md)。
+
+## 登录页默认地址与指定模拟器登录
+
+本地 Debug 包内置 `https://192.168.0.36:7200`；登录页只展示地址，小字“修改服务器地址”可编辑保存。已保存的地址优先于构建默认值。`scripts/build-artifacts.py android ios --server-url URL --server-ca /path/to/public-ca.pem` 可配置两端地址和公共 CA；省略参数使用本地地址及已有 `deploy/secrets/lan-ca.crt`。
+
+在原生依赖已构建时，用 `./apps/android/gradlew -p apps/android :app:assembleDebug :app:assembleDebugAndroidTest --offline -PterminalServerUrl=https://192.168.0.36:7200` 更新 Android 包。然后运行 `python3 scripts/login-android-local.py --serial emulator-5586`，使用已有本地账号经普通登录页登录并验证进程重启恢复，最后保持 App 登录。此脚本要求显式指定设备；不启动或停止 Server/Desktop，不覆盖其他已登录账号。
+
+## 目录改名后 Docker 挂载旧路径
+
+若启动提示 `bind source path does not exist`，且路径仍为旧目录名（例如 `AITerminal` 而当前为 `aTerminal`），原因是现有 Server 容器保留了文件 secret 的旧绝对路径。macOS 文件系统对大小写的处理不能替代 Docker Linux 挂载路径；普通 `compose up` 可能仍复用该容器。
+
+`prepare-lan.py` 会比较现有容器的 `/run/secrets/admin_token` 挂载与当前项目路径，发现不一致时自动重建 Server/TLS 容器，保留 `ai-terminal-dev_server_data` 数据卷、证书及账号。路径一致时照常复用容器，不会每次启动都强制重建。

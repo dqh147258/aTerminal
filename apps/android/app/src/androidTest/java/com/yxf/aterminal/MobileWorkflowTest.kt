@@ -43,7 +43,10 @@ class MobileWorkflowTest {
         while (SystemClock.elapsedRealtime() < deadline) { if (main(predicate)) return; Thread.sleep(40) }
         fail("Timed out: $label")
     }
-    private fun click(label: String) = mutate { views().filterIsInstance<Button>().first { it.text.toString() == label && it.isEnabled }.performClick() }
+    private fun click(label: String) {
+        if (label in setOf("回车", "Tab", "退格", "Ctrl-C", "Esc")) { icon("特殊按键"); icon(label) }
+        else mutate { views().filterIsInstance<Button>().first { it.text.toString() == label && it.isEnabled }.performClick() }
+    }
     private fun icon(description: String) = mutate { views().first { it.contentDescription?.toString() == description && it.isEnabled && it !is EditText }.performClick() }
     private fun field(hint: String) = views().filterIsInstance<EditText>().first { it.hint?.toString() == hint }
     private fun launch() {
@@ -61,7 +64,6 @@ class MobileWorkflowTest {
     }
     private fun lines() = frame()?.let { f -> f.cells.chunked(f.cols.toInt()).map { line -> line.filter { it.width > 0u }.joinToString("") { it.text }.trim() } }.orEmpty()
     private fun readyInput() {
-        if (!main { (get("inputBox") as View).isShown }) icon("显示或隐藏终端键盘")
         waitFor("input availability") { get("controlled") == true }
         mutate { assertTrue((get("terminal") as TerminalView).focusKeyboard()) }
     }
@@ -100,9 +102,11 @@ class MobileWorkflowTest {
         try {
             waitFor("test login or restored temporary account") { (get("loginBox") as View).isShown || (get("accountName") as String).isNotEmpty() }
             if (main { (get("accountName") as String).isNotEmpty() }) logout()
+            click("修改服务器地址")
             mutate {
                 field("服务器 https://…").setText(fixture.getString("server")); field("账号").setText(fixture.getString("username")); field("密码").setText(fixture.getString("password"))
             }
+            click("保存服务器地址")
             click("登录")
             waitFor("real account login") { get("accountName") == fixture.getString("username") }
             icon("账号与设备")
@@ -187,14 +191,14 @@ class MobileWorkflowTest {
             waitFor("Tab completes a real shell path") { lines().any { it == "ANDROID_TAB_OK" } }
             input("rm -r $tabDirectory")
             result.put("real_tab_completion", true)
-            if (main { (get("inputBox") as View).isShown }) icon("隐藏终端键盘")
+            if (main { get("keyboardOpen") == true }) { icon("特殊按键"); icon("收起系统键盘") }
             val columns = main { frame()!!.cols }
             mutate { val surface = get("surface") as HorizontalScrollView; surface.scrollTo(surface.getChildAt(0).width, 0); assertTrue(surface.scrollX > 0); surface.scrollTo(0, 0) }
             icon("终端设置")
             mutate {
                 val overlay = get("overlayPanel") as View; val root = get("root") as View
                 assertTrue(overlay.height < root.height)
-                views().filterIsInstance<SeekBar>().first { it.contentDescription == "文字大小" }.progress = 12
+                views().filterIsInstance<SeekBar>().first { it.contentDescription == "文字大小" }.progress = 18
             }
             waitFor("live terminal font") {
                 val terminal = get("terminal") as TerminalView
@@ -233,7 +237,7 @@ class MobileWorkflowTest {
             waitFor("shell accepts input after Ctrl-C") { lines().any { it == "ANDROID_FOLLOWUP_CTRL_C_OK" } }
             result.put("real_ctrl_c_recovery", true)
             result.put("connection_path", main { (get("remote") as RemoteTerminal).connectionPath() })
-            icon("隐藏终端键盘"); icon("打开工作空间")
+            if (main { get("keyboardOpen") == true }) { icon("特殊按键"); icon("收起系统键盘") }; icon("打开工作空间")
             mutate { views().first { it.tag == "close-$target" && it.isEnabled }.performClick() }
             instrumentation.waitForIdleSync(); focus()
             val closeDialog = instrumentation.uiAutomation.rootInActiveWindow

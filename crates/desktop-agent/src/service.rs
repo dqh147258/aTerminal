@@ -1,3 +1,4 @@
+mod runtime;
 use crate::{
     Control,
     pty::{Output, Session},
@@ -39,6 +40,7 @@ pub struct Client {
     endpoint: Endpoint,
     pub id: u64,
     pub(crate) account_scope: String,
+    pub(crate) device_scope: String,
     stream: Mutex<Option<TcpStream>>,
 }
 impl Clone for Client {
@@ -47,6 +49,7 @@ impl Clone for Client {
             endpoint: self.endpoint.clone(),
             id: self.id,
             account_scope: self.account_scope.clone(),
+            device_scope: self.device_scope.clone(),
             stream: Mutex::new(None),
         }
     }
@@ -54,7 +57,12 @@ impl Clone for Client {
 impl Client {
     pub fn connect(dir: &Path) -> Result<Self> {
         secure_dir(dir)?;
-        let endpoint: Endpoint = serde_json::from_slice(&fs::read(dir.join("endpoint.json"))?)?;
+        let endpoint_path = if dir.join("runtime/endpoint.json").exists() {
+            dir.join("runtime/endpoint.json")
+        } else {
+            dir.join("endpoint.json")
+        };
+        let endpoint: Endpoint = serde_json::from_slice(&fs::read(endpoint_path)?)?;
         if !endpoint.address.ip().is_loopback() {
             bail!("local endpoint is not loopback")
         }
@@ -62,6 +70,7 @@ impl Client {
             endpoint,
             id: random_id(),
             account_scope: String::new(),
+            device_scope: String::new(),
             stream: Mutex::new(None),
         };
         client.call(Request {
@@ -75,7 +84,16 @@ impl Client {
             return Ok(client);
         }
         secure_dir(dir)?;
-        let log = open_private(&dir.join("agent.log"), true)?;
+        secure_dir(&dir.join("logs"))?;
+        let log_path = dir.join("logs/agent.log");
+        if fs::metadata(&log_path).is_ok_and(|m| m.len() > 8 * 1024 * 1024) {
+            let backup = dir.join("logs/agent.previous.log");
+            if backup.exists() {
+                fs::remove_file(&backup)?;
+            }
+            fs::rename(&log_path, backup)?;
+        }
+        let log = open_private(&log_path, true)?;
         let mut command = Command::new(executable);
         command
             .arg("--agent")
@@ -98,13 +116,13 @@ impl Client {
             if let Some(status) = child.try_wait()? {
                 bail!(
                     "Agent startup failed ({status}); see {}",
-                    dir.join("agent.log").display()
+                    dir.join("logs/agent.log").display()
                 )
             }
             if Instant::now() >= until {
                 bail!(
                     "Agent startup timed out; see {}",
-                    dir.join("agent.log").display()
+                    dir.join("logs/agent.log").display()
                 )
             }
             thread::sleep(Duration::from_millis(20));
@@ -114,6 +132,7 @@ impl Client {
         request.token = self.endpoint.token.clone();
         request.client = self.id;
         request.account_scope = self.account_scope.clone();
+        request.device_scope = self.device_scope.clone();
         let mut guard = self.stream.lock().unwrap();
         if guard.is_none() {
             let stream =
@@ -126,7 +145,10 @@ impl Client {
         let result = (|| -> Result<Reply> {
             let stream = guard.as_mut().unwrap();
             stream.set_read_timeout(Some(Duration::from_secs(
-                if request.operation == Operation::Account as i32 {
+                if request.operation == Operation::Account as i32
+                    || request.operation == Operation::Configuration as i32
+                    || request.operation == Operation::Agent as i32
+                {
                     30
                 } else {
                     3
@@ -146,20 +168,12 @@ impl Client {
     }
 }
 
-pub fn default_state_dir() -> PathBuf {
-    #[cfg(unix)]
-    {
-        std::env::temp_dir().join(format!(
-            "ai-terminal-{}",
-            rustix::process::getuid().as_raw()
-        ))
-    }
-    #[cfg(windows)]
-    {
-        std::env::temp_dir().join("ai-terminal")
-    }
+pub fn default_state_dir() -> Result<PathBuf> {
+    crate::state::default_root()
 }
 pub(crate) fn secure_dir(dir: &Path) -> Result<()> {
+    #[cfg(windows)]
+    let created = !dir.exists();
     if !dir.exists() {
         let mut builder = fs::DirBuilder::new();
         builder.recursive(true);
@@ -181,13 +195,25 @@ pub(crate) fn secure_dir(dir: &Path) -> Result<()> {
             bail!("Agent directory must be owned by this user with permissions 0700")
         }
     }
+    #[cfg(windows)]
+    crate::private_acl::protect(dir, created, true)?;
     Ok(())
 }
 pub(crate) fn open_private(path: &Path, append: bool) -> Result<fs::File> {
+    #[cfg(windows)]
+    let created = !path.exists();
     if let Ok(meta) = fs::symlink_metadata(path)
         && (!meta.is_file() || meta.file_type().is_symlink())
     {
         bail!("invalid Agent state file")
+    }
+    #[cfg(unix)]
+    if let Ok(meta) = fs::symlink_metadata(path) {
+        use std::os::unix::fs::MetadataExt;
+        anyhow::ensure!(
+            meta.uid() == rustix::process::getuid().as_raw() && meta.mode() & 0o077 == 0,
+            "Agent state file must be owned by this user with permissions 0600"
+        );
     }
     let mut options = OpenOptions::new();
     options.create(true).read(true).write(true).append(append);
@@ -196,10 +222,19 @@ pub(crate) fn open_private(path: &Path, append: bool) -> Result<fs::File> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    Ok(options.open(path)?)
+    let file = options.open(path)?;
+    #[cfg(windows)]
+    crate::private_acl::protect(path, created, false)?;
+    Ok(file)
 }
 
-type Actor = SyncSender<(Request, SyncSender<Reply>)>;
+type ExecutionGate = Arc<Mutex<bool>>;
+struct ActorMessage {
+    request: Request,
+    reply: SyncSender<Reply>,
+    gate: Option<ExecutionGate>,
+}
+type Actor = SyncSender<ActorMessage>;
 const DESKTOP_LEASE: Duration = Duration::from_secs(15);
 struct DesktopPresence {
     clients: HashMap<u64, Instant>,
@@ -252,7 +287,10 @@ impl DesktopPresence {
     }
 }
 struct Host {
+    agents: Arc<ai_terminal_agent_runtime::host::AgentHost>,
+    state_dir: PathBuf,
     account: Arc<crate::account::AccountManager>,
+    config: crate::config::ConfigService,
     assistant: crate::assistant::Assistant,
     sessions: Mutex<HashMap<String, Actor>>,
     session_order: Mutex<Vec<String>>,
@@ -269,6 +307,10 @@ pub fn run_agent(dir: &Path) -> Result<()> {
     {
         rustix::process::setsid().context("detach Agent from controlling terminal")?;
     }
+    secure_dir(&dir.join("runtime"))?;
+    if !dir.join("runtime/agent.lock").exists() {
+        fs::hard_link(dir.join("agent.lock"), dir.join("runtime/agent.lock"))?;
+    }
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
     listener.set_nonblocking(true)?;
     let endpoint = Endpoint {
@@ -281,13 +323,32 @@ pub fn run_agent(dir: &Path) -> Result<()> {
             random_id()
         ),
     };
-    let mut endpoint_file = open_private(&dir.join("endpoint.json"), false)?;
+    let mut endpoint_file = open_private(&dir.join("runtime/endpoint.json"), false)?;
     endpoint_file.set_len(0)?;
     serde_json::to_writer(&mut endpoint_file, &endpoint)?;
     endpoint_file.sync_all()?;
+    if std::env::var_os("AI_TERMINAL_AI_BASE_URL").is_some()
+        && std::env::var("AI_TERMINAL_LEGACY_ASSISTANT").as_deref() != Ok("1")
+    {
+        eprintln!(
+            "Legacy AI environment is not applied. Import explicitly with: aTerminal config import-legacy-env"
+        );
+    }
     let account = crate::account::AccountManager::new(dir)?;
+    let async_runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(3)
+        .enable_all()
+        .build()?;
+    let store = Arc::new(ai_terminal_agent_runtime::store::Store::open(
+        &dir.join("data/agent.sqlite3"),
+    )?);
+    let agents =
+        ai_terminal_agent_runtime::host::AgentHost::new(store, async_runtime.handle().clone());
     let host = Arc::new(Host {
+        agents,
+        state_dir: dir.into(),
         account: account.clone(),
+        config: crate::config::ConfigService::open(dir)?,
         assistant: crate::assistant::Assistant::default(),
         sessions: Mutex::new(HashMap::new()),
         session_order: Mutex::new(Vec::new()),
@@ -297,6 +358,7 @@ pub fn run_agent(dir: &Path) -> Result<()> {
     });
     crate::remote_bridge::spawn(dir.to_owned(), host.stop.clone());
     account.spawn(host.stop.clone());
+    runtime::spawn_recorder(Arc::downgrade(&host));
     while !host.stop.load(Ordering::Acquire) {
         match listener.accept() {
             Ok((mut stream, _)) => {
@@ -338,6 +400,7 @@ pub fn run_agent(dir: &Path) -> Result<()> {
             Err(e) => return Err(e.into()),
         }
     }
+    host.agents.cancel_all();
     let actors = std::mem::take(&mut *host.sessions.lock().unwrap());
     for (_, actor) in actors {
         let _ = request_actor(
@@ -348,7 +411,8 @@ pub fn run_agent(dir: &Path) -> Result<()> {
             },
         );
     }
-    let _ = fs::remove_file(dir.join("endpoint.json"));
+    let _ = fs::remove_file(dir.join("runtime/endpoint.json"));
+    async_runtime.shutdown_timeout(Duration::from_secs(2));
     drop(lock);
     Ok(())
 }
@@ -359,8 +423,19 @@ fn error(message: impl Into<String>) -> Reply {
     }
 }
 fn request_actor(actor: &Actor, request: Request) -> Result<Reply> {
+    request_actor_guarded(actor, request, None)
+}
+fn request_actor_guarded(
+    actor: &Actor,
+    request: Request,
+    gate: Option<ExecutionGate>,
+) -> Result<Reply> {
     let (tx, rx) = mpsc::sync_channel(1);
-    match actor.try_send((request, tx)) {
+    match actor.try_send(ActorMessage {
+        request,
+        reply: tx,
+        gate,
+    }) {
         Ok(()) => {}
         Err(mpsc::TrySendError::Disconnected(_)) => bail!(SESSION_CLOSED_ERROR),
         Err(mpsc::TrySendError::Full(_)) => bail!("session busy"),
@@ -371,13 +446,18 @@ fn request_actor(actor: &Actor, request: Request) -> Result<Reply> {
         Err(mpsc::RecvTimeoutError::Timeout) => bail!("session did not respond"),
     }
 }
-fn dispatch(host: &Host, request: Request) -> Result<Reply> {
+fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
     let op = Operation::try_from(request.operation).context("unknown operation")?;
     if request.client == 0 {
         bail!("invalid client")
     }
+    let text_limit = match op {
+        Operation::Configuration => 1024 * 1024,
+        Operation::Agent => 65536,
+        _ => 16000,
+    };
     if request.input.len() > 65536
-        || request.text.len() > 16000
+        || request.text.len() > text_limit
         || request.key.len() > 32
         || request.command.len() > 128
         || request.cwd.len() > 16384
@@ -388,14 +468,36 @@ fn dispatch(host: &Host, request: Request) -> Result<Reply> {
         if request.account_scope != host.account.owner() {
             bail!("account changed; reconnect")
         }
-        if !request.session.is_empty()
+        if op != Operation::Agent
+            && !request.session.is_empty()
             && host.owners.lock().unwrap().get(&request.session) != Some(&request.account_scope)
         {
             bail!("session belongs to another account")
         }
     }
     match op {
+        Operation::Agent => runtime::dispatch(host, request),
+        Operation::Configuration => {
+            let command: crate::config::Command = serde_json::from_str(&request.text)
+                .map_err(|_| anyhow::anyhow!("invalid_configuration_request"))?;
+            // Disk reload is a local management operation; remote clients submit
+            // a complete scoped candidate with an expected revision.
+            if !request.account_scope.is_empty()
+                && matches!(command, crate::config::Command::Reload)
+            {
+                bail!("remote configuration cannot reload local files");
+            }
+            let view = host.config.execute(&host.account.owner(), command)?;
+            Ok(Reply {
+                history: vec![serde_json::to_string(&view)?],
+                ..Reply::default()
+            })
+        }
         Operation::Assistant => {
+            anyhow::ensure!(
+                std::env::var("AI_TERMINAL_LEGACY_ASSISTANT").as_deref() == Ok("1"),
+                "legacy_assistant_disabled_use_agent_v1"
+            );
             let message = crate::assistant::Request::parse(&request.text)?;
             let actor = host
                 .sessions
@@ -529,7 +631,15 @@ fn dispatch(host: &Host, request: Request) -> Result<Reply> {
             } else {
                 PathBuf::from(&request.cwd)
             };
-            let pty = Session::spawn(&command, Some(&cwd), rows, cols)?;
+            let pty = Session::spawn_integrated(
+                &command,
+                Some(&cwd),
+                rows,
+                cols,
+                request
+                    .shell_integration
+                    .then_some(host.state_dir.as_path()),
+            )?;
             let (tx, rx) = mpsc::sync_channel(128);
             let actor_id = id.clone();
             let client = request.client;
@@ -571,7 +681,21 @@ fn dispatch(host: &Host, request: Request) -> Result<Reply> {
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!(SESSION_CLOSED_ERROR))?;
             let reply = request_actor(&actor, request.clone())?;
-            if op == Operation::Close && reply.error.is_empty() {
+            if matches!(op, Operation::Input | Operation::Resize)
+                && reply.error.is_empty()
+                && let Some(info) = &reply.info
+            {
+                let owner = host
+                    .owners
+                    .lock()
+                    .unwrap()
+                    .get(&request.session)
+                    .cloned()
+                    .unwrap_or_default();
+                host.agents
+                    .preempt(&owner, &request.session, info.manual_revision);
+            }
+            if matches!(op, Operation::Close | Operation::AgentClose) && reply.error.is_empty() {
                 host.sessions.lock().unwrap().remove(&request.session);
                 host.session_order
                     .lock()
@@ -590,7 +714,7 @@ fn session_loop(
     mut engine: Engine,
     mut pty: Session,
     client: u64,
-    rx: Receiver<(Request, SyncSender<Reply>)>,
+    rx: Receiver<ActorMessage>,
 ) {
     let mut control = Control::default();
     control.acquire(client).unwrap();
@@ -604,6 +728,7 @@ fn session_loop(
     };
     let mut snapshots = VecDeque::from([engine.snapshot()]);
     let mut eof = false;
+    let mut shell_poll = Instant::now() - Duration::from_secs(1);
     let mut last_publish = Instant::now();
     let mut warned_invalid_frame = false;
     let mut watchers: Vec<(Request, SyncSender<Reply>, Instant)> = Vec::new();
@@ -612,6 +737,16 @@ fn session_loop(
             info.desktop_attached = false;
             info.availability_epoch = presence.epoch;
         }
+        if shell_poll.elapsed() >= Duration::from_millis(250) {
+            info.shell_status = pty
+                .shell_observation()
+                .map(|v| v.to_string())
+                .unwrap_or_default();
+            shell_poll = Instant::now();
+        }
+        info.process_id = pty.process_id().unwrap_or(0);
+        info.process_identity = pty.process_identity.clone();
+        info.foreground_group = pty.foreground_group().unwrap_or(0);
         let start = Instant::now();
         while !eof && start.elapsed() < Duration::from_millis(2) {
             match pty.output.try_recv() {
@@ -641,7 +776,7 @@ fn session_loop(
         if let Err(e) = pty.check_writer() {
             info.error = e.to_string();
         }
-        if eof && let Ok(Some(status)) = pty.exit_status() {
+        if let Ok(Some(status)) = pty.exit_status() {
             info.exited = true;
             info.exit_code = status.exit_code();
         }
@@ -682,6 +817,7 @@ fn session_loop(
                     &mut presence,
                     &mut info,
                     &mut snapshots,
+                    None,
                 );
                 let _ = tx.send(result.unwrap_or_else(|e| error(e.to_string())));
             } else {
@@ -689,7 +825,11 @@ fn session_loop(
             }
         }
         match rx.recv_timeout(Duration::from_millis(1)) {
-            Ok((mut req, reply_tx)) => {
+            Ok(ActorMessage {
+                request: mut req,
+                reply: reply_tx,
+                gate,
+            }) => {
                 if req.operation == Operation::Watch as i32 {
                     if watchers.len() >= 16 {
                         let _ = reply_tx.send(error("too many subscribers"));
@@ -706,7 +846,8 @@ fn session_loop(
                     }
                     req.operation = Operation::Poll as i32;
                 }
-                let close = req.operation == Operation::Close as i32;
+                let close = req.operation == Operation::Close as i32
+                    || req.operation == Operation::AgentClose as i32;
                 let result = handle_session(
                     req,
                     &mut engine,
@@ -715,6 +856,7 @@ fn session_loop(
                     &mut presence,
                     &mut info,
                     &mut snapshots,
+                    gate,
                 );
                 if close && let Ok(reply) = &result {
                     drop(pty);
@@ -728,6 +870,7 @@ fn session_loop(
         }
     }
 }
+#[allow(clippy::too_many_arguments)]
 fn handle_session(
     req: Request,
     engine: &mut Engine,
@@ -736,12 +879,53 @@ fn handle_session(
     presence: &mut DesktopPresence,
     info: &mut SessionInfo,
     snapshots: &mut VecDeque<Snapshot>,
+    gate: Option<ExecutionGate>,
 ) -> Result<Reply> {
     let op = Operation::try_from(req.operation)?;
     if req.session_epoch != 0 && req.session_epoch != info.epoch {
         bail!("stale session epoch")
     }
     presence.touch(req.client);
+    let guarded = matches!(
+        op,
+        Operation::AgentAcquire
+            | Operation::AgentWrite
+            | Operation::AgentClose
+            | Operation::AgentResize
+            | Operation::AgentRelease
+    );
+    let permit = if guarded {
+        Some(
+            gate.as_ref()
+                .context("internal_agent_permit_required")?
+                .lock()
+                .unwrap(),
+        )
+    } else {
+        None
+    };
+    if let Some(permit) = &permit {
+        anyhow::ensure!(**permit || op == Operation::AgentRelease, "agent_cancelled");
+    }
+    if matches!(
+        op,
+        Operation::AgentAcquire
+            | Operation::AgentWrite
+            | Operation::AgentClose
+            | Operation::AgentResize
+    ) {
+        anyhow::ensure!(
+            req.manual_revision == info.manual_revision,
+            "manual_input_preempted_agent"
+        );
+        if op != Operation::AgentAcquire {
+            control.check(req.client, req.control_epoch)?;
+            anyhow::ensure!(
+                presence.active(),
+                "Desktop is detached; terminal is read-only"
+            );
+        }
+    }
     let mut reply = Reply::default();
     match op {
         Operation::AttachDesktop => {
@@ -751,15 +935,28 @@ fn handle_session(
             control.acquire(req.client)?;
             presence.attach(req.client)?;
         }
-        Operation::Acquire => {
+        Operation::Acquire | Operation::AgentAcquire => {
             if info.exited {
                 bail!("session exited")
             }
             control.acquire(req.client)?;
         }
-        Operation::Detach => {
+        Operation::Detach | Operation::AgentRelease => {
             control.release(req.client);
             presence.detach(req.client);
+        }
+        Operation::AgentWrite => {
+            anyhow::ensure!(!info.exited, "session exited");
+            anyhow::ensure!(
+                req.input_kind != 1 || !req.text.contains(['\n', '\r']) || engine.bracketed_paste(),
+                "multiline_requires_bracketed_paste"
+            );
+            let bytes = encode_input(&req, engine)?;
+            pty.write(bytes)?;
+        }
+        Operation::ObserveTerminal => {
+            reply.history = vec![serde_json::to_string(&engine.read_view(12000, 512 * 1024))?];
+            reply.snapshot = Some(engine.snapshot());
         }
         Operation::AssistantInput => {
             if info.exited {
@@ -786,7 +983,11 @@ fn handle_session(
             let signature = req.encode_to_vec();
             if !control.input(req.client, req.control_epoch, req.input_seq, &signature)? {
                 let bytes = encode_input(&req, engine)?;
+                let changed = !bytes.is_empty();
                 pty.write(bytes)?;
+                if changed {
+                    info.manual_revision += 1;
+                }
                 control.commit(req.client, req.input_seq, signature);
             }
             reply.accepted_input_seq = req.input_seq;
@@ -798,7 +999,7 @@ fn handle_session(
                 );
             }
         }
-        Operation::Resize => {
+        Operation::Resize | Operation::AgentResize => {
             if !presence.active() {
                 bail!("Desktop is detached; terminal is read-only")
             }
@@ -807,7 +1008,11 @@ fn handle_session(
             let cols = u16::try_from(req.cols)?;
             ai_terminal_engine::check_size(rows, cols)?;
             pty.resize(rows, cols)?;
+            let old_revision = engine.snapshot_revision();
             engine.resize(rows, cols)?;
+            if op == Operation::Resize && old_revision != engine.snapshot_revision() {
+                info.manual_revision += 1;
+            }
             let snapshot = engine.snapshot();
             if let Err(e) = publish_snapshot(snapshot, snapshots) {
                 eprintln!("session {}: skipped invalid resize frame: {e}", info.id);
@@ -820,7 +1025,7 @@ fn handle_session(
             reply.history = lines;
             reply.history_truncated = truncated;
         }
-        Operation::Close => {}
+        Operation::Close | Operation::AgentClose => {}
         Operation::Poll => {
             let current = snapshots.back().unwrap();
             if req.revision != u64::MAX && req.revision != current.revision {
@@ -883,6 +1088,15 @@ fn encode_input(request: &Request, engine: &Engine) -> Result<Vec<u8>> {
             }
             Ok(bytes)
         }
+        3 => {
+            let modifiers: Vec<String> = serde_json::from_str(&request.text)?;
+            let repeats = request.key_repeat.max(1);
+            anyhow::ensure!(repeats <= 20, "key_repeat_limit");
+            Ok(
+                crate::keys::encode(&request.key, &modifiers, engine.application_cursor())?
+                    .repeat(repeats as usize),
+            )
+        }
         2 => Ok(match request.key.as_str() {
             "enter" => vec![13],
             "ctrl_c" => vec![3],
@@ -920,23 +1134,36 @@ mod service_tests {
     #[test]
     fn session_list_returns_newest_first_and_removes_closed_sessions() {
         let dir = tempfile::tempdir().unwrap();
-        let host = Host {
-            account: crate::account::AccountManager::new(dir.path()).unwrap(),
+        let state = dir.path().join("state");
+        crate::service::secure_dir(&state).unwrap();
+        let async_runtime = tokio::runtime::Runtime::new().unwrap();
+        let agents = ai_terminal_agent_runtime::host::AgentHost::new(
+            Arc::new(
+                ai_terminal_agent_runtime::store::Store::open(&state.join("data/agent.sqlite3"))
+                    .unwrap(),
+            ),
+            async_runtime.handle().clone(),
+        );
+        let host = Arc::new(Host {
+            agents,
+            state_dir: state.clone(),
+            account: crate::account::AccountManager::new(&state).unwrap(),
+            config: crate::config::ConfigService::open(&state).unwrap(),
             assistant: crate::assistant::Assistant::default(),
             sessions: Mutex::new(HashMap::new()),
             session_order: Mutex::new(Vec::new()),
             owners: Mutex::new(HashMap::new()),
             stop: Arc::new(AtomicBool::new(false)),
             workers: AtomicUsize::new(0),
-        };
+        });
         // Deliberately different from ID order; the latest session has exited.
         let mut workers = Vec::new();
         for (id, exited) in [("z-old", false), ("a-new", false), ("m-exited", true)] {
-            let (tx, rx) = mpsc::sync_channel::<(Request, SyncSender<Reply>)>(8);
+            let (tx, rx) = mpsc::sync_channel::<ActorMessage>(8);
             host.sessions.lock().unwrap().insert(id.into(), tx);
             host.session_order.lock().unwrap().push(id.into());
             workers.push(thread::spawn(move || {
-                while let Ok((_, reply)) = rx.recv() {
+                while let Ok(ActorMessage { reply, .. }) = rx.recv() {
                     let _ = reply.send(Reply {
                         info: Some(SessionInfo {
                             id: id.into(),
@@ -1025,7 +1252,13 @@ mod service_tests {
 
         let (actor, _receiver) = mpsc::sync_channel(1);
         let (reply, _) = mpsc::sync_channel(1);
-        actor.try_send((Request::default(), reply)).unwrap();
+        actor
+            .try_send(ActorMessage {
+                request: Request::default(),
+                reply,
+                gate: None,
+            })
+            .unwrap();
         assert_eq!(
             request_actor(&actor, Request::default())
                 .unwrap_err()

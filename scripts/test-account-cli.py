@@ -62,6 +62,6 @@ with tempfile.TemporaryDirectory(prefix='aiterminal-auth-cli-') as directory:
             os.kill(child, signal.SIGKILL)
             os.waitpid(child, 0)
         os.close(master)
-        if (Path(directory) / 'endpoint.json').exists():
+        if ((Path(directory) / 'runtime/endpoint.json').exists() or (Path(directory) / 'endpoint.json').exists()):
             subprocess.run([binary, '--state-dir', directory, '--agent-stop'], env=env, check=True,
                            stdout=subprocess.DEVNULL)

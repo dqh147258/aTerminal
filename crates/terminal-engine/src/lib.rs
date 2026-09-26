@@ -1,4 +1,5 @@
 //! Desktop-only authoritative terminal engine. It alone answers application queries.
+pub mod reading;
 use ai_terminal_protocol::{self as wire, Cell, Cursor, Snapshot};
 use alacritty_terminal::{
     Term,
@@ -197,6 +198,64 @@ impl Engine {
             })
             .collect();
         (lines, start > 0 || available >= 10_000)
+    }
+    /// Capture once on the terminal actor. Matching never borrows the live grid.
+    pub fn read_view(&self, max_lines: usize, max_bytes: usize) -> reading::ReadView {
+        let alternate = self.term.mode().contains(TermMode::ALT_SCREEN);
+        let history = if alternate {
+            0
+        } else {
+            self.term.grid().history_size()
+        };
+        let end = self.term.screen_lines() as i32;
+        let mut lines = Vec::new();
+        let mut bytes = 0;
+        let mut partial = history >= 10_000;
+        for row in (-(history as i32)..end).rev() {
+            if lines.len() >= max_lines.min(12_000) {
+                partial = true;
+                break;
+            }
+            let mut text = String::new();
+            let mut wrapped = false;
+            for col in 0..self.term.columns() {
+                let cell = &self.term.grid()[Point::new(Line(row), Column(col))];
+                wrapped |= cell.flags.contains(Flags::WRAPLINE);
+                if cell
+                    .flags
+                    .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+                {
+                    continue;
+                }
+                if cell.flags.contains(Flags::HIDDEN) || cell.c.is_control() {
+                    text.push(' ');
+                } else {
+                    text.push(cell.c);
+                    if let Some(z) = cell.zerowidth() {
+                        text.extend(z.iter().copied().filter(|c| !c.is_control()));
+                    }
+                }
+            }
+            // Only grid padding is removed; indentation and non-space characters survive.
+            let text = text.trim_end_matches(' ').to_owned();
+            if bytes + text.len() + 1 > max_bytes.min(8 * 1024 * 1024) {
+                partial = true;
+                break;
+            }
+            bytes += text.len() + 1;
+            lines.push(reading::TextLine { text, wrapped });
+        }
+        lines.reverse();
+        let screen_start = lines.len().saturating_sub(self.term.screen_lines());
+        reading::ReadView {
+            epoch: self.epoch,
+            revision: self.revision,
+            dimensions_epoch: self.dimensions_epoch,
+            alternate_screen: alternate,
+            screen_start,
+            source_partial: partial,
+            lines,
+        }
     }
     pub fn snapshot(&self) -> Snapshot {
         let rows = self.term.screen_lines();

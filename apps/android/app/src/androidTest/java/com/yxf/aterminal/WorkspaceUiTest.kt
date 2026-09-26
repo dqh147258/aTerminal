@@ -32,7 +32,7 @@ class WorkspaceUiTest {
     private fun views(activity: MainActivity): List<View> {
         assertEquals("com.yxf.aterminal", activity.packageName)
         assertTrue("Target lost foreground focus; stop UI actions", activity.hasWindowFocus())
-        return all(activity.window.decorView)
+        return all(activity.window.decorView).filter { it.isShown }
     }
     private class Scenario(private val activity: MainActivity) : java.io.Closeable {
         fun onActivity(action: (MainActivity) -> Unit) { InstrumentationRegistry.getInstrumentation().runOnMainSync { action(activity) } }
@@ -72,10 +72,10 @@ class WorkspaceUiTest {
             screenshot("workspace-login-initial")
             scenario.onActivity { activity ->
                 val fields = views(activity).filterIsInstance<EditText>().filter { it.isShown }
-                assertEquals(3, fields.size)
+                assertEquals(2, fields.size)
                 assertTrue(fields.all { it.text.isEmpty() })
                 views(activity).filterIsInstance<Button>().first { it.text == "登录" }.performClick()
-                assertTrue(views(activity).filterIsInstance<TextView>().any { it.text.toString().contains("服务地址") })
+                assertTrue(views(activity).filterIsInstance<TextView>().any { it.text.toString().contains("请输入账号") })
                 val password = fields.first { it.hint == "密码" }; password.setText("private-test-draft")
                 assertTrue(password.transformationMethod is android.text.method.PasswordTransformationMethod)
                 val toggle = views(activity).first { it.contentDescription == "显示密码" }; assertTrue(toggle.performClick())
@@ -93,8 +93,8 @@ class WorkspaceUiTest {
                 views(activity).first { it.contentDescription == "终端设置" }.performClick()
                 val sliders = views(activity).filterIsInstance<SeekBar>()
                 assertEquals(2, sliders.size)
-                sliders[0].progress = 12; sliders[1].progress = 36
-                assertEquals(24, DisplayPreferences(activity, "acceptance-display").fontSize); assertEquals(96, DisplayPreferences(activity, "acceptance-display").opacity)
+                sliders[0].progress = 18; sliders[1].progress = 100
+                assertEquals(24, DisplayPreferences(activity, "acceptance-display").fontSize); assertEquals(100, DisplayPreferences(activity, "acceptance-display").opacity)
                 views(activity).filterIsInstance<Button>().first { it.text == "恢复默认" }.performClick()
                 assertEquals(16, DisplayPreferences(activity, "acceptance-display").fontSize); assertEquals(88, DisplayPreferences(activity, "acceptance-display").opacity)
             }
@@ -189,17 +189,19 @@ class WorkspaceUiTest {
                 assertEquals(listOf("中文🙂", pasted), text)
                 assertEquals(listOf("tab", "enter", "backspace"), keys)
                 assertFalse(views(activity).filterIsInstance<EditText>().any { it.hint == "输入文字" })
-                assertEquals(9, views(activity).filterIsInstance<Button>().count { it.text in listOf("回车", "Tab", "退格", "Ctrl-C", "Esc", "↑", "↓", "←", "→") })
+                assertFalse(views(activity).any { it.contentDescription == "关闭特殊按键" })
+                views(activity).first { it.contentDescription == "特殊按键" }.performClick()
+                assertEquals(9, views(activity).filterIsInstance<ImageButton>().count { it.contentDescription in listOf("回车", "Tab", "退格", "Ctrl-C", "Esc", "向上", "向下", "向左", "向右") })
             }
             screenshot("workspace-terminal-keyboard")
             scenario.onActivity { activity ->
-                views(activity).first { it.contentDescription == "隐藏终端键盘" }.performClick()
-                assertFalse(views(activity).filterIsInstance<TerminalView>().first().hasFocus())
+                views(activity).first { it.contentDescription == "关闭特殊按键" }.performClick()
+                assertNull(MainActivity::class.java.getDeclaredField("overlay").apply { isAccessible = true }.get(activity))
             }
         }
     }
 
-    @Test fun hardwareReturnAndTabReachTerminalWhenHistoryButtonHasFocus() {
+    @Test fun hardwareReturnAndTabReachTerminalWhenToolbarButtonHasFocus() {
         launch().use { scenario ->
             scenario.onActivity { activity ->
                 val terminal = views(activity).filterIsInstance<TerminalView>().first()
@@ -213,7 +215,7 @@ class WorkspaceUiTest {
                 assertTrue(terminal.focusKeyboard())
                 val selected = MainActivity::class.java.getDeclaredField("selected").apply { isAccessible = true }
                 selected.set(activity, "fixture-session")
-                val history = views(activity).filterIsInstance<Button>().first { it.text == "历史" }
+                val history = views(activity).filterIsInstance<ImageButton>().first { it.contentDescription == "终端设置" }
                 history.isFocusableInTouchMode = true
                 assertTrue(history.requestFocus())
                 assertTrue(history.hasFocus())

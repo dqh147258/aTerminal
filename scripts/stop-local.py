@@ -24,7 +24,7 @@ except (OSError, subprocess.SubprocessError, ValueError) as error:
     errors.append('Simulator: '+str(error))
 
 try:
-    if (state/'endpoint.json').exists():
+    if ((state/'runtime/endpoint.json').exists() or (state/'endpoint.json').exists()):
         subprocess.run([str(ROOT/'target/debug/aTerminal'),'--state-dir',str(state),'--agent-stop'], cwd=ROOT, check=True, timeout=15)
     # Shell processes cannot survive a stopped Agent. Keep pairing, but do not let
     # the next run attempt to attach to a session ID from the previous process.

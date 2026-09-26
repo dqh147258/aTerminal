@@ -184,6 +184,33 @@ impl RemoteTerminal {
         let w = inner.as_ref().ok_or_else(|| ffi("not connected"))?;
         Ok((w.tx.clone(), w.state.clone()))
     }
+    fn management(
+        &self,
+        operation: Operation,
+        session: String,
+        text: String,
+        limit: usize,
+    ) -> Result<String, CoreError> {
+        if session.len() > 128 || text.len() > limit {
+            return Err(ffi("management_request_limit"));
+        }
+        let value: serde_json::Value =
+            serde_json::from_str(&text).map_err(|_| ffi("invalid_management_request"))?;
+        if operation == Operation::Agent && value["version"] != 1 {
+            return Err(ffi("unsupported_agent_version"));
+        }
+        let reply = self.call(Request {
+            operation: operation as i32,
+            session,
+            text,
+            ..Default::default()
+        })?;
+        reply
+            .history
+            .into_iter()
+            .next()
+            .ok_or_else(|| ffi("desktop_feature_unavailable"))
+    }
     fn call(&self, request: Request) -> Result<Reply, CoreError> {
         let (tx, state) = self.shared()?;
         if !state.lock().map_err(ffi)?.connected {
@@ -255,6 +282,18 @@ impl RemoteTerminal {
             .into_iter()
             .map(session)
             .collect())
+    }
+    /// Agent requests remain independent of the selected terminal input lease.
+    pub fn agent(&self, session_id: String, request_json: String) -> Result<String, CoreError> {
+        self.management(Operation::Agent, session_id, request_json, 65536)
+    }
+    pub fn configuration(&self, request_json: String) -> Result<String, CoreError> {
+        self.management(
+            Operation::Configuration,
+            String::new(),
+            request_json,
+            1024 * 1024,
+        )
     }
     pub fn assistant(&self, session_id: String, request_json: String) -> Result<String, CoreError> {
         if session_id.is_empty() || session_id.len() > 128 || request_json.len() > 16000 {

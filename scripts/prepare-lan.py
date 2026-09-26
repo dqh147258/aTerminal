@@ -2,6 +2,7 @@
 """Prepare a private, project-local CA and deploy the authorized LAN test endpoint."""
 from pathlib import Path
 import os
+import json
 import secrets
 import subprocess
 
@@ -35,8 +36,24 @@ for path in (ca_cert, server_key, server_cert):
     path.chmod(0o444)
 ca_key.chmod(0o600)
 subprocess.run(['openssl','verify','-CAfile',str(ca_cert),str(server_cert)],check=True)
-subprocess.run(['docker','compose','-p','ai-terminal-dev','-f','deploy/compose.lan.yaml',
-                '-f','deploy/compose.test-network.yaml','up','-d','--no-build','--wait'],cwd=ROOT,check=True)
+compose = ['docker', 'compose', '-p', 'ai-terminal-dev', '-f', 'deploy/compose.lan.yaml',
+           '-f', 'deploy/compose.test-network.yaml']
+# Compose can reuse a container after a checkout rename even though a file-backed
+# secret still binds the old absolute path. Compare strings: macOS may resolve
+# both case variants, while Docker Desktop's Linux host mount cannot.
+containers = subprocess.check_output(compose + ['ps', '--all', '--quiet', 'server'], cwd=ROOT, text=True).split()
+recreate = False
+if containers:
+    inspected = json.loads(subprocess.check_output(['docker', 'inspect', *containers], text=True))
+    recreate = any(not any(mount.get('Type') == 'bind'
+                           and mount.get('Destination') == '/run/secrets/admin_token'
+                           and mount.get('Source') == str(admin)
+                           for mount in container['Mounts']) for container in inspected)
+if recreate:
+    print('Server secret mount uses an old checkout path; recreating LAN containers with the existing data volume.', flush=True)
+# Recreate TLS as well so nginx resolves the recreated Server's current address.
+subprocess.run(compose + ['up', '-d', '--no-build', '--wait'] + (['--force-recreate'] if recreate else []),
+               cwd=ROOT, check=True)
 subprocess.run(['curl','--fail','--silent','--show-error','--noproxy','*','--cacert',str(ca_cert),
                 'https://192.168.0.36:7200/healthz'],check=True)
 print('\nLAN relay: https://192.168.0.36:7200; local health: http://127.0.0.1:7201/healthz')

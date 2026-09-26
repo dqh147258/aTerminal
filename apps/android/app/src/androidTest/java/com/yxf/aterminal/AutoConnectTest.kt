@@ -11,6 +11,8 @@ import android.widget.TextView
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
+import androidx.test.runner.lifecycle.ActivityLifecycleCallback
+import org.junit.After
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
@@ -23,6 +25,28 @@ class AutoConnectTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
     private lateinit var activity: MainActivity
+    private var auditEntry = false
+    private var auditNextConnection = false
+    private var readyDraws = 0
+    private val emptyDraws = mutableListOf<String>()
+    private val lifecycle = ActivityLifecycleCallback { candidate, stage ->
+        if (candidate is MainActivity && stage == Stage.STARTED) {
+            candidate.window.decorView.viewTreeObserver.addOnPreDrawListener {
+                fun value(name: String) = MainActivity::class.java.getDeclaredField(name).apply { isAccessible = true }.get(candidate)
+                if (auditNextConnection && (value("entryPending") == true || value("selected") != null)) { auditEntry = true; auditNextConnection = false }
+                if (auditEntry && value("active") == true && value("accountName") != "" && (value("workspace") as View).isShown) {
+                    if (value("terminal") == null || value("selected") == null) emptyDraws.add((value("status") as TextView).text.toString())
+                    else readyDraws++
+                }
+                true
+            }
+        }
+    }
+    @After fun removeLifecycleObserver() { main { ActivityLifecycleMonitorRegistry.getInstance().removeLifecycleCallback(lifecycle) } }
+    private fun assertEntryHasTerminal() {
+        waitFor("first home draw has a Terminal") { readyDraws > 0 }
+        main { assertTrue("Home flashed before first Terminal: $emptyDraws", emptyDraws.isEmpty()); auditEntry = false; readyDraws = 0 }
+    }
     private fun <T> main(action: () -> T): T {
         var answer: T? = null
         var failure: Throwable? = null
@@ -50,6 +74,7 @@ class AutoConnectTest {
     @Test fun singleDesktopSelectsNewestAndHidesThisDevice() {
         val fixture = JSONObject(File(context.filesDir, "autoconnect-fixture.json").readText())
         PairingStore(context, "acceptance-account").clear()
+        main { ActivityLifecycleMonitorRegistry.getInstance().addLifecycleCallback(lifecycle) }
         context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK).putExtra("acceptance_test", true))
         val until = SystemClock.elapsedRealtime() + 10000
         while (SystemClock.elapsedRealtime() < until) {
@@ -57,13 +82,31 @@ class AutoConnectTest {
             if (current != null) { activity = current; break }; Thread.sleep(50)
         }
         assertTrue(::activity.isInitialized)
+        waitFor("account restoration") { get("loginBusy") == false }
+        click("修改服务器地址")
         main {
             fun field(hint: String) = views().filterIsInstance<EditText>().first { it.hint.toString() == hint }
             field("服务器 https://…").setText(fixture.getString("server"))
             field("账号").setText(fixture.getString("username"))
             field("密码").setText(fixture.getString("password"))
         }
+        click("保存服务器地址")
+        main { auditEntry = !fixture.optBoolean("late_desktop") && !fixture.optBoolean("late_session") }
         click("登录")
+        if (fixture.optBoolean("late_desktop")) {
+            waitFor("no Desktop available ends loading") { get("accountName") == fixture.getString("username") && get("entryPending") == false && get("connected") == false }
+            main { auditNextConnection = true }
+            File(context.filesDir, "autoconnect-waiting.json").writeText("ready")
+        }
+        if (fixture.optBoolean("late_session")) {
+            waitFor("empty Desktop ends loading") { get("accountName") == fixture.getString("username") && get("entryPending") == false && get("connected") == true && get("selected") == null }
+            main { auditNextConnection = true }
+            File(context.filesDir, "autoconnect-waiting.json").writeText("ready")
+            waitFor("coordinator created PTYs") {
+                val updated = try { JSONObject(File(context.filesDir, "autoconnect-fixture.json").readText()) } catch (_: Exception) { return@waitFor false }
+                if (updated.optString("newest").isBlank()) false else { fixture.put("newest", updated.getString("newest")); fixture.put("oldest", updated.getString("oldest")); true }
+            }
+        }
         val newest = fixture.getString("newest")
         waitFor("automatic connection without pressing Connect") { get("connected") == true && get("selected") == newest }
         waitFor("newest PTY screen") {
@@ -71,6 +114,7 @@ class AutoConnectTest {
             val frame = TerminalView::class.java.getDeclaredField("frame").apply { isAccessible = true }.get(terminal) as? RenderFrame
             frame?.cells?.chunked(frame.cols.toInt())?.any { row -> row.joinToString("") { it.text }.contains("NEWEST_TERMINAL_OK") } == true
         }
+        assertEntryHasTerminal()
         screenshot("latest")
         icon("账号与设备")
         click("刷新设备")
@@ -86,7 +130,7 @@ class AutoConnectTest {
         click("刷新设备")
         waitFor("device refresh completed") { get("deviceBusy") == false }
         assertEquals(newest, main { get("selected") })
-        main { MainActivity::class.java.getDeclaredMethod("closeOverlay").apply { isAccessible = true }.invoke(activity) }
+        main { MainActivity::class.java.getDeclaredMethod("closeOverlay", Boolean::class.javaPrimitiveType).apply { isAccessible = true }.invoke(activity, true) }
         icon("打开工作空间")
         main { views().filterIsInstance<Button>().first { it.tag == fixture.getString("oldest") }.performClick() }
         waitFor("manual older selection") { get("selected") == fixture.getString("oldest") }
@@ -94,15 +138,16 @@ class AutoConnectTest {
         waitFor("refresh preserves manual selection") { get("deviceBusy") == false }
         assertEquals(fixture.getString("oldest"), main { get("selected") })
         val previous = activity
-        main { activity.recreate() }
+        main { auditEntry = true; activity.recreate() }
         waitFor("activity recreation") {
             val current = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<MainActivity>().firstOrNull()
             if (current != null && current !== previous) { activity = current; true } else false
         }
         waitFor("restored login chooses newest instead of last selected") { get("connected") == true && get("selected") == newest }
+        assertEntryHasTerminal()
         screenshot("reconnected")
         File(context.filesDir, "autoconnect-results.json").writeText(JSONObject()
-            .put("passed", true).put("self_hidden", true).put("single_device_auto_connect", true)
+            .put("passed", true).put("first_home_draw_has_terminal", true).put("late_desktop", fixture.optBoolean("late_desktop")).put("late_session", fixture.optBoolean("late_session")).put("self_hidden", true).put("single_device_auto_connect", true)
             .put("newest_terminal", newest).put("refresh_preserves_selection", true)
             .put("reconnect_prefers_newest_over_previous", true).toString(2))
         main { activity.finish() }

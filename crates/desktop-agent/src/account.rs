@@ -22,9 +22,37 @@ struct Vault {
 }
 impl Vault {
     fn new(dir: &Path) -> Result<Self> {
-        let id = blake3::hash(dir.to_string_lossy().as_bytes())
-            .to_hex()
-            .to_string();
+        let references = dir.join("credentials");
+        crate::service::secure_dir(&references)?;
+        let reference = references.join("account-reference.json");
+        let id = if reference.exists() {
+            let reference: crate::state::VaultReference =
+                serde_json::from_slice(&std::fs::read(reference)?)?;
+            anyhow::ensure!(
+                reference.id.len() == 64 && reference.id.bytes().all(|b| b.is_ascii_hexdigit()),
+                "invalid vault reference"
+            );
+            reference.id
+        } else {
+            let id = blake3::hash(dir.to_string_lossy().as_bytes())
+                .to_hex()
+                .to_string();
+            // Persist the original identity once, before an account can be stored.
+            // Equivalent path spellings must not choose another keyring entry.
+            let temp = reference.with_extension("tmp");
+            let mut file = crate::service::open_private(&temp, false)?;
+            file.set_len(0)?;
+            serde_json::to_writer(
+                &mut file,
+                &crate::state::VaultReference {
+                    id: id.clone(),
+                    legacy_file: None,
+                },
+            )?;
+            file.sync_all()?;
+            std::fs::rename(temp, reference)?;
+            id
+        };
         let root = std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))
@@ -33,13 +61,31 @@ impl Vault {
         let file = cfg!(unix)
             && std::env::var("AI_TERMINAL_CREDENTIAL_STORE").is_ok_and(|s| s == "file")
             || cfg!(target_os = "linux") && std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none();
+        let fallback = references.join("account.json");
+        let legacy = root.join("ai-terminal").join(format!("{id}.json"));
+        if file && !fallback.exists() && legacy.exists() {
+            // Preserve existing file-backend identity without changing a keyring backend.
+            let legacy_vault = Self {
+                entry: None,
+                fallback: legacy,
+                file: true,
+            };
+            if let Some(session) = legacy_vault.load()? {
+                Self {
+                    entry: None,
+                    fallback: fallback.clone(),
+                    file: true,
+                }
+                .save(&session)?;
+            }
+        }
         Ok(Self {
             entry: if file {
                 None
             } else {
                 Some(keyring::Entry::new("dev.aiterminal.account", &id)?)
             },
-            fallback: root.join("ai-terminal").join(format!("{id}.json")),
+            fallback,
             file,
         })
     }
@@ -128,7 +174,7 @@ impl AccountManager {
                 .unwrap_or_default()
         });
         if !owner.is_empty() {
-            std::fs::write(dir.join("account-mode"), &owner)?;
+            write_marker(&dir.join("account-mode"), &owner)?;
         }
         Ok(Arc::new(Self {
             state: Mutex::new(state),
@@ -141,6 +187,44 @@ impl AccountManager {
     }
     pub fn owner(&self) -> String {
         self.owner.lock().unwrap().clone()
+    }
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+    pub async fn verify_device(&self, owner: &str, device: &str) -> Result<()> {
+        anyhow::ensure!(self.owner() == owner, "account_changed");
+        if device.is_empty() {
+            return Ok(());
+        }
+        if let Some(pair) = device.strip_prefix("pair/") {
+            anyhow::ensure!(
+                !self.dir.join("account-mode").exists()
+                    && pair
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b)),
+                "pair_revoked"
+            );
+            let bytes = std::fs::read(self.dir.join("pairs").join(format!("{pair}.json")))
+                .context("pair_revoked")?;
+            let pair: ai_terminal_remote::HostPair = serde_json::from_slice(&bytes)?;
+            anyhow::ensure!(
+                pair.expires_at
+                    > std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_secs(),
+                "pair_expired"
+            );
+            return Ok(());
+        }
+        let mut state = self.state.lock().await;
+        let session = state.as_mut().context("account_logged_out")?;
+        let before = session.tokens.access_token.clone();
+        let result = session.devices().await;
+        if session.tokens.access_token != before {
+            self.vault.save(session)?;
+        }
+        anyhow::ensure!(result?.iter().any(|d| d.id == device), "device_revoked");
+        Ok(())
     }
     pub fn call(&self, json: &str) -> Result<String> {
         let command: DesktopAccountCommand = serde_json::from_str(json)?;
@@ -197,8 +281,8 @@ impl AccountManager {
                 self.vault.save(&session)?;
                 let owner = principal(&session);
                 crate::service::secure_dir(self.vault.fallback.parent().unwrap())?;
-                std::fs::write(self.vault.fallback.with_extension("mode"), &owner)?;
-                std::fs::write(self.dir.join("account-mode"), &owner)?;
+                write_marker(&self.vault.fallback.with_extension("mode"), &owner)?;
+                write_marker(&self.dir.join("account-mode"), &owner)?;
                 *self.owner.lock().unwrap() = owner;
                 let message = format!(
                     "Logged in as {} · device {}",
@@ -307,6 +391,7 @@ impl AccountManager {
                                                 .await?;
                                                 let mut client = Client::connect(&dir)?;
                                                 client.account_scope = principal(&identity);
+                                                client.device_scope = grant.mobile_id.clone();
                                                 let _lease = Lease(client.clone());
                                                 serve_channel(channel, client, grant.read_only)
                                                     .await
@@ -337,6 +422,29 @@ impl AccountManager {
         });
     }
 }
+fn write_marker(path: &Path, value: &str) -> Result<()> {
+    if let Ok(meta) = std::fs::symlink_metadata(path) {
+        anyhow::ensure!(
+            meta.is_file() && !meta.file_type().is_symlink(),
+            "invalid account marker"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            anyhow::ensure!(
+                meta.uid() == rustix::process::getuid().as_raw(),
+                "account marker owner mismatch"
+            );
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
+    }
+    use std::io::Write;
+    let mut file = crate::service::open_private(path, false)?;
+    file.set_len(0)?;
+    file.write_all(value.as_bytes())?;
+    file.sync_all()?;
+    Ok(())
+}
 fn ice_servers() -> Vec<String> {
     std::env::var("AI_TERMINAL_ICE_SERVERS")
         .unwrap_or_default()
@@ -352,6 +460,18 @@ fn principal(session: &AccountSession) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn vault_reference_survives_equivalent_state_directory_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("state");
+        crate::service::secure_dir(&root).unwrap();
+        super::Vault::new(&root).unwrap();
+        let path = root.join("credentials/account-reference.json");
+        let first = std::fs::read(&path).unwrap();
+        super::Vault::new(&root.join(".")).unwrap();
+        assert_eq!(first, std::fs::read(path).unwrap());
+    }
+
     use super::*;
     use ai_terminal_security::account::{DeviceIdentity, Tokens};
     use axum::{Json, Router, http::StatusCode, routing::post};

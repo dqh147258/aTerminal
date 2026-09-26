@@ -8,6 +8,42 @@ use std::{
 };
 #[derive(Subcommand)]
 pub enum Management {
+    Mcp {
+        #[command(subcommand)]
+        command: crate::extensions::Action,
+    },
+    Skills {
+        #[command(subcommand)]
+        command: crate::extensions::Action,
+    },
+    Agents {
+        #[command(subcommand)]
+        command: crate::agents::AgentAction,
+    },
+    History {
+        #[command(subcommand)]
+        command: crate::agents::HistoryAction,
+    },
+    Sessions {
+        #[command(subcommand)]
+        command: Sessions,
+    },
+    Daemon {
+        #[command(subcommand)]
+        command: Daemon,
+    },
+    Config {
+        #[command(subcommand)]
+        command: crate::configuration::ConfigAction,
+    },
+    Providers {
+        #[command(subcommand)]
+        command: crate::configuration::ResourceAction,
+    },
+    Models {
+        #[command(subcommand)]
+        command: crate::configuration::ResourceAction,
+    },
     Auth {
         #[command(subcommand)]
         command: Auth,
@@ -16,6 +52,31 @@ pub enum Management {
         #[command(subcommand)]
         command: Devices,
     },
+}
+#[derive(Subcommand)]
+pub enum Sessions {
+    Capture {
+        id: String,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    List,
+    Show {
+        id: String,
+    },
+    Attach {
+        id: String,
+    },
+    Close {
+        id: String,
+    },
+    History {
+        id: String,
+    },
+}
+#[derive(Subcommand)]
+pub enum Daemon {
+    Stop,
 }
 #[derive(Subcommand)]
 pub enum Auth {
@@ -40,8 +101,26 @@ pub enum Devices {
     List,
     Revoke { device_id: String },
 }
-pub fn run(command: Management, state: Option<PathBuf>) -> Result<u32> {
+pub fn run(command: Management, state: Option<PathBuf>, json: bool) -> Result<u32> {
     let command = match command {
+        Management::Mcp { command } => return crate::extensions::run("mcp", command, state, json),
+        Management::Skills { command } => {
+            return crate::extensions::run("skills", command, state, json);
+        }
+        Management::Agents { command } => return crate::agents::run(command, state, json),
+        Management::History { command } => return crate::agents::history(command, state, json),
+        Management::Sessions { .. } | Management::Daemon { .. } => {
+            anyhow::bail!("terminal command dispatch error")
+        }
+        Management::Config { command } => {
+            return crate::configuration::config(command, state, json);
+        }
+        Management::Providers { command } => {
+            return crate::configuration::resource("providers", command, state, json);
+        }
+        Management::Models { command } => {
+            return crate::configuration::resource("models", command, state, json);
+        }
         Management::Auth {
             command:
                 Auth::Login {
@@ -95,15 +174,21 @@ pub fn run(command: Management, state: Option<PathBuf>) -> Result<u32> {
             command: Devices::Revoke { device_id },
         } => DesktopAccountCommand::Revoke { device_id },
     };
-    let dir = state.unwrap_or_else(ai_terminal_agent::default_state_dir);
+    let dir = state
+        .map(Ok)
+        .unwrap_or_else(ai_terminal_agent::default_state_dir)?;
     let client = ai_terminal_agent::Client::ensure(&dir, &std::env::current_exe()?)?;
     let reply = client.call(Request {
         operation: Operation::Account as i32,
         text: serde_json::to_string(&command)?,
         ..Request::default()
     })?;
-    for line in reply.history {
-        println!("{line}")
+    if json {
+        println!("{}", serde_json::json!({"ok":true,"result":reply.history}));
+    } else {
+        for line in reply.history {
+            println!("{line}")
+        }
     }
     Ok(0)
 }

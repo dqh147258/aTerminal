@@ -104,7 +104,8 @@ impl Drop for Lease {
         });
     }
 }
-async fn run_channel(pair: &HostPair, client: Client) -> Result<()> {
+async fn run_channel(pair: &HostPair, mut client: Client) -> Result<()> {
+    client.device_scope = format!("pair/{}", pair.room);
     let channel = Channel::accept(pair).await?;
     serve_channel(channel, client, pair.read_only).await
 }
@@ -156,8 +157,51 @@ pub(crate) fn authorize(read_only: bool, request: &Request) -> Result<()> {
             | Operation::Streaming
             | Operation::AssistantInput
             | Operation::AttachDesktop
+            | Operation::ObserveTerminal
+            | Operation::AgentAcquire
+            | Operation::AgentWrite
+            | Operation::AgentClose
+            | Operation::AgentResize
+            | Operation::AgentRelease
     ) {
         bail!("remote clients cannot stop the desktop Agent")
+    }
+    if operation == Operation::Agent {
+        let value: serde_json::Value = serde_json::from_str(&request.text)
+            .map_err(|_| anyhow::anyhow!("invalid_agent_request"))?;
+        anyhow::ensure!(
+            !["clean", "retention"].contains(&value["action"].as_str().unwrap_or("")),
+            "history management is local-only"
+        );
+        if read_only {
+            anyhow::ensure!(
+                ["list", "state", "history", "record"]
+                    .contains(&value["action"].as_str().unwrap_or(""))
+                    && value["allow_input"] != true,
+                "paired device has read-only permission"
+            );
+        }
+        return Ok(());
+    }
+    if operation == Operation::Configuration {
+        let command: crate::config::Command = serde_json::from_str(&request.text)
+            .map_err(|_| anyhow::anyhow!("invalid_configuration_request"))?;
+        anyhow::ensure!(
+            !matches!(command, crate::config::Command::Reload),
+            "configuration reload is local-only"
+        );
+        if read_only {
+            anyhow::ensure!(
+                matches!(
+                    command,
+                    crate::config::Command::Show
+                        | crate::config::Command::Validate
+                        | crate::config::Command::Discover { .. }
+                ),
+                "paired device cannot manage configuration"
+            );
+        }
+        return Ok(());
     }
     if read_only
         && !matches!(
@@ -177,6 +221,21 @@ pub(crate) fn authorize(read_only: bool, request: &Request) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn configuration_read_and_write_permissions_are_enforced() {
+        let request = |text: &str| Request {
+            operation: Operation::Configuration as i32,
+            text: text.into(),
+            ..Default::default()
+        };
+        assert!(authorize(true, &request(r#"{"action":"show"}"#)).is_ok());
+        let replace = request(
+            r#"{"action":"replace","expected_revision":0,"config":{"providers":{},"models":{},"bindings":{}}}"#,
+        );
+        assert!(authorize(true, &replace).is_err());
+        assert!(authorize(false, &replace).is_ok());
+        assert!(authorize(false, &request(r#"{"action":"reload"}"#)).is_err());
+    }
     #[test]
     fn observe_permission_is_enforced_outside_the_ui() {
         assert!(

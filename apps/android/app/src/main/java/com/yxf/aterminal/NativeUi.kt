@@ -54,7 +54,7 @@ fun Context.iconButton(icon: Int, description: String, action: () -> Unit) = Ima
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) tooltipText = description
     background = shape(Palette.control); setPadding(dp(13), dp(13), dp(13), dp(13))
     scaleType = ImageView.ScaleType.CENTER_INSIDE
-    layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginStart = dp(4) }
+    layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(4) }
     setOnClickListener { action() }
 }
 fun LinearLayout.gap(size: Int = 12) { addView(View(context), LinearLayout.LayoutParams(1, context.dp(size))) }

@@ -30,7 +30,11 @@ class DeviceAcceptanceTest {
     private fun all(view: View): List<View> = listOf(view) + if (view is android.view.ViewGroup) (0 until view.childCount).flatMap { all(view.getChildAt(it)) } else emptyList()
     private fun views() = all(activity.window.decorView)
     private fun field(hint: String): EditText = views().filterIsInstance<EditText>().first { it.hint?.toString() == hint && it.isShown }
-    private fun click(text: String) { main { assertForeground(); views().filterIsInstance<Button>().first { it.text.toString() == text && it.isShown }.performClick() } }
+    private fun click(text: String) {
+        if (text in setOf("回车", "Tab", "退格", "Ctrl-C", "Esc")) {
+            clickDescription("特殊按键"); clickDescription(text)
+        } else main { assertForeground(); views().filterIsInstance<Button>().first { it.text.toString() == text && it.isShown }.performClick() }
+    }
     private fun clickDescription(text: String) { main { assertForeground(); views().first { it.contentDescription?.toString() == text && it.isShown }.performClick() } }
     private fun logout() {
         clickDescription("账号与设备"); click("退出登录")
@@ -51,7 +55,6 @@ class DeviceAcceptanceTest {
         clickDescription("打开工作空间")
         main { views().filterIsInstance<Button>().first { it.text.toString().startsWith(sessions[index].cwd + "\n") && it.isShown }.performClick() }
         waitFor("selected session") { get("selected") == id }
-        if (!main { (get("inputBox") as View).isShown }) clickDescription("显示或隐藏终端键盘")
         waitFor("input availability") { get("selected") == id && get("controlled") == true && core().hasControl() }
     }
     private fun send(text: String) { main { assertForeground(); val terminal = terminal()!!; assertTrue(terminal.focusKeyboard()); assertTrue(terminal.onCreateInputConnection(EditorInfo()).commitText(text, 1)) } }
@@ -76,8 +79,9 @@ class DeviceAcceptanceTest {
         waitFor("aTerminal foreground focus") { activity.hasWindowFocus() }
         try {
             if (PairingStore(context,"acceptance-account").load() != null) { waitFor("restored account") { (get("workspace") as View).isShown }; logout(); waitFor("logout before isolated login") { (get("loginBox") as View).isShown } }
+            click("修改服务器地址")
             main { field("服务器 https://…").setText(fixture.getString("server")); field("账号").setText(fixture.getString("username")); field("密码").setText(fixture.getString("password")) }
-            click("登录"); connectDesktop(); select(fixture.getString("session"))
+            click("保存服务器地址"); click("登录"); connectDesktop(); select(fixture.getString("session"))
             waitFor("Wi-Fi direct", 15) { core().connectionPath() == "direct" }
             send("printf 'ANDROID_DEVICE_OK\\n'"); click("回车")
             waitFor("actual shell output") { val f = frame() ?: return@waitFor false; f.cells.chunked(f.cols.toInt()).any { line -> line.joinToString("") { it.text }.trim() == "ANDROID_DEVICE_OK" } }

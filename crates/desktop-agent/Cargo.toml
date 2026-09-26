@@ -9,6 +9,15 @@ default = ["webrtc"]
 webrtc = ["ai-terminal-remote/webrtc"]
 
 [dependencies]
+serde_yaml = "0.9"
+jsonschema = { version = "=0.33.0", default-features = false }
+process-wrap = { version = "=10.0.1", default-features = false, features = ["tokio1", "process-group", "job-object", "kill-on-drop"] }
+fontdue = { version = "=0.9.3", default-features = false, features = ["std"] }
+png = "=0.18.1"
+unicode-width = "0.2"
+base64.workspace = true
+chrono = "0.4"
+ai-terminal-agent-runtime = { path = "../agent-runtime" }
 anyhow.workspace = true
 ai-terminal-protocol.workspace = true
 ai-terminal-engine.workspace = true

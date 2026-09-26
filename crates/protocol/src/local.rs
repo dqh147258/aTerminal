@@ -53,6 +53,15 @@ pub struct Request {
     /// Last Desktop attachment transition observed by a Watch subscriber.
     #[prost(uint64, tag = "21")]
     pub availability_epoch: u64,
+    #[prost(uint64, tag = "22")]
+    pub manual_revision: u64,
+    /// Trusted bridge identity, overwritten by Client::call.
+    #[prost(string, tag = "23")]
+    pub device_scope: String,
+    #[prost(bool, tag = "24")]
+    pub shell_integration: bool,
+    #[prost(uint32, tag = "25")]
+    pub key_repeat: u32,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, prost::Enumeration)]
 #[repr(i32)]
@@ -79,6 +88,15 @@ pub enum Operation {
     AssistantInput = 15,
     /// Local Desktop CLI attachment; remote bridges must reject this operation.
     AttachDesktop = 16,
+    /// Authenticated Desktop configuration; JSON contract, separate from model tools.
+    Configuration = 17,
+    Agent = 18,
+    ObserveTerminal = 19,
+    AgentAcquire = 20,
+    AgentWrite = 21,
+    AgentClose = 22,
+    AgentResize = 23,
+    AgentRelease = 24,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -105,6 +123,16 @@ pub struct SessionInfo {
     pub desktop_attached: bool,
     #[prost(uint64, tag = "11")]
     pub availability_epoch: u64,
+    #[prost(uint64, tag = "12")]
+    pub manual_revision: u64,
+    #[prost(uint32, tag = "13")]
+    pub process_id: u32,
+    #[prost(uint32, tag = "14")]
+    pub foreground_group: u32,
+    #[prost(string, tag = "15")]
+    pub process_identity: String,
+    #[prost(string, tag = "16")]
+    pub shell_status: String,
 }
 
 #[derive(Clone, PartialEq, Message)]

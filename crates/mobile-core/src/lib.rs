@@ -4,6 +4,8 @@ use prost::Message;
 use std::sync::Mutex;
 uniffi::setup_scaffolding!();
 mod account;
+mod agent_cache;
+pub use agent_cache::AgentCache;
 mod remote;
 pub use account::{Account, AccountDevice};
 pub use remote::{RemoteSession, RemoteTerminal};

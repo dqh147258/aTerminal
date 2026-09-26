@@ -17,6 +17,9 @@ final class TerminalModel: ObservableObject {
     @Published var server = ""
     @Published var busy = false
     @Published var connected = false
+    @Published private(set) var preparingWorkspace = false
+    private var heartbeatBusy = false
+    private var foreground = true
     @Published var error: String?
     @Published var deviceID = ""
     @Published var status = "登录后选择 Desktop"
@@ -31,6 +34,7 @@ final class TerminalModel: ObservableObject {
     private let performanceLog = OSLog(subsystem: "dev.aiterminal", category: .pointsOfInterest)
     let core = RemoteTerminal()
     private let account = Account()
+    nonisolated private let accountPersistence = AccountPersistence()
     private let worker = DispatchQueue(label: "dev.aiterminal.account")
     // Read and written only on worker, including assistant calls and channel changes.
     private let channelState = WorkerChannelState()
@@ -73,7 +77,7 @@ final class TerminalModel: ObservableObject {
             return
         }
         if ProcessInfo.processInfo.arguments.contains("--logout-fixture") {
-            worker.async { [weak self] in guard let self else { return }; if let value = PairingStore.loadAccount() { try? self.account.restore(value: value); try? self.account.logout() }; do { try PairingStore.clearAccount() } catch { self.failed(error) } }
+            worker.async { [weak self] in guard let self else { return }; do { let value = try PairingStore.loadAccount(); try self.accountPersistence.clear(); if let value { try self.account.restore(value: value); try self.account.logout() } } catch { self.failed(error) } }
             return
         }
         if ProcessInfo.processInfo.arguments.contains("--render-fixture"),
@@ -82,16 +86,17 @@ final class TerminalModel: ObservableObject {
             if (try? replica.applySnapshot(bytes: data)) != nil { screen = try? replica.frame(); status = "本地画面验证"; if let screen { TerminalBenchmark.run(screen) }; return }
         }
         if let path = ProcessInfo.processInfo.environment["AI_TERMINAL_TEST_ACCOUNT_FILE"], let data = try? Data(contentsOf: URL(fileURLWithPath: path)), let config = (try? JSONSerialization.jsonObject(with: data)) as? [String: String], let server = config["server"], let username = config["username"], let password = config["password"], let session = config["session"] {
+            let epoch = accountPersistence.epoch
             worker.async { [weak self] in guard let self else { return }; do {
                 try self.account.login(server: server, username: username, password: password, name: "iOS Simulator", platform: "ios", caPem: "")
-                try self.persist()
+                try self.persist(epoch)
                 let until = Date().addingTimeInterval(10)
                 var desktop: AccountDevice?
                 repeat { desktop = try self.account.devices().first(where: { $0.platform == "desktop" && $0.online }); if desktop == nil { Thread.sleep(forTimeInterval: 0.1) } } while desktop == nil && Date() < until
                 guard let desktop else { throw CocoaError(.fileNoSuchFile) }
                 try self.account.connect(deviceId: desktop.id, terminal: self.core)
                 if ProcessInfo.processInfo.environment["AI_TERMINAL_TEST_RELAY_ONLY"] == "1" { try self.core.useRelay() }
-                try self.loadDevices(); let sessions = try self.core.sessions()
+                try self.loadDevices(epoch); let sessions = try self.core.sessions()
                 self.channelState.device = desktop.id
                 DispatchQueue.main.async { self.deviceID = desktop.id; self.sessions = sessions; self.select(session, control: true) }
             } catch { self.failed(error) } }
@@ -100,32 +105,48 @@ final class TerminalModel: ObservableObject {
         if let path = ProcessInfo.processInfo.environment["AI_TERMINAL_TEST_INVITATION_FILE"], let value = try? String(contentsOfFile: path, encoding: .utf8) { legacyConnect(value); return }
         if ProcessInfo.processInfo.arguments.contains("--connect-fixture") { legacyConnect(""); return }
         #endif
-        busy = true; accountBusy = true
+        busy = true; accountBusy = true; preparingWorkspace = true; status = "正在恢复工作空间…"
+        let epoch = accountPersistence.epoch
         worker.async { [weak self] in
             guard let self else { return }
-            do { if let value = PairingStore.loadAccount() { try self.account.restore(value: value); try self.loadDevices() } else { DispatchQueue.main.async { self.accountBusy = false; self.busy = false } } }
+            do { if let value = try PairingStore.loadAccount() { try self.account.restore(value: value); try self.loadDevices(epoch) } else { DispatchQueue.main.async { self.accountBusy = false; self.busy = false; self.preparingWorkspace = false } } }
             catch { self.failed(error) }
         }
     }
-    nonisolated private func persist() throws {
+    nonisolated private func persist(_ epoch: Int) throws {
         let value = try account.export()
-        if value.isEmpty { try PairingStore.clearAccount() } else { try PairingStore.saveAccount(value) }
+        try accountPersistence.commit(epoch) {
+            if value.isEmpty { try PairingStore.clearAccount() } else { try PairingStore.saveAccount(value) }
+        }
     }
-    nonisolated private func loadDevices() throws {
-        defer { do { try persist() } catch { failed(error) } }
+    nonisolated private func loadDevices(_ epoch: Int) throws {
+        guard accountPersistence.epoch == epoch else { return }
+        defer { do { try persist(epoch) } catch { failed(error) } }
         let name = account.username()
         let exported = try account.export()
         let object = (try? JSONSerialization.jsonObject(with: Data(exported.utf8))) as? [String: Any]
         let server = object?["server"] as? String ?? ""
-        DispatchQueue.main.async { self.username = name; self.server = server }
+        DispatchQueue.main.async {
+            guard self.accountPersistence.epoch == epoch else { return }
+            if self.username.isEmpty { self.preparingWorkspace = true }
+            self.username = name; self.server = server
+        }
         let devices = try account.devices()
         DispatchQueue.main.async {
+            guard self.accountPersistence.epoch == epoch else { return }
             self.devices = devices; self.username = name; self.accountBusy = false; self.busy = false
+            guard self.foreground else { return }
             if !self.connected {
                 self.status = "选择在线 Desktop"
                 let desktops = devices.filter { $0.online && !$0.current && $0.platform == "desktop" }
                 if desktops.count == 1 { self.connectDevice(desktops[0].id) }
-                else { self.restoreLastTerminal() }
+                else {
+                    self.restoreLastTerminal()
+                    if !self.busy {
+                        self.status = desktops.isEmpty ? "暂无在线 Desktop，等待自动连接" : "请选择要连接的 Desktop"
+                        self.preparingWorkspace = false
+                    }
+                }
             }
         }
     }
@@ -133,12 +154,13 @@ final class TerminalModel: ObservableObject {
         DispatchQueue.main.async {
             guard version == nil || self.generation == version else { return }
             if version == nil { self.accountBusy = false }
-            self.status = terminalError(error); self.error = terminalError(error); self.busy = false
+            self.status = terminalError(error); self.error = terminalError(error); self.busy = false; self.preparingWorkspace = false
         }
     }
     func login(server: String, username: String, password: String) {
-        guard !busy else { return }; busy = true; accountBusy = true; error = nil; status = "登录中…"
+        guard !busy else { return }; busy = true; accountBusy = true; error = nil; status = "正在登录并连接终端…"
         let deviceName = UIDevice.current.name
+        let epoch = accountPersistence.epoch
         worker.async { [weak self] in
             guard let self else { return }
             do {
@@ -147,20 +169,31 @@ final class TerminalModel: ObservableObject {
                 #else
                 let testCA: String? = nil
                 #endif
-                let ca = testCA ?? Bundle.main.url(forResource: "server-ca", withExtension: "pem").flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
+                let ca = testCA ?? (Bundle.main.url(forResource: "server-ca", withExtension: "pem").flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? WorkspacePreferences.serverCA)
                 try self.account.login(server: server, username: username, password: password, name: deviceName, platform: "ios", caPem: ca)
-                try self.persist(); try self.loadDevices()
+                try self.persist(epoch); try self.loadDevices(epoch)
             } catch { self.failed(error) }
         }
     }
-    func refreshDevices() { guard !busy else { return }; busy = true; accountBusy = true; worker.async { [weak self] in do { try self?.loadDevices() } catch { self?.failed(error) } } }
-    func resume() { if !username.isEmpty, !connected, !busy { refreshDevices() } }
+    func refreshDevices() { guard !busy else { return }; busy = true; accountBusy = true; let epoch = accountPersistence.epoch; worker.async { [weak self] in do { try self?.loadDevices(epoch) } catch { self?.failed(error) } } }
+    func resume() { foreground = true; if !username.isEmpty, !connected, !busy { preparingWorkspace = true; refreshDevices() } }
+    func suspend() { foreground = false; pause(); preparingWorkspace = !username.isEmpty }
     func heartbeat() {
-        guard !username.isEmpty, !fixture else { return }
+        guard foreground, !username.isEmpty, !fixture, !busy, !heartbeatBusy, !preparingWorkspace else { return }
+        heartbeatBusy = true
+        let discover = !connected
+        if discover { busy = true; accountBusy = true }
+        let epoch = accountPersistence.epoch
         worker.async { [weak self] in
             guard let self else { return }
+            defer { DispatchQueue.main.async {
+                self.heartbeatBusy = false
+                if self.accountPersistence.epoch == epoch, self.foreground, self.connected, self.selected == nil { self.refreshSessions() }
+            } }
+            guard self.accountPersistence.epoch == epoch else { return }
             try? self.account.heartbeat()
-            try? self.persist()
+            do { if discover { try self.loadDevices(epoch) } else { try self.persist(epoch) } }
+            catch { self.failed(error) }
         }
     }
     private func restoreLastTerminal() {
@@ -179,11 +212,12 @@ final class TerminalModel: ObservableObject {
         return "待确认"
     }
     func connectDevice(_ id: String, sessionID: String? = nil) {
-        guard !busy else { return }; busy = true; error = nil; connected = false; deviceID = id; sessions = []
+        guard !busy else { return }; busy = true; preparingWorkspace = true; error = nil; connected = false; deviceID = id; sessions = []
         generation += 1; let version = generation; selected = nil; screen = nil; hasControl = false; desktopAttached = false; sessionExited = false; status = "连接中…"
+        let epoch = accountPersistence.epoch
         worker.async { [weak self] in
             guard let self else { return }
-            defer { do { try self.persist() } catch { self.failed(error, version: version) } }
+            defer { do { try self.persist(epoch) } catch { self.failed(error, version: version) } }
             do {
                 self.channelState.device = ""; try self.core.disconnect(); try self.account.connect(deviceId: id, terminal: self.core); self.channelState.device = id
                 let sessions = try self.core.sessions()
@@ -195,8 +229,10 @@ final class TerminalModel: ObservableObject {
                     } else if let first = sessions.first(where: { !$0.exited }) {
                         if sessionID != nil { self.status = "上次会话已关闭，已恢复在线终端" }
                         self.select(first.id, control: true)
-                    } else if sessionID != nil {
-                        self.error = "历史对应的终端已关闭，对话仅供查阅"
+                    } else {
+                        self.preparingWorkspace = false
+                        self.status = "已连接，暂无运行中的终端"
+                        if sessionID != nil { self.error = "历史对应的终端已关闭，对话仅供查阅" }
                     }
                 }
             } catch { self.failed(error, version: version) }
@@ -204,19 +240,22 @@ final class TerminalModel: ObservableObject {
     }
     func revoke(_ id: String) {
         guard !busy else { return }; pause(); busy = true; accountBusy = true
-        worker.async { [weak self] in guard let self else { return }; defer { do { try self.persist() } catch { self.failed(error) } }; do { try self.account.revoke(deviceId: id); if self.account.username().isEmpty { DispatchQueue.main.async { self.username = ""; self.server = ""; self.devices = []; self.sessions = []; self.deviceID = ""; self.accountBusy = false; self.busy = false } } else { try self.loadDevices() } } catch { self.failed(error) } }
+        let epoch = accountPersistence.epoch
+        worker.async { [weak self] in guard let self else { return }; defer { do { try self.persist(epoch) } catch { self.failed(error) } }; do { try self.account.revoke(deviceId: id); if self.account.username().isEmpty { DispatchQueue.main.async { self.username = ""; self.server = ""; self.devices = []; self.sessions = []; self.deviceID = ""; self.accountBusy = false; self.busy = false } } else { try self.loadDevices(epoch) } } catch { self.failed(error) } }
     }
     func logout() {
-        guard !busy else { return }; pause(); busy = true; accountBusy = true; username = ""; server = ""; devices = []; sessions = []; sessionSnapshots = [:]; deviceID = ""
+        guard !busy else { return }
+        do { try accountPersistence.clear() } catch { failed(error); return }
+        pause(); preparingWorkspace = false; busy = true; accountBusy = true; username = ""; server = ""; devices = []; sessions = []; sessionSnapshots = [:]; deviceID = ""
         worker.async { [weak self] in guard let self else { return }
             do { try self.account.logout() } catch { self.failed(error) }
-            do { try self.persist() } catch { self.failed(error) }
             DispatchQueue.main.async { self.username = ""; self.devices = []; self.sessions = []; self.screen = nil; self.accountBusy = false; self.busy = false }
         }
     }
     func changePassword(current: String, next: String) {
         guard !busy else { return }; pause(); busy = true; accountBusy = true
-        worker.async { [weak self] in guard let self else { return }; defer { do { try self.persist() } catch { self.failed(error) } }; do { try self.account.changePassword(current: current, newPassword: next); DispatchQueue.main.async { self.username = ""; self.server = ""; self.devices = []; self.sessions = []; self.accountBusy = false; self.busy = false; self.status = "密码已更新，请重新登录" } } catch { self.failed(error) } }
+        let epoch = accountPersistence.epoch
+        worker.async { [weak self] in guard let self else { return }; defer { do { try self.persist(epoch) } catch { self.failed(error) } }; do { try self.account.changePassword(current: current, newPassword: next); DispatchQueue.main.async { self.username = ""; self.server = ""; self.devices = []; self.sessions = []; self.accountBusy = false; self.busy = false; self.status = "密码已更新，请重新登录" } } catch { self.failed(error) } }
     }
     func legacyConnect(_ invitation: String) {
         guard !busy else { return }; busy = true; error = nil
@@ -240,7 +279,7 @@ final class TerminalModel: ObservableObject {
         }
     }
     func select(_ id: String, control: Bool) {
-        guard !busy else { return }; busy = true; error = nil
+        guard !busy else { return }; busy = true; preparingWorkspace = true; error = nil
         generation += 1; let version = generation; selected = nil; hasControl = false; desktopAttached = false; sessionExited = false; screen = nil; history = ""
         worker.async { [weak self] in guard let self else { return }
             do { let frame = try self.core.select(id: id, takeControl: control)
@@ -255,7 +294,7 @@ final class TerminalModel: ObservableObject {
                 let attached = self.core.desktopAttached(); let exited = self.core.sessionExited()
                 DispatchQueue.main.async {
                     guard self.generation == version else { return }
-                    self.selected = id; self.screen = frame; self.hasControl = controlled; self.desktopAttached = attached; self.sessionExited = exited; self.connected = true; self.busy = false
+                    self.selected = id; self.screen = frame; self.hasControl = controlled; self.desktopAttached = attached; self.sessionExited = exited; self.connected = true; self.busy = false; self.preparingWorkspace = false
                     if let identity = self.identity, !self.deviceID.isEmpty, self.currentSession?.exited != true { RecentTerminal(device: self.deviceID, session: id).save(identity) }
                 }
             } catch { self.failed(error, version: version) }
@@ -311,6 +350,7 @@ final class TerminalModel: ObservableObject {
                     self.sessionsRefreshInFlight = false
                     guard self.generation == version, self.connected, self.deviceID == device else { return }
                     self.sessions = sessions; self.sessionSnapshots[device] = sessions
+                    if self.foreground, self.selected == nil, let first = sessions.first(where: { !$0.exited }) { self.select(first.id, control: true) }
                     if let selected = self.selected, sessions.first(where: { $0.id == selected })?.exited == true { self.status = "当前会话已关闭" }
                 }
             } catch {
@@ -327,6 +367,22 @@ final class TerminalModel: ObservableObject {
         worker.async { [weak self] in guard let self else { return }
             do { let text = try self.core.readHistory().joined(separator: "\n"); DispatchQueue.main.async { if self.generation == version { self.history = text; self.historyLoading = false } } }
             catch { DispatchQueue.main.async { if self.generation == version { self.status = terminalError(error); self.history = terminalError(error); self.historyLoading = false } } }
+        }
+    }
+    func agent(scope: ChatScope, json: String, configuration: Bool = false) async throws -> String {
+        guard connected, identity == scope.identity, deviceID == scope.device else { throw ChatFailure.message("账号或设备连接已变化") }
+        return try await withCheckedThrowingContinuation { continuation in
+            worker.async { [weak self] in
+                guard let self else { continuation.resume(throwing: ChatFailure.message("连接已关闭")); return }
+                do {
+                    let exported = try self.account.export()
+                    let object = (try? JSONSerialization.jsonObject(with: Data(exported.utf8))) as? [String: Any]
+                    guard self.channelState.device == scope.device, self.account.username() == scope.identity.account,
+                        object?["server"] as? String == scope.identity.server else { throw ChatFailure.message("账号或设备连接已变化") }
+                    let result = try configuration ? self.core.configuration(requestJson: json) : self.core.agent(sessionId: scope.session, requestJson: json)
+                    continuation.resume(returning: result)
+                } catch { continuation.resume(throwing: error) }
+            }
         }
     }
     func assistant(scope: ChatScope, json: String) async throws -> AssistantResponse {

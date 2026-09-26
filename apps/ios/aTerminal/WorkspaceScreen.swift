@@ -15,6 +15,8 @@ struct WorkspaceScreen: View {
     @State private var search = ""
     @State private var panel: WorkspacePanel?
     @State private var inputVisible = false
+    @State private var keysVisible = false
+    @State private var landscape = false
     @State private var creating = false
     @State private var directory = ""
     @State private var closing = false
@@ -28,24 +30,46 @@ struct WorkspaceScreen: View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
                 WorkspaceStyle.background.ignoresSafeArea()
-                if workspace { terminalWorkspace } else { LoginScreen(model: model) }
-                if drawer {
+                if model.preparingWorkspace {
+                    VStack(spacing: 16) {
+                        ProgressView()
+                        Text("正在连接终端…").font(.subheadline).foregroundColor(WorkspaceStyle.muted)
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity).accessibilityIdentifier("workspace.preparing")
+                } else if workspace { terminalWorkspace } else { LoginScreen(model: model) }
+                if keysVisible && !model.preparingWorkspace {
+                    Color.clear.contentShape(Rectangle()).onTapGesture { keysVisible = false }
+                    TerminalSpecialKeys(enabled: model.hasControl && model.connected && !model.busy,
+                        keyboardOpen: inputVisible, dismiss: { keysVisible = false },
+                        key: { value in keysVisible = false; model.key(value) },
+                        paste: { keysVisible = false; if let text = UIPasteboard.general.string { _ = model.paste(text) } },
+                        history: { keysVisible = false; model.readHistory(); panel = .terminalHistory },
+                        keyboard: { keysVisible = false; inputVisible.toggle() })
+                        .frame(width: min(232, geometry.size.width - 24), height: min(240, max(100, geometry.size.height - 24)))
+                        .background(WorkspaceStyle.surface.opacity(opacity / 100))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(WorkspaceStyle.line)).cornerRadius(8)
+                        .padding(12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                        .accessibilityIdentifier("terminal.specialKeys")
+                }
+                if drawer && !model.preparingWorkspace {
                     Color.black.opacity(0.4).ignoresSafeArea().onTapGesture { drawer = false }.accessibilityHidden(true)
                     drawerView.frame(width: min(340, geometry.size.width - 28)).frame(maxHeight: .infinity)
                         .background(WorkspaceStyle.surface).transition(.move(edge: .leading)).accessibilityAddTraits(.isModal)
                 }
-                if let panel {
+                if let panel, !model.preparingWorkspace {
                     let height = panelHeight(panel, available: geometry.size.height)
                     Color.black.opacity(0.08).ignoresSafeArea().onTapGesture { self.panel = nil }.accessibilityHidden(true)
-                    panelContent(panel, height: height).frame(maxWidth: 620)
+                    panelContent(panel, height: height).frame(maxWidth: panel == .chat ? .infinity : 620)
                         .frame(height: height)
-                        .background(WorkspaceStyle.surface.opacity(min(96, max(60, opacity)) / 100))
+                        .background(WorkspaceStyle.surface.opacity(min(100, max(0, opacity)) / 100))
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(WorkspaceStyle.line))
-                        .cornerRadius(8).padding(12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                        .cornerRadius(panel == .chat ? 0 : 8).padding(panel == .chat ? 0 : 12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                         .accessibilityAddTraits(.isModal)
                 }
             }.frame(width: geometry.size.width, height: geometry.size.height)
+                .onAppear { updateOrientation() }
+                .onChange(of: geometry.size) { _ in updateOrientation() }
         }
+        .statusBarHidden(landscape)
         .foregroundColor(WorkspaceStyle.foreground).tint(WorkspaceStyle.accent)
         .alert("新建会话", isPresented: $creating) {
             TextField("Desktop 工作目录（留空使用默认）", text: $directory)
@@ -66,18 +90,19 @@ struct WorkspaceScreen: View {
         }
         .onChange(of: model.identity) { _ in
             syncChat()
-            if model.username.isEmpty { panel = nil; drawer = false; selectedHistory = nil; inputVisible = false; continueScope = nil }
-            else if model.deviceID.isEmpty { panel = .devices }
+            if model.username.isEmpty { keysVisible = false; panel = nil; drawer = false; selectedHistory = nil; inputVisible = false; continueScope = nil }
+
         }
+        .onChange(of: model.preparingWorkspace) { value in if value { drawer = false; panel = nil } }
         .onChange(of: model.chatScope) { scope in
-            syncChat(); inputVisible = false
+            syncChat(); inputVisible = false; keysVisible = false
             if let scope, scope == continueScope { continueScope = nil; panel = .chat }
         }
         .onChange(of: model.connected) { connected in syncChat(); if connected && panel == .devices { panel = nil } }
-        .onChange(of: drawer) { value in if value && !historyTab { model.refreshSessions() } }
+        .onChange(of: drawer) { value in if value { keysVisible = false; if !historyTab { model.refreshSessions() } } }
         .onChange(of: historyTab) { value in if !value && drawer { model.refreshSessions() } }
-        .onChange(of: panel) { value in assistant.setVisible(value == .chat, core: model.core); if value != nil { inputVisible = false } }
-        .onChange(of: model.hasControl) { value in if !value { inputVisible = false } }
+        .onChange(of: panel) { value in assistant.setVisible(value == .chat, core: model.core); if value != nil { inputVisible = false; keysVisible = false } }
+        .onChange(of: model.hasControl) { value in if !value { inputVisible = false; keysVisible = false } }
         .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
             if drawer && !historyTab { model.refreshSessions() }
         }
@@ -85,11 +110,11 @@ struct WorkspaceScreen: View {
             if phase == .active { model.heartbeat() }
         }
         .onChange(of: phase) { value in
-            if value == .background { assistant.stop(); model.pause(); panel = nil; inputVisible = false }
+            if value == .background { assistant.stop(); model.suspend(); panel = nil; inputVisible = false; keysVisible = false }
             if value == .active { model.resume() }
         }
         .onAppear {
-            fontSize = min(24, max(12, fontSize)); opacity = min(96, max(60, opacity))
+            fontSize = min(24, max(6, fontSize)); opacity = min(100, max(0, opacity))
             syncChat()
             #if DEBUG
             if model.fixture {
@@ -103,15 +128,21 @@ struct WorkspaceScreen: View {
     }
 
     private func syncChat() {
-        assistant.context(identity: model.identity, scope: model.chatScope, title: model.currentSession?.displayName ?? "终端", device: model.deviceName, connected: model.connected, core: model.core, terminal: model)
+        assistant.context(identity: model.identity, scope: model.chatScope ?? model.identity.map { ChatScope(identity:$0,device:model.deviceID,session:"") }, title: model.currentSession?.displayName ?? "终端", device: model.deviceName, connected: model.connected, core: model.core, terminal: model)
+    }
+    private func updateOrientation() {
+        let bounds = UIScreen.main.bounds
+        landscape = bounds.width > bounds.height
     }
     private func panelHeight(_ panel: WorkspacePanel, available: CGFloat) -> CGFloat {
+        if panel == .chat { return available }
         let fraction: CGFloat = panel == .settings ? 0.62 : 0.74
         return max(80, min(available * fraction, available - 56))
     }
 
     private var terminalWorkspace: some View {
         VStack(spacing: 0) {
+            if !landscape {
                 HStack(spacing: 8) {
                     ToolButton(symbol: "sidebar.left", label: "工作空间") { drawer = true }.accessibilityIdentifier("workspace.drawer")
                     VStack(alignment: .leading, spacing: 2) {
@@ -123,7 +154,8 @@ struct WorkspaceScreen: View {
                     Circle().fill(model.connected ? WorkspaceStyle.success : WorkspaceStyle.muted).frame(width: 6, height: 6).accessibilityLabel(model.connected ? "终端已连接" : "终端未连接")
                     ToolButton(symbol: "desktopcomputer", label: "选择设备") { panel = .devices }
                 }.padding(.horizontal, 8).background(WorkspaceStyle.background)
-            Divider().overlay(WorkspaceStyle.line)
+                Divider().overlay(WorkspaceStyle.line)
+            }
             if let error = model.error {
                 HStack(alignment: .top) {
                     Text(error).font(.caption).foregroundColor(WorkspaceStyle.danger).fixedSize(horizontal: false, vertical: true)
@@ -133,7 +165,7 @@ struct WorkspaceScreen: View {
             }
             ZStack(alignment: .bottomTrailing) {
                 if let frame = model.screen {
-                    TerminalSurface(frame: frame, zoom: min(24, max(12, fontSize)) / 15, generation: model.generation, core: model.displayCore,
+                    TerminalSurface(frame: frame, zoom: min(24, max(6, fontSize)) / 15, generation: model.generation, core: model.displayCore,
                         canInput: model.hasControl && model.connected && !model.busy && panel == nil && !drawer, keyboardRequested: inputVisible,
                         onText: model.text, onPaste: model.paste, onKey: model.key, onKeyboardChange: { inputVisible = $0 },
                         onReadOnly: { model.status = model.readOnlyReason },
@@ -150,35 +182,47 @@ struct WorkspaceScreen: View {
                         }
                     )
                 }
-            }.frame(maxWidth: .infinity, maxHeight: .infinity).overlay(alignment: .bottomTrailing) {
-                VStack(spacing: 8) {
-                    ToolButton(symbol: "slider.horizontal.3", label: "终端设置") { panel = .settings }.background(WorkspaceStyle.surface.opacity(opacity / 100)).cornerRadius(6).accessibilityIdentifier("workspace.settings")
-                    ToolButton(symbol: "bubble.left", label: "AI 对话", active: true) { panel = .chat }.accessibilityIdentifier("workspace.chat")
-                }.padding(16).opacity(panel == nil ? 1 : 0)
-            }
-            if inputVisible { TerminalComposer(enabled: model.hasControl && model.connected && !model.busy, key: model.key) }
-            VStack(spacing: 0) {
-                HStack(spacing: 4) {
-                    ToolButton(symbol: inputVisible ? "keyboard.chevron.compact.down" : "keyboard", label: inputVisible ? "隐藏键盘" : "打开终端键盘") {
-                        if model.hasControl { inputVisible.toggle() } else { model.status = model.readOnlyReason }
-                    }
-                    Spacer(minLength: 4)
-                    ToolButton(symbol: "clock", label: "终端历史") { model.readHistory(); panel = .terminalHistory }.disabled(model.selected == nil)
-                    ToolButton(symbol: "xmark.square", label: "关闭会话") { closing = true }.disabled(model.selected == nil || !model.connected || model.busy || model.sessionExited || !model.desktopAttached)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity).overlay(alignment: .trailing) {
+                GeometryReader { region in
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 2) {
+                        if landscape {
+                            ToolButton(symbol: "sidebar.left", label: "工作空间") { drawer = true }.accessibilityIdentifier("workspace.drawer")
+                            ToolButton(symbol: "desktopcomputer", label: "选择设备") { panel = .devices }
+                        }
+                        ToolButton(symbol: "slider.horizontal.3", label: "终端设置") { panel = .settings }.accessibilityIdentifier("workspace.settings")
+                        ToolButton(symbol: "bubble.left", label: "AI 对话") { panel = .chat }.accessibilityIdentifier("workspace.chat")
+                        ToolButton(symbol: "keyboard", label: "特殊按键") { keysVisible.toggle() }.accessibilityIdentifier("workspace.keys")
+                    }.padding(2).background(WorkspaceStyle.surface.opacity(opacity / 100)).cornerRadius(8)
+                }.frame(width: 48, height: min(landscape ? 234 : 142, max(44, region.size.height - 8))).padding(.trailing, 6).opacity(panel == nil && !drawer && !keysVisible ? 1 : 0)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
                 }
+            }
+            if !landscape {
                 HStack(alignment: .top) {
                     Text(model.status).lineLimit(2)
                     Spacer(minLength: 8)
                     Text(model.screen.map { "\($0.cols) 列 · UTF-8" } ?? "UTF-8").font(.system(size: 11, design: .monospaced)).fixedSize()
-                }.font(.caption).foregroundColor(WorkspaceStyle.muted).padding(.horizontal, 8).padding(.bottom, 8)
-
-            }.padding(.horizontal, 8).background(WorkspaceStyle.surface)
+                }.font(.caption).foregroundColor(WorkspaceStyle.muted).padding(8).background(WorkspaceStyle.surface)
+            }
         }.accessibilityHidden(drawer || panel != nil)
     }
 
     private var drawerView: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack { Text("工作空间").font(.title3.weight(.semibold)); Spacer(); ToolButton(symbol: "xmark", label: "关闭工作空间") { drawer = false } }.padding(.horizontal, 16).padding(.top, 8)
+            if landscape {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(model.currentSession?.displayName ?? "aTerminal").font(.subheadline)
+                    Text(model.currentSession?.cwd ?? model.deviceName).font(.caption).lineLimit(2)
+                    Text(model.status).font(.caption2).foregroundColor(WorkspaceStyle.muted)
+                }.padding(.horizontal, 16)
+            }
+            HStack {
+                ToolButton(symbol: "clock", label: "终端历史") { model.readHistory(); drawer = false; panel = .terminalHistory }.disabled(model.selected == nil)
+                ToolButton(symbol: "xmark.square", label: "关闭会话") { closing = true }.disabled(model.selected == nil || !model.connected || model.busy || model.sessionExited || !model.desktopAttached)
+                Spacer()
+            }.padding(.horizontal, 12)
             Picker("工作空间视图", selection: $historyTab) { Text("终端").tag(false); Text("AI 历史").tag(true) }.pickerStyle(.segmented).padding(16)
             HStack { Image(systemName: "magnifyingglass"); TextField(historyTab ? "搜索对话内容" : "终端名称或路径", text: $search).textInputAutocapitalization(.never).autocorrectionDisabled(); if !search.isEmpty { Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }.accessibilityLabel("清除搜索") } }.padding(12).background(WorkspaceStyle.control).cornerRadius(8).padding(.horizontal, 16)
             if !historyTab {
@@ -196,7 +240,7 @@ struct WorkspaceScreen: View {
                         if archives.isEmpty { EmptyWorkspace(symbol: "bubble.left.and.bubble.right", title: search.isEmpty ? "暂无 AI 对话" : "没有匹配的对话") }
                         ForEach(archives) { archive in
                             Button {
-                                selectedHistory = archive; drawer = false; panel = .chatHistory
+                                selectedHistory = archive; drawer = false; assistant.openHistory(archive); panel = .chat
                             } label: {
                                 VStack(alignment: .leading, spacing: 8) {
                                     HStack { Image(systemName: "bubble.left"); Text(archive.title).fontWeight(.medium).lineLimit(2); Spacer(minLength: 0) }
@@ -292,13 +336,13 @@ struct WorkspaceScreen: View {
           ScrollView {
             VStack(spacing: 24) {
                 VStack(spacing: 12) {
-                    HStack { Text("文字大小"); Spacer(); Text("\(Int(fontSize)) px").foregroundColor(WorkspaceStyle.accent).monospacedDigit() }.padding(12).background(WorkspaceStyle.surface)
-                    Slider(value: $fontSize, in: 12...24, step: 1).accessibilityLabel("文字大小").accessibilityValue("\(Int(fontSize)) px")
-                    HStack { Text("12 px").padding(.horizontal, 4).background(WorkspaceStyle.surface); Spacer(); Text("24 px").padding(.horizontal, 4).background(WorkspaceStyle.surface) }.font(.caption).foregroundColor(WorkspaceStyle.muted)
+                    HStack { Text("文字大小"); Spacer(); Text("\(Int(fontSize)) pt").foregroundColor(WorkspaceStyle.accent).monospacedDigit() }.padding(12).background(WorkspaceStyle.surface)
+                    Slider(value: $fontSize, in: 6...24, step: 1).accessibilityLabel("文字大小").accessibilityValue("\(Int(fontSize)) pt")
+                    HStack { Text("6 pt").padding(.horizontal, 4).background(WorkspaceStyle.surface); Spacer(); Text("24 pt").padding(.horizontal, 4).background(WorkspaceStyle.surface) }.font(.caption).foregroundColor(WorkspaceStyle.muted)
                 }
                 VStack(spacing: 12) {
                     HStack { Text("浮窗不透明度"); Spacer(); Text("\(Int(opacity))%").foregroundColor(WorkspaceStyle.accent).monospacedDigit() }.padding(12).background(WorkspaceStyle.surface)
-                    Slider(value: $opacity, in: 60...96, step: 1).accessibilityLabel("浮窗不透明度").accessibilityValue("\(Int(opacity))%")
+                    Slider(value: $opacity, in: 0...100, step: 1).accessibilityLabel("浮窗不透明度").accessibilityValue("\(Int(opacity))%")
                     HStack { Text("通透").padding(.horizontal, 4).background(WorkspaceStyle.surface); Spacer(); Text("清晰").padding(.horizontal, 4).background(WorkspaceStyle.surface) }.font(.caption).foregroundColor(WorkspaceStyle.muted)
                 }
             }.padding(24)
@@ -337,17 +381,28 @@ struct WorkspaceScreen: View {
     }
 }
 
-private struct TerminalComposer: View {
+private struct TerminalSpecialKeys: View {
     let enabled: Bool
+    let keyboardOpen: Bool
+    let dismiss: () -> Void
     let key: (String) -> Void
+    let paste: () -> Void
+    let history: () -> Void
+    let keyboard: () -> Void
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                ForEach([("return", "回车", "enter"), ("arrow.right.to.line", "Tab", "tab"), ("delete.left", "退格", "backspace"), ("stop", "Ctrl-C", "ctrl_c"), ("escape", "Esc", "escape"), ("arrow.up", "向上", "up"), ("arrow.down", "向下", "down"), ("arrow.left", "向左", "left"), ("arrow.right", "向右", "right")], id: \.2) { symbol, label, value in
-                    ToolButton(symbol: symbol, label: label) { key(value) }.accessibilityIdentifier("terminal.key." + value)
+        ScrollView {
+            VStack(spacing: 2) {
+                HStack { Text("特殊按键").font(.subheadline); Spacer(); ToolButton(symbol: "xmark", label: "关闭特殊按键", action: dismiss) }
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 2), count: 4), spacing: 2) {
+                    ForEach([("return", "回车", "enter"), ("arrow.right.to.line", "Tab", "tab"), ("delete.left", "退格", "backspace"), ("escape", "Esc", "escape"), ("arrow.left", "向左", "left"), ("arrow.up", "向上", "up"), ("arrow.down", "向下", "down"), ("arrow.right", "向右", "right"), ("stop", "Ctrl-C", "ctrl_c")], id: \.2) { symbol, label, value in
+                        ToolButton(symbol: symbol, label: label) { key(value) }.disabled(!enabled).accessibilityIdentifier("terminal.key." + value)
+                    }
+                    ToolButton(symbol: "doc.on.clipboard", label: "粘贴", action: paste).disabled(!enabled)
+                    ToolButton(symbol: "clock", label: "终端历史", action: history)
+                    ToolButton(symbol: keyboardOpen ? "keyboard.chevron.compact.down" : "keyboard", label: keyboardOpen ? "收起系统键盘" : "显示系统键盘", action: keyboard).disabled(!enabled)
                 }
-            }
-        }.disabled(!enabled).padding(8).background(WorkspaceStyle.surface)
+            }.padding(8)
+        }
     }
 }
 

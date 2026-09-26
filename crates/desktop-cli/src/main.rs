@@ -1,4 +1,7 @@
 mod account;
+mod agents;
+mod configuration;
+mod extensions;
 mod input;
 mod managed;
 mod render;
@@ -21,8 +24,10 @@ pub(crate) struct Args {
     management: Option<account::Management>,
     #[arg(long, hide = true)]
     agent: bool,
-    #[arg(long)]
+    #[arg(long, global = true)]
     state_dir: Option<PathBuf>,
+    #[arg(long, global = true)]
+    json: bool,
     #[arg(long)]
     list: bool,
     #[arg(long)]
@@ -50,6 +55,9 @@ pub(crate) struct Args {
     /// Start in this directory, without shell interpolation.
     #[arg(long)]
     cwd: Option<PathBuf>,
+    /// Enable isolated per-session shell status hooks.
+    #[arg(long)]
+    shell_integration: bool,
     /// Capture a validated protobuf screen without entering a host terminal.
     #[arg(long)]
     snapshot: Option<PathBuf>,
@@ -67,7 +75,14 @@ fn main() {
     let code = match run() {
         Ok(code) => code,
         Err(error) => {
-            eprintln!("aTerminal: {error:#}");
+            if std::env::args().any(|arg| arg == "--json") {
+                println!(
+                    "{}",
+                    serde_json::json!({"ok":false,"error":{"code":"operation_failed","message":format!("{error:#}")}})
+                );
+            } else {
+                eprintln!("aTerminal: {error:#}");
+            }
             1
         }
     };
@@ -76,14 +91,79 @@ fn main() {
 fn run() -> Result<u32> {
     let mut args = Args::parse();
     if let Some(command) = args.management.take() {
-        return account::run(command, args.state_dir);
+        anyhow::ensure!(
+            !args.list
+                && args.attach.is_none()
+                && args.close.is_none()
+                && args.history.is_none()
+                && !args.agent_stop
+                && !args.agent,
+            "management commands cannot be mixed with legacy terminal flags"
+        );
+        match command {
+            account::Management::Sessions { command } => match command {
+                account::Sessions::Capture { id, output } => {
+                    use ai_terminal_protocol::local::{Operation, Request};
+                    use std::io::Write;
+                    let root = args
+                        .state_dir
+                        .map(Ok)
+                        .unwrap_or_else(ai_terminal_agent::default_state_dir)?;
+                    let reply = ai_terminal_agent::Client::connect(&root)?.call(Request {
+                        operation: Operation::ObserveTerminal as i32,
+                        session: id,
+                        ..Default::default()
+                    })?;
+                    let frame = reply.snapshot.context("snapshot_unavailable")?;
+                    let captured = ai_terminal_agent::raster::capture(&frame)?;
+                    let mut file = std::fs::OpenOptions::new()
+                        .create_new(true)
+                        .write(true)
+                        .open(&output)?;
+                    file.write_all(&captured.png)?;
+                    file.sync_all()?;
+                    println!(
+                        "{}",
+                        serde_json::json!({"ok":true,"result":{"output":output,"source":"rendered_terminal","epoch":frame.epoch,"revision":frame.revision}})
+                    );
+                    return Ok(0);
+                }
+                account::Sessions::List => args.list = true,
+                account::Sessions::Attach { id } => args.attach = Some(id),
+                account::Sessions::Close { id } => args.close = Some(id),
+                account::Sessions::History { id } => args.history = Some(id),
+                account::Sessions::Show { id } => {
+                    use ai_terminal_protocol::local::{Operation, Request};
+                    let root = args
+                        .state_dir
+                        .map(Ok)
+                        .unwrap_or_else(ai_terminal_agent::default_state_dir)?;
+                    let reply = ai_terminal_agent::Client::connect(&root)?.call(Request {
+                        operation: Operation::Poll as i32,
+                        session: id,
+                        ..Default::default()
+                    })?;
+                    let info = reply.info.context("session_not_found")?;
+                    println!(
+                        "{}",
+                        serde_json::json!({"ok":true,"result":{"id":info.id,"epoch":info.epoch,"initial_cwd":info.cwd,"exited":info.exited,"exit_code":if info.exited{Some(info.exit_code)}else{None},"desktop_attached":info.desktop_attached}})
+                    );
+                    return Ok(0);
+                }
+            },
+            account::Management::Daemon {
+                command: account::Daemon::Stop,
+            } => args.agent_stop = true,
+            command => return account::run(command, args.state_dir, args.json),
+        }
     }
     if args.agent {
         ai_terminal_agent::run_agent(
             &args
                 .state_dir
                 .clone()
-                .unwrap_or_else(ai_terminal_agent::default_state_dir),
+                .map(Ok)
+                .unwrap_or_else(ai_terminal_agent::default_state_dir)?,
         )?;
         return Ok(0);
     }
@@ -99,7 +179,8 @@ fn run() -> Result<u32> {
 fn pairing(args: Args) -> Result<u32> {
     let state = args
         .state_dir
-        .unwrap_or_else(ai_terminal_agent::default_state_dir);
+        .map(Ok)
+        .unwrap_or_else(ai_terminal_agent::default_state_dir)?;
     ai_terminal_agent::Client::ensure(&state, &std::env::current_exe()?)?;
     let pairs = state.join("pairs");
     std::fs::create_dir_all(&pairs)?;

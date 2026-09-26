@@ -35,7 +35,7 @@ if not args.skip_android:
     elif result is not None:
         print("Android app stopped; its saved login and device identity remain.")
 
-if (STATE / "endpoint.json").exists():
+if ((STATE / "runtime/endpoint.json").exists() or (STATE / "endpoint.json").exists()):
     if not CLI.is_file():
         errors.append("Desktop: CLI binary is missing; could not stop the Agent")
     else:

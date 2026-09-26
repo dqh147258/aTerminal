@@ -2,7 +2,8 @@ import SwiftUI
 
 struct LoginScreen: View {
     @ObservedObject var model: TerminalModel
-    @State private var server = ""
+    @State private var server = WorkspacePreferences.defaults.string(forKey: "login.server") ?? WorkspacePreferences.defaultServer
+    @State private var editingServer = false
     @State private var username = ""
     @State private var password = ""
     @State private var visible = false
@@ -23,8 +24,16 @@ struct LoginScreen: View {
                         Text("登录，回到你的工作现场。").foregroundColor(WorkspaceStyle.muted)
                     }.padding(.top, 12)
                     VStack(alignment: .leading, spacing: 20) {
-                        FieldShell(title: "服务地址", symbol: "server.rack") {
-                            TextField("https://", text: $server).keyboardType(.URL).textContentType(.URL).focused($field, equals: 0).submitLabel(.next).onSubmit { field = 1 }.accessibilityIdentifier("login.server")
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("登录地址").font(.caption).foregroundColor(WorkspaceStyle.muted)
+                            if editingServer {
+                                TextField("https://", text: $server).keyboardType(.URL).textContentType(.URL).focused($field, equals: 0).submitLabel(.done).onSubmit(saveServer).accessibilityIdentifier("login.server")
+                            } else {
+                                Text(server.isEmpty ? "未配置服务器" : server).font(.subheadline).foregroundColor(WorkspaceStyle.muted).textSelection(.enabled).accessibilityIdentifier("login.server.address")
+                            }
+                            Button(editingServer ? "保存服务器地址" : "修改服务器地址") {
+                                if editingServer { saveServer() } else { editingServer = true; field = 0 }
+                            }.font(.caption).foregroundColor(WorkspaceStyle.accent).padding(.vertical, 8).accessibilityIdentifier("login.server.edit")
                         }
                         FieldShell(title: "账号", symbol: "person") {
                             TextField("账号", text: $username).textContentType(.username).focused($field, equals: 1).submitLabel(.next).onSubmit { field = 2 }.accessibilityIdentifier("login.username")
@@ -50,13 +59,25 @@ struct LoginScreen: View {
             }
         }
     }
+    private func saveServer() {
+        guard let address = validatedServer() else { return }
+        server = address; WorkspacePreferences.defaults.set(address, forKey: "login.server")
+        editingServer = false; field = nil; validation = nil
+    }
+    private func validatedServer() -> String? {
+        let address = server.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URLComponents(string: address), ["https", "http"].contains(url.scheme?.lowercased() ?? ""), let host = url.host, !host.isEmpty, url.user == nil, url.password == nil else {
+            validation = "请输入有效的服务地址"; editingServer = true; field = 0; return nil
+        }
+        return address
+    }
     private func login() {
         guard !model.busy else { return }
-        let address = server.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URLComponents(string: address), ["https", "http"].contains(url.scheme?.lowercased() ?? ""), let host = url.host, !host.isEmpty, url.user == nil, url.password == nil else { validation = "请输入有效的服务地址"; field = 0; return }
+        guard let address = validatedServer() else { return }
         guard !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { validation = "请输入账号"; field = 1; return }
         guard !password.isEmpty else { validation = "请输入密码"; field = 2; return }
         validation = nil; field = nil
+        WorkspacePreferences.defaults.set(address, forKey: "login.server")
         model.login(server: address, username: username.trimmingCharacters(in: .whitespacesAndNewlines), password: password)
         password = ""
     }

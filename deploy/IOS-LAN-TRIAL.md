@@ -118,7 +118,7 @@ docker compose -p ai-terminal-dev -f deploy/compose.lan.yaml -f deploy/compose.t
 docker compose -p ai-terminal-dev -f deploy/compose.lan.yaml -f deploy/compose.test-network.yaml logs --tail 100 server lan_tls
 
 # 桌面 Agent 日志和会话列表
-tail -n 100 .local/ios-lan/agent.log
+tail -n 100 .local/ios-lan/logs/agent.log
 ./target/debug/aTerminal --state-dir "$PWD/.local/ios-lan" --list
 
 # 定向自动化检查

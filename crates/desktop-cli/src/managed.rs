@@ -63,7 +63,7 @@ fn attach_desktop(client: &Client, id: &str, epoch: u64) -> Result<bool> {
     }
 }
 pub fn run(args: Args) -> Result<u32> {
-    let state_dir = args.state_dir.unwrap_or_else(default_state_dir);
+    let state_dir = args.state_dir.map(Ok).unwrap_or_else(default_state_dir)?;
     let client = if args.list || args.close.is_some() || args.history.is_some() || args.agent_stop {
         Client::connect(&state_dir).context("no running Agent")?
     } else {
@@ -74,10 +74,19 @@ pub fn run(args: Args) -> Result<u32> {
             operation: Operation::Shutdown as i32,
             ..Request::default()
         })?;
+        if args.json {
+            println!("{}", serde_json::json!({"ok":true}));
+        }
         return Ok(0);
     }
     if args.list {
-        for s in client.call(Request::default())?.sessions {
+        let sessions = client.call(Request::default())?.sessions;
+        if args.json {
+            let rows:Vec<_>=sessions.iter().map(|s|serde_json::json!({"id":s.id,"epoch":s.epoch,"initial_cwd":s.cwd,"exited":s.exited,"desktop_attached":s.desktop_attached})).collect();
+            println!("{}", serde_json::json!({"ok":true,"result":rows}));
+            return Ok(0);
+        }
+        for s in sessions {
             println!(
                 "{}\t{}\t{}",
                 s.id,
@@ -93,6 +102,9 @@ pub fn run(args: Args) -> Result<u32> {
             operation: Operation::Close as i32,
             ..Request::default()
         })?;
+        if args.json {
+            println!("{}", serde_json::json!({"ok":true}));
+        }
         return Ok(0);
     }
     if let Some(id) = args.history {
@@ -102,6 +114,13 @@ pub fn run(args: Args) -> Result<u32> {
             history_limit: 200,
             ..Request::default()
         })?;
+        if args.json {
+            println!(
+                "{}",
+                serde_json::json!({"ok":true,"result":{"lines":r.history,"truncated":r.history_truncated}})
+            );
+            return Ok(0);
+        }
         for line in r.history {
             println!("{line}")
         }
@@ -144,6 +163,7 @@ pub fn run(args: Args) -> Result<u32> {
             .collect::<Result<Vec<_>>>()?;
         let created = client.call(Request {
             operation: Operation::Create as i32,
+            shell_integration: args.shell_integration,
             cwd,
             command,
             rows: u32::from(rows),

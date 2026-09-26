@@ -1,0 +1,1932 @@
+//! Deterministic user-triggered Agent service. Passive events have no path to start().
+use crate::{
+    history::{Entry, Projection},
+    model::{self, ContextEntry, Model, Origin, Protocol, RequestBuilder},
+    store::{Scope, Store, UserAccepted},
+};
+use anyhow::{Context, Result, bail, ensure};
+use rig_core::{
+    completion::ToolDefinition,
+    message::{AssistantContent, Message, ToolCall, ToolResultContent, UserContent},
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::{
+    collections::{HashMap, VecDeque},
+    future::Future,
+    pin::Pin,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
+};
+use tokio::sync::watch;
+use uuid::Uuid;
+
+pub type BackendFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Observation {
+    pub kind: String,
+    pub metadata: Value,
+    pub body: String,
+    #[serde(default)]
+    pub model_body: Option<String>,
+    /// Binary data is base64. Text stays UTF-8 and appears once in model context.
+    #[serde(default)]
+    pub binary: bool,
+    pub record_id: Option<String>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ToolOutput {
+    pub value: Value,
+    pub observation: Option<Observation>,
+    pub outcome: Option<String>,
+}
+impl ToolOutput {
+    pub fn value(value: Value) -> Self {
+        Self {
+            value,
+            observation: None,
+            outcome: None,
+        }
+    }
+}
+pub trait TerminalBackend: Send + Sync {
+    fn authorize(&self, write: bool) -> BackendFuture<'_, ()>;
+    fn invoke<'a>(
+        &'a self,
+        context: ToolContext,
+        name: &'a str,
+        args: Value,
+    ) -> BackendFuture<'a, ToolOutput>;
+    fn user_message(&self, _message: &str, _device: &str) {}
+    fn manual_revision(&self, _session: &str) -> Option<u64> {
+        None
+    }
+    fn finished(&self) {}
+    fn is_write(&self, name: &str, _args: &Value) -> bool {
+        !matches!(
+            name,
+            "list_sessions"
+                | "get_terminal_state"
+                | "read_terminal"
+                | "read_record"
+                | "skills_search"
+                | "skills_read"
+                | "get_agent_state"
+        )
+    }
+}
+#[derive(Clone)]
+pub struct ToolContext {
+    pub history_unit_id: String,
+    pub vision: bool,
+    pub scope: Scope,
+    pub run_id: String,
+    pub root_user_message_id: String,
+    pub action_id: String,
+    pub max_read_bytes: usize,
+    pub budget: Arc<Budget>,
+    pub cancel: watch::Receiver<bool>,
+    pub execution_gate: Arc<Mutex<bool>>,
+}
+pub struct Budget {
+    deadline: Instant,
+    calls: AtomicU32,
+    max_calls: u32,
+    tokens: AtomicU64,
+    max_tokens: u64,
+    reads: AtomicU64,
+    pub cancelled: AtomicBool,
+    write_disabled: AtomicBool,
+    active: AtomicU32,
+    tools: AtomicU32,
+    root_scope: Scope,
+}
+impl Budget {
+    pub fn new(seconds: u64, calls: u32, tokens: u64, root_scope: Scope) -> Self {
+        Self {
+            deadline: Instant::now() + Duration::from_secs(seconds),
+            calls: AtomicU32::new(0),
+            max_calls: calls,
+            tokens: AtomicU64::new(0),
+            max_tokens: tokens,
+            reads: AtomicU64::new(0),
+            cancelled: AtomicBool::new(false),
+            write_disabled: AtomicBool::new(false),
+            active: AtomicU32::new(1),
+            tools: AtomicU32::new(0),
+            root_scope,
+        }
+    }
+    pub fn remaining(&self) -> Result<Duration> {
+        ensure!(!self.cancelled.load(Ordering::Acquire), "cancelled");
+        self.deadline
+            .checked_duration_since(Instant::now())
+            .context("run_time_budget")
+    }
+    fn reserve(&self, tokens: u64) -> Result<()> {
+        self.remaining()?;
+        ensure!(
+            self.calls.fetch_add(1, Ordering::AcqRel) < self.max_calls,
+            "model_round_budget"
+        );
+        ensure!(
+            self.tokens
+                .fetch_add(tokens, Ordering::AcqRel)
+                .saturating_add(tokens)
+                <= self.max_tokens,
+            "token_budget"
+        );
+        Ok(())
+    }
+    fn tool(&self) -> Result<()> {
+        self.remaining()?;
+        ensure!(
+            self.tools.fetch_add(1, Ordering::AcqRel) < 256,
+            "tool_call_budget"
+        );
+        Ok(())
+    }
+    pub fn read(&self, bytes: usize) -> Result<()> {
+        ensure!(
+            self.reads
+                .fetch_add(bytes as u64, Ordering::AcqRel)
+                .saturating_add(bytes as u64)
+                <= 8 * 1024 * 1024,
+            "record_read_budget"
+        );
+        Ok(())
+    }
+}
+pub struct RunSnapshot {
+    pub revision: u64,
+    pub provider: Protocol,
+    pub builder: RequestBuilder,
+    pub model: Arc<dyn Model>,
+    pub backend: Arc<dyn TerminalBackend>,
+    pub context_window: u64,
+    pub max_rounds: u32,
+    pub max_seconds: u64,
+    pub allow_write: bool,
+    pub vision: bool,
+}
+struct Mail {
+    accepted: UserAccepted,
+    message: String,
+    origin: Origin,
+}
+struct JobState {
+    state: String,
+    queue: VecDeque<Mail>,
+    live: String,
+    error: Option<String>,
+}
+struct Job {
+    scope: Scope,
+    run: String,
+    root: String,
+    snapshot: Arc<RunSnapshot>,
+    budget: Arc<Budget>,
+    cancel: watch::Sender<bool>,
+    state: Mutex<JobState>,
+    execution_gate: Arc<Mutex<bool>>,
+}
+pub struct AgentHost {
+    pub store: Arc<Store>,
+    jobs: Mutex<HashMap<String, Arc<Job>>>,
+    runtime: tokio::runtime::Handle,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Pending {
+    action_id: String,
+    call_id: String,
+    name: String,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Checkpoint {
+    projection: Projection,
+    pending: Vec<Pending>,
+}
+fn id() -> String {
+    Uuid::now_v7().to_string()
+}
+fn entry(origin: Origin, root: &str, message: Message) -> ContextEntry {
+    ContextEntry {
+        id: id(),
+        unit_id: None,
+        origin,
+        root_user_message_id: Some(root.into()),
+        artifacts: vec![],
+        message,
+    }
+}
+fn running(state: &str) -> bool {
+    matches!(state, "running" | "stopping" | "finishing")
+}
+impl AgentHost {
+    pub fn new(store: Arc<Store>, runtime: tokio::runtime::Handle) -> Arc<Self> {
+        Arc::new(Self {
+            store,
+            jobs: Mutex::new(HashMap::new()),
+            runtime,
+        })
+    }
+    /// Called exclusively by authenticated user RPC. Model role/source fields are never accepted here.
+    #[allow(clippy::too_many_arguments)]
+    pub fn submit(
+        self: &Arc<Self>,
+        scope: Scope,
+        request: &str,
+        message: &str,
+        status: Value,
+        allow_write: bool,
+        device: &str,
+        build: impl FnOnce() -> Result<RunSnapshot>,
+    ) -> Result<Value> {
+        let mut jobs = self.jobs.lock().unwrap();
+        if let Some(job) = jobs.get(&scope.agent) {
+            let mut state = job.state.lock().unwrap();
+            if running(&state.state) {
+                let accepted = self.store.accept_user_checked(
+                    &scope,
+                    request,
+                    message,
+                    status.clone(),
+                    Some(&job.run),
+                    allow_write,
+                    || {
+                        ensure!(state.state == "running", "agent_stopping");
+                        ensure!(state.queue.len() < 32, "agent_mailbox_full");
+                        ensure!(
+                            !allow_write || !job.budget.write_disabled.load(Ordering::Acquire),
+                            "write_authorization_revoked_start_new_run"
+                        );
+                        Ok(())
+                    },
+                )?;
+                if !accepted.duplicate {
+                    if !allow_write {
+                        job.budget.write_disabled.store(true, Ordering::Release);
+                        *job.execution_gate.lock().unwrap() = false;
+                    }
+                    job.snapshot.backend.user_message(message, device);
+                    state.queue.push_back(Mail {
+                        accepted: accepted.clone(),
+                        message: message.into(),
+                        origin: Origin::User,
+                    });
+                }
+                return Ok(
+                    json!({"agent_id":scope.agent,"run_id":accepted.run_id,"root_user_message_id":accepted.root_user_message_id,"state":state.state,"duplicate":accepted.duplicate}),
+                );
+            }
+        }
+        ensure!(
+            jobs.values()
+                .filter(|j| running(&j.state.lock().unwrap().state))
+                .count()
+                < 8,
+            "agent_concurrency_limit"
+        );
+        if jobs.len() >= 128 {
+            jobs.retain(|_, j| running(&j.state.lock().unwrap().state));
+        }
+        let snapshot = Arc::new(build()?);
+        let accepted = self.store.accept_user_authorized(
+            &scope,
+            request,
+            message,
+            status.clone(),
+            None,
+            allow_write,
+        )?;
+        if accepted.duplicate {
+            return Ok(
+                json!({"agent_id":scope.agent,"run_id":accepted.run_id,"duplicate":true,"status":self.store.latest_run(&scope)?}),
+            );
+        }
+        snapshot.backend.user_message(message, device);
+        let budget = Arc::new(Budget::new(
+            snapshot.max_seconds,
+            snapshot.max_rounds,
+            snapshot
+                .context_window
+                .saturating_mul(u64::from(snapshot.max_rounds)),
+            scope.clone(),
+        ));
+        let (cancel, receiver) = watch::channel(false);
+        let job = Arc::new(Job {
+            scope: scope.clone(),
+            run: accepted.run_id.clone(),
+            root: accepted.root_user_message_id.clone(),
+            snapshot,
+            budget,
+            cancel,
+            execution_gate: Arc::new(Mutex::new(true)),
+            state: Mutex::new(JobState {
+                state: "running".into(),
+                queue: VecDeque::from([Mail {
+                    accepted: accepted.clone(),
+                    message: message.into(),
+                    origin: Origin::User,
+                }]),
+                live: String::new(),
+                error: None,
+            }),
+        });
+        jobs.insert(scope.agent.clone(), job.clone());
+        drop(jobs);
+        let host = self.clone();
+        self.runtime.spawn(async move {
+            host.run(job, receiver).await;
+        });
+        Ok(
+            json!({"agent_id":scope.agent,"run_id":accepted.run_id,"root_user_message_id":accepted.root_user_message_id,"state":"running","duplicate":false}),
+        )
+    }
+    pub fn delegate(
+        self: &Arc<Self>,
+        context: &ToolContext,
+        scope: Scope,
+        request: &str,
+        message: &str,
+        status: Value,
+        build: impl FnOnce() -> Result<RunSnapshot>,
+    ) -> Result<Value> {
+        context.budget.remaining()?;
+        ensure!(!*context.cancel.borrow(), "cancelled");
+        ensure!(
+            scope.owner == context.scope.owner && scope.desktop == context.scope.desktop,
+            "delegation_scope_mismatch"
+        );
+        let mut jobs = self.jobs.lock().unwrap();
+        if let Some(job) = jobs.get(&scope.agent) {
+            let mut state = job.state.lock().unwrap();
+            if running(&state.state) {
+                ensure!(
+                    state.state == "running"
+                        && job.root == context.root_user_message_id
+                        && Arc::ptr_eq(&job.budget, &context.budget),
+                    "session_agent_busy"
+                );
+                ensure!(state.queue.len() < 32, "agent_mailbox_full");
+                let accepted = self.store.delegate(
+                    &scope,
+                    &context.root_user_message_id,
+                    request,
+                    message,
+                    status,
+                    Some(&job.run),
+                )?;
+                if !accepted.duplicate {
+                    state.queue.push_back(Mail {
+                        accepted: accepted.clone(),
+                        message: message.into(),
+                        origin: Origin::Delegation,
+                    });
+                }
+                return Ok(
+                    json!({"agent_id":scope.agent,"task_id":accepted.run_id,"duplicate":accepted.duplicate,"queued":true}),
+                );
+            }
+        }
+        ensure!(
+            jobs.values()
+                .filter(|j| running(&j.state.lock().unwrap().state))
+                .count()
+                < 8,
+            "agent_concurrency_limit"
+        );
+        let snapshot = Arc::new(build()?);
+        let accepted = self.store.delegate(
+            &scope,
+            &context.root_user_message_id,
+            request,
+            message,
+            status.clone(),
+            None,
+        )?;
+        if accepted.duplicate {
+            return Ok(json!({"agent_id":scope.agent,"task_id":accepted.run_id,"duplicate":true}));
+        }
+        context.budget.active.fetch_add(1, Ordering::AcqRel);
+        let (cancel, receiver) = watch::channel(false);
+        let job = Arc::new(Job {
+            scope: scope.clone(),
+            run: accepted.run_id.clone(),
+            root: context.root_user_message_id.clone(),
+            snapshot,
+            budget: context.budget.clone(),
+            cancel,
+            execution_gate: Arc::new(Mutex::new(true)),
+            state: Mutex::new(JobState {
+                state: "running".into(),
+                queue: VecDeque::from([Mail {
+                    accepted: accepted.clone(),
+                    message: message.into(),
+                    origin: Origin::Delegation,
+                }]),
+                live: String::new(),
+                error: None,
+            }),
+        });
+        jobs.insert(scope.agent.clone(), job.clone());
+        drop(jobs);
+        let host = self.clone();
+        self.runtime.spawn(async move {
+            host.run(job, receiver).await;
+        });
+        Ok(
+            json!({"agent_id":scope.agent,"task_id":accepted.run_id,"root_user_message_id":context.root_user_message_id,"state":"running"}),
+        )
+    }
+    pub fn state(&self, scope: &Scope) -> Result<Value> {
+        if let Some(job) = self.jobs.lock().unwrap().get(&scope.agent) {
+            ensure!(job.scope == *scope, "agent_scope_mismatch");
+            let state = job.state.lock().unwrap();
+            return Ok(
+                json!({"agent_id":scope.agent,"run_id":job.run,"root_user_message_id":job.root,"state":state.state,"live_text":state.live,"error":state.error,"queued_messages":state.queue.len(),"config_revision":job.snapshot.revision}),
+            );
+        }
+        let last = self.store.latest_run(scope)?;
+        Ok(
+            json!({"agent_id":scope.agent,"state":last.as_ref().and_then(|r|r["state"].as_str()).unwrap_or("idle"),"last_run":last}),
+        )
+    }
+    pub fn cancel(&self, scope: &Scope) -> Result<()> {
+        let jobs = self.jobs.lock().unwrap();
+        for job in jobs.values() {
+            let root_cancel = job.budget.root_scope.agent == scope.agent;
+            if job.scope == *scope
+                || (root_cancel
+                    && job.scope.owner == scope.owner
+                    && job.scope.desktop == scope.desktop)
+            {
+                if root_cancel {
+                    job.budget.cancelled.store(true, Ordering::Release);
+                }
+                *job.execution_gate.lock().unwrap() = false;
+                let _ = job.cancel.send(true);
+                let mut state = job.state.lock().unwrap();
+                if running(&state.state) {
+                    state.state = "stopping".into();
+                }
+            }
+        }
+        Ok(())
+    }
+    pub fn cancel_all(&self) {
+        for job in self.jobs.lock().unwrap().values() {
+            *job.execution_gate.lock().unwrap() = false;
+            job.budget.cancelled.store(true, Ordering::Release);
+            let _ = job.cancel.send(true);
+        }
+    }
+    pub fn preempt(&self, owner: &str, session: &str, revision: u64) {
+        for job in self.jobs.lock().unwrap().values() {
+            if job
+                .snapshot
+                .backend
+                .manual_revision(session)
+                .is_some_and(|old| old != revision)
+                && job.scope.owner == owner
+                && (job.scope.session.as_deref() == Some(session) || job.scope.session.is_none())
+            {
+                *job.execution_gate.lock().unwrap() = false;
+                job.state.lock().unwrap().error = Some("manual_input_preempted_agent".into());
+                let _ = job.cancel.send(true);
+            }
+        }
+    }
+    /// Observation/report persistence deliberately does not call submit or spawn a model task.
+    pub fn status(&self, scope: &Scope, status: Value) -> Result<()> {
+        self.store.append_status(scope, status)
+    }
+    async fn run(self: Arc<Self>, job: Arc<Job>, cancel: watch::Receiver<bool>) {
+        let observed = job.clone();
+        let mut stopped = cancel.clone();
+        let watcher = tokio::spawn(async move {
+            loop {
+                tokio::select! {biased;_=stopped.changed()=>break,_=tokio::time::sleep(Duration::from_secs(1))=>{
+                    if !running(&observed.state.lock().unwrap().state){break;}
+                    if let Err(error)=observed.snapshot.backend.authorize(false).await{*observed.execution_gate.lock().unwrap()=false;observed.state.lock().unwrap().error=Some(error.to_string());let _=observed.cancel.send(true);break;}
+                }}
+            }
+        });
+        let result = self.run_loop(&job, cancel.clone()).await;
+        watcher.abort();
+        let cancelled = *cancel.borrow() || job.budget.cancelled.load(Ordering::Acquire);
+        let state = if cancelled {
+            "cancelled"
+        } else if result.is_ok() {
+            "completed"
+        } else {
+            "paused"
+        };
+        let error = result.err().map(|e| e.to_string());
+        // Persist outcome before making the agent eligible for another root run.
+        let persisted = self.store.finish_run(&job.scope, &job.run, state);
+        *job.execution_gate.lock().unwrap() = false;
+        job.snapshot.backend.finished();
+        let mut status = job.state.lock().unwrap();
+        status.state = state.into();
+        status.error = status
+            .error
+            .take()
+            .or(error)
+            .or_else(|| persisted.err().map(|e| e.to_string()));
+        status.live.clear();
+        if job.scope.agent != job.budget.root_scope.agent {
+            let _=self.store.append(&job.budget.root_scope,"agent_report",Some(&job.root),json!({"task_id":job.run,"agent_id":job.scope.agent,"session_id":job.scope.session,"state":status.state,"error":status.error}));
+        }
+        if job.budget.active.fetch_sub(1, Ordering::AcqRel) == 1 {
+            job.budget.cancelled.store(true, Ordering::Release);
+        }
+    }
+    fn restore(&self, job: &Job) -> Result<(Vec<ContextEntry>, Projection)> {
+        let mut projection = Projection::default();
+        let mut pending = Vec::new();
+        if let Some((_, _, value)) = self.store.projection(&job.scope)? {
+            let saved: Checkpoint = serde_json::from_value(value)?;
+            projection = saved.projection;
+            pending = saved.pending;
+            ensure!(
+                projection.schema_version == 1,
+                "unsupported_projection_version"
+            );
+        }
+        let generation = self.store.generation(&job.scope)?;
+        if generation != projection.history_generation {
+            projection.entries.clear();
+            projection.archive_roots.clear();
+            projection.covered_event_seq = 0;
+            projection.history_generation = generation;
+        }
+        if projection.entries.is_empty() && projection.covered_event_seq == 0 {
+            let recent = self.store.recent_events(&job.scope)?;
+            if let Some(first) = recent.first()
+                && first.sequence > 1
+            {
+                let index = self
+                    .store
+                    .history_index(&job.scope, &job.run, first.sequence - 1)?;
+                projection.covered_event_seq = first.sequence - 1;
+                let mut reference = entry(
+                    Origin::AgentReport,
+                    &job.root,
+                    Message::user(format!(
+                        "Earlier retained history is available through read_record UUID {} (paged index).",
+                        index.id
+                    )),
+                );
+                reference.artifacts = vec![index.id.clone()];
+                projection.archive_roots.push(index.id);
+                projection
+                    .entries
+                    .push(Entry::capture(&reference, &job.snapshot.provider)?);
+            }
+        }
+        let mut entries = projection
+            .entries
+            .iter()
+            .map(|e| {
+                e.expand(&job.snapshot.provider, |uuid| {
+                    use base64::Engine;
+                    let (_, bytes) = self.store.record_bytes(&job.scope, uuid)?;
+                    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        // A restart only restores facts; unresolved calls are closed without replaying a tool.
+        if !pending.is_empty() {
+            for saved in pending {
+                if let Some(call) = find_call(&entries, &saved.call_id) {
+                    let recovered = self.store.find_record(&job.scope, &saved.action_id)?;
+                    let mut value = json!({"action_id":saved.action_id,"outcome":"unknown_after_restart","replayed":false});
+                    let mut result = tool_result(&job.root, &call, value.clone());
+                    if let Some(record) = recovered {
+                        let (_, bytes) = self.store.record_bytes(&job.scope, &record.id)?;
+                        value["record_id"] = json!(record.id);
+                        value["analysis_pending"] = json!(true);
+                        value["body"] = if record.metadata["binary"] == true {
+                            record.metadata["text"].clone()
+                        } else {
+                            json!(
+                                String::from_utf8_lossy(&bytes)
+                                    .chars()
+                                    .take(12000)
+                                    .collect::<String>()
+                            )
+                        };
+                        result = tool_result(&job.root, &call, value);
+                        result.artifacts = vec![record.id];
+                        result.unit_id = record.metadata["history_unit_id"]
+                            .as_str()
+                            .map(str::to_owned);
+                    }
+                    entries.push(result);
+                }
+            }
+            entries.push(entry(Origin::AgentReport,&job.root,Message::user("Application recovery: the previous run stopped. Pending actions were not replayed; observe the terminal before acting.")));
+        }
+        projection.retained_facts.clear();
+        Ok((entries, projection))
+    }
+    fn save(
+        &self,
+        job: &Job,
+        entries: &[ContextEntry],
+        projection: &mut Projection,
+        pending: &[Pending],
+    ) -> Result<()> {
+        projection.generation += 1;
+        projection.entries = entries
+            .iter()
+            .map(|e| Entry::capture(e, &job.snapshot.provider))
+            .collect::<Result<_>>()?;
+        if pending.is_empty() {
+            projection.validate()?;
+        }
+        self.store.checkpoint(
+            &job.scope,
+            projection.generation as i64,
+            projection.covered_event_seq,
+            &serde_json::to_value(Checkpoint {
+                projection: projection.clone(),
+                pending: pending.to_vec(),
+            })?,
+        )
+    }
+    fn drain_mail(
+        &self,
+        job: &Job,
+        entries: &mut Vec<ContextEntry>,
+        projection: &mut Projection,
+    ) -> Result<bool> {
+        let mails = job
+            .state
+            .lock()
+            .unwrap()
+            .queue
+            .drain(..)
+            .collect::<Vec<_>>();
+        let had = !mails.is_empty();
+        let origins = mails
+            .iter()
+            .map(|m| (m.accepted.user_message_id.clone(), m.origin.clone()))
+            .collect::<HashMap<_, _>>();
+        for mail in &mails {
+            projection.retained_facts.push(mail.message.clone());
+        }
+        let generation = self.store.generation(&job.scope)?;
+        if generation != projection.history_generation {
+            let ids = entries
+                .iter()
+                .map(|e| e.unit_id.clone().unwrap_or_else(|| e.id.clone()))
+                .collect::<Vec<_>>();
+            let live = self.store.live_units(&job.scope, &ids)?;
+            entries.retain(|e| live.contains(e.unit_id.as_ref().unwrap_or(&e.id)));
+            projection.history_generation = generation;
+            entries.push(entry(Origin::AgentReport,&job.root,Message::user("Application history_pruned: older history was removed. Missing original UUIDs must be reported as expired.")));
+        }
+        let mut known = entries
+            .iter()
+            .map(|e| e.id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        for _ in 0..8 {
+            let events = self
+                .store
+                .events_after(&job.scope, projection.covered_event_seq)?;
+            let count = events.len();
+            for event in events {
+                projection.covered_event_seq = event.sequence;
+                if known.contains(&event.id) {
+                    continue;
+                }
+                let (origin, message) = match event.kind.as_str() {
+                    "user" => (
+                        Origin::User,
+                        Message::user(event.value["message"].as_str().unwrap_or("")),
+                    ),
+                    "pty_status" | "pty_status_snapshot" => (
+                        Origin::PtyStatus,
+                        Message::user(format!("Untrusted PTY status observation: {}", event.value)),
+                    ),
+                    "agent_report" => {
+                        let delegated = origins
+                            .get(&event.id)
+                            .is_some_and(|o| matches!(o, Origin::Delegation))
+                            || event.value["source"] == "delegated_task";
+                        (
+                            if delegated {
+                                Origin::Delegation
+                            } else {
+                                Origin::AgentReport
+                            },
+                            Message::user(format!(
+                                "{}: {}",
+                                if delegated {
+                                    "Task delegated within the authenticated user run"
+                                } else {
+                                    "Passive agent report (not a new instruction)"
+                                },
+                                event.value
+                            )),
+                        )
+                    }
+                    "assistant" => (
+                        Origin::Assistant,
+                        Message::assistant(event.value["text"].as_str().unwrap_or("")),
+                    ),
+                    "interaction" => {
+                        let record = event.value["record_id"].as_str();
+                        if record.is_some_and(|id| {
+                            entries.iter().any(|e| e.artifacts.iter().any(|a| a == id))
+                        }) {
+                            continue;
+                        }
+                        (
+                            Origin::Tool,
+                            Message::user(format!(
+                                "Archived interaction reference: {}",
+                                event.value
+                            )),
+                        )
+                    }
+                    _ => continue,
+                };
+                let mut e = entry(origin, &job.root, message);
+                e.id = event.id.clone();
+                e.root_user_message_id = event.root_user_message_id;
+                known.insert(event.id);
+                entries.push(e);
+            }
+            if count < 128 {
+                break;
+            }
+        }
+        for mail in &mails {
+            if !entries
+                .iter()
+                .any(|e| e.id == mail.accepted.user_message_id)
+            {
+                let mut e = entry(mail.origin.clone(), &job.root, Message::user(&mail.message));
+                e.id = mail.accepted.user_message_id.clone();
+                entries.push(e);
+            }
+        }
+        // Semantic status bursts remain in the event store; model context keeps a bounded tail.
+        let passive = entries
+            .iter()
+            .filter(|e| matches!(e.origin, Origin::PtyStatus) && e.root_user_message_id.is_none())
+            .map(|e| e.id.clone())
+            .collect::<Vec<_>>();
+        if passive.len() > 8 {
+            let remove = passive[..passive.len() - 8]
+                .iter()
+                .collect::<std::collections::HashSet<_>>();
+            entries.retain(|e| !remove.contains(&e.id));
+        }
+        ensure!(
+            projection
+                .retained_facts
+                .iter()
+                .map(String::len)
+                .sum::<usize>()
+                < job.snapshot.context_window as usize,
+            "user_constraints_exceed_context"
+        );
+        Ok(had)
+    }
+    async fn request(
+        &self,
+        job: &Job,
+        entries: &[ContextEntry],
+        analysis: Option<&str>,
+        cancel: watch::Receiver<bool>,
+        generation: i64,
+    ) -> Result<rig_core::streaming::StreamingCompletionResponse> {
+        job.snapshot.backend.authorize(false).await?;
+        let units = entries
+            .iter()
+            .map(|e| e.unit_id.clone().unwrap_or_else(|| e.id.clone()))
+            .collect::<Vec<_>>();
+        self.store
+            .pin_context(&job.scope, &job.run, generation, &units)?;
+        let request = job.snapshot.builder.build(entries, analysis)?;
+        let bytes = request_size(&request)? as u64;
+        ensure!(
+            bytes + job.snapshot.builder.settings.max_tokens < job.snapshot.context_window,
+            "context_budget"
+        );
+        job.budget
+            .reserve(bytes + job.snapshot.builder.settings.max_tokens)?;
+        job.state.lock().unwrap().live.clear();
+        let response = model::collect(
+            job.snapshot.model.as_ref(),
+            request,
+            cancel,
+            job.budget.remaining()?,
+            |text| {
+                let mut state = job.state.lock().unwrap();
+                if state.live.len() + text.len() <= 16000 {
+                    state.live.push_str(text);
+                }
+            },
+        )
+        .await?;
+        self.store.model_usage(
+            &job.scope,
+            &job.run,
+            &job.root,
+            if analysis.is_some() {
+                "analysis"
+            } else {
+                "decision_or_compression"
+            },
+            serde_json::to_value(response.response.as_ref().map(|r| &r.usage))?,
+        )?;
+        Ok(response)
+    }
+    async fn run_loop(&self, job: &Arc<Job>, cancel: watch::Receiver<bool>) -> Result<()> {
+        let (mut entries, mut projection) = self.restore(job)?;
+        let gateway = crate::builtin::Gateway::open(
+            job.snapshot.backend.clone(),
+            &job.snapshot.builder.tools,
+        )
+        .await?;
+        let mut requires_observation = !self.store.pending_actions(&job.scope)?.is_empty();
+        self.drain_mail(job, &mut entries, &mut projection)?;
+        // Only this new authenticated user run may resume an interrupted analysis barrier.
+        for _ in 0..8 {
+            let pending = entries.iter().enumerate().find_map(|(index, e)| {
+                let Message::User { content } = &e.message else {
+                    return None;
+                };
+                content.iter().find_map(|part| {
+                    let UserContent::ToolResult(result) = part else {
+                        return None;
+                    };
+                    result.content.iter().find_map(|part| {
+                        let ToolResultContent::Text(text) = part else {
+                            return None;
+                        };
+                        let value: Value = serde_json::from_str(&text.text).ok()?;
+                        if value["analysis_pending"] != true {
+                            return None;
+                        }
+                        Some((
+                            index,
+                            value["record_id"].as_str()?.to_owned(),
+                            result.call.as_str().to_owned(),
+                        ))
+                    })
+                })
+            });
+            let Some((index, record, call_id)) = pending else {
+                break;
+            };
+            self.store.pin_record(&job.scope, &job.run, &record)?;
+            let call = find_call(&entries, &call_id).context("recovery_tool_call_missing")?;
+            self.analyze(
+                job,
+                &mut entries,
+                &mut projection,
+                &record,
+                index,
+                &call,
+                cancel.clone(),
+            )
+            .await?;
+        }
+        loop {
+            ensure!(!*cancel.borrow(), "cancelled");
+            self.drain_mail(job, &mut entries, &mut projection)?;
+            self.compact(job, &mut entries, &mut projection, cancel.clone())
+                .await?;
+            self.save(job, &entries, &mut projection, &[])?;
+            let response = self
+                .request(
+                    job,
+                    &entries,
+                    None,
+                    cancel.clone(),
+                    projection.history_generation,
+                )
+                .await?;
+            let calls = response
+                .choice
+                .iter()
+                .filter_map(|c| {
+                    if let AssistantContent::ToolCall(call) = c {
+                        Some(call.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            let text = response
+                .choice
+                .iter()
+                .filter_map(|c| {
+                    if let AssistantContent::Text(t) = c {
+                        Some(t.text.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            entries.push(entry(
+                Origin::Assistant,
+                &job.root,
+                Message::Assistant {
+                    id: response.message_id,
+                    content: response.choice,
+                },
+            ));
+            if calls.is_empty() {
+                self.store.append_identified(
+                    &job.scope,
+                    "assistant",
+                    &job.root,
+                    &entries.last().unwrap().id,
+                    json!({"text":text,"usage":response.response.map(|r|r.usage)}),
+                    Some(&job.run),
+                )?;
+                self.save(job, &entries, &mut projection, &[])?;
+                let mut state = job.state.lock().unwrap();
+                if state.queue.is_empty() {
+                    state.state = "finishing".into();
+                    return Ok(());
+                }
+                drop(state);
+                continue;
+            }
+            let pending = calls
+                .iter()
+                .map(|c| Pending {
+                    action_id: id(),
+                    call_id: c.id.as_str().into(),
+                    name: c.function.name.clone(),
+                })
+                .collect::<Vec<_>>();
+            let unit = entries.last().unwrap().id.clone();
+            let unit_start = entries.len() - 1;
+            self.store.append_identified(&job.scope,"interaction",&job.root,&unit,json!({"tools":pending.iter().map(|p|json!({"name":p.name,"action_id":p.action_id})).collect::<Vec<_>>()}),Some(&job.run))?;
+            self.save(job, &entries, &mut projection, &pending)?;
+            let mut observation = None;
+            for (call, action) in calls.iter().zip(&pending) {
+                ensure!(!*cancel.borrow(), "cancelled");
+                if observation.is_some() {
+                    entries.push(tool_result(&job.root,call,json!({"error":"analysis_barrier","executed":false,"instruction":"Request this action again after the current observation is analyzed."})));
+                    continue;
+                }
+                let name = &call.function.name;
+                if !job.snapshot.builder.tools.iter().any(|t| &t.name == name) {
+                    entries.push(tool_result(
+                        &job.root,
+                        call,
+                        json!({"error":"tool_not_available"}),
+                    ));
+                    continue;
+                }
+                let write = job
+                    .snapshot
+                    .backend
+                    .is_write(name, &call.function.arguments);
+                let output = async {
+                    job.budget.tool()?;
+                    ensure!(
+                        !write || (job.snapshot.allow_write && !job.budget.write_disabled.load(Ordering::Acquire)),
+                        "terminal_write_not_authorized"
+                    );
+                    let definition=job.snapshot.builder.tools.iter().find(|t|&t.name==name).context("tool_not_available")?;
+                    let validator=jsonschema::validator_for(&definition.parameters)?;
+                    ensure!(validator.is_valid(&call.function.arguments),"invalid_tool_arguments");
+                    ensure!(!write || !requires_observation,"observe_terminal_after_uncertain_action");
+                    job.snapshot.backend.authorize(write).await?;
+                    let call_record=self.store.archive(&job.scope,&job.run,&format!("{}/call",action.action_id),"associated_text",json!({"history_unit_id":unit,"source":"tool_call"}),&serde_json::to_vec(&json!({"name":name,"arguments":call.function.arguments}))?)?;
+                    self.store.unit_update(&job.scope,&unit,json!({"call_record_id":call_record.id,"name":name}))?;
+                    if write {
+                        let a = self.store.prepare_action(
+                            &job.scope,
+                            &job.run,
+                            &action.action_id,
+                            &json!({"name":name,"arguments":call.function.arguments}),
+                        )?;
+                        if a.duplicate {
+                            return Ok(ToolOutput::value(serde_json::to_value(a)?));
+                        }
+                    }
+                    let used =
+                        serde_json::to_vec(&job.snapshot.builder.build(&entries, None)?)?.len();
+                    let available = (job.snapshot.context_window as usize).saturating_sub(
+                        used + job.snapshot.builder.settings.max_tokens as usize + 4096,
+                    );
+                    ensure!(available >= 1024, "observation_context_budget");
+                    let context = ToolContext {
+                        history_unit_id: unit.clone(),
+                        vision:job.snapshot.vision,
+                        scope: job.scope.clone(),
+                        run_id: job.run.clone(),
+                        root_user_message_id: job.root.clone(),
+                        action_id: action.action_id.clone(),
+                        max_read_bytes: (available / 12).clamp(4,64 * 1024),
+                        budget: job.budget.clone(),
+                        cancel: cancel.clone(),
+                        execution_gate:job.execution_gate.clone(),
+                    };
+                    let mut tool_cancel=cancel.clone();
+                    let result = tokio::select! {
+                        biased;
+                        _=tool_cancel.wait_for(|v|*v)=>bail!("cancelled"),
+                        result=tokio::time::timeout(job.budget.remaining()?,gateway.call(context,name,call.function.arguments.clone()))=>result.context("tool_timeout_outcome_unknown")??,
+                    };
+                    if write {
+                        self.store.action_receipt(
+                            &job.scope,
+                            &action.action_id,
+                            result.outcome.as_deref().unwrap_or("accepted"),
+                        )?;
+                    }
+                    Ok(result)
+                }
+                .await;
+                match output {
+                    Ok(mut output) => {
+                        if output.observation.is_none() {
+                            let record = self.store.archive(
+                                &job.scope,
+                                &job.run,
+                                &format!("{}/result", action.action_id),
+                                "associated_text",
+                                json!({"history_unit_id":unit,"source":"tool_result"}),
+                                &serde_json::to_vec(&output.value)?,
+                            )?;
+                            self.store.unit_update(
+                                &job.scope,
+                                &unit,
+                                json!({"result_record_id":record.id,"name":name}),
+                            )?;
+                        }
+                        let mut result = tool_result(&job.root, call, output.value.clone());
+                        if let Some(mut raw) = output.observation.take() {
+                            raw.metadata["history_unit_id"] = json!(unit);
+                            use base64::Engine;
+                            let mut images = Vec::new();
+                            if raw.kind == "mcp_result" {
+                                let mut payload: Value = serde_json::from_str(&raw.body)?;
+                                if let Some(content) = payload["content"].as_array_mut() {
+                                    ensure!(
+                                        content.iter().filter(|p| p["type"] == "image").count()
+                                            <= 8,
+                                        "mcp_image_limit"
+                                    );
+                                    for (index, item) in content.iter_mut().enumerate() {
+                                        if item["type"] != "image" {
+                                            continue;
+                                        }
+                                        let media = match item["mimeType"].as_str() {
+                                            Some("image/png") => {
+                                                rig_core::message::ImageMediaType::PNG
+                                            }
+                                            Some("image/jpeg") => {
+                                                rig_core::message::ImageMediaType::JPEG
+                                            }
+                                            Some("image/webp") => {
+                                                rig_core::message::ImageMediaType::WEBP
+                                            }
+                                            Some("image/gif") => {
+                                                rig_core::message::ImageMediaType::GIF
+                                            }
+                                            _ => bail!("unsupported_mcp_image_type"),
+                                        };
+                                        let data = item["data"]
+                                            .as_str()
+                                            .context("mcp_image_data_required")?
+                                            .to_owned();
+                                        let bytes = base64::engine::general_purpose::STANDARD
+                                            .decode(&data)?;
+                                        job.budget.read(bytes.len())?;
+                                        let picture=self.store.archive(&job.scope,&job.run,&format!("{}/image/{index}",action.action_id),"image",json!({"history_unit_id":unit,"binary":true,"mime_type":item["mimeType"],"source":"user_mcp"}),&bytes)?;
+                                        *item = json!({"type":"image_reference","record_id":picture.id,"vision_sent":job.snapshot.vision});
+                                        if job.snapshot.vision {
+                                            images.push((picture.id, data, media));
+                                        }
+                                    }
+                                }
+                                raw.body = payload.to_string();
+                                raw.model_body = Some(raw.body.chars().take(12000).collect());
+                            }
+                            let bytes = if raw.binary {
+                                base64::engine::general_purpose::STANDARD.decode(&raw.body)?
+                            } else {
+                                raw.body.as_bytes().to_vec()
+                            };
+                            job.budget.read(bytes.len())?;
+                            let record = if let Some(record_id) = raw.record_id {
+                                self.store
+                                    .record(&job.scope, &record_id, "anchors", 0)?
+                                    .record
+                            } else {
+                                self.store.archive(
+                                    &job.scope,
+                                    &job.run,
+                                    &action.action_id,
+                                    &raw.kind,
+                                    raw.metadata.clone(),
+                                    &bytes,
+                                )?
+                            };
+                            output.value["record_id"] = json!(record.id);
+                            output.value["analysis_pending"] = json!(true);
+                            output.value["vision_sent"] = json!(raw.binary && job.snapshot.vision);
+                            output.value["body"] = if raw.binary {
+                                raw.metadata.get("text").cloned().unwrap_or(Value::Null)
+                            } else {
+                                json!(raw.model_body.as_deref().unwrap_or(&raw.body))
+                            };
+                            result = tool_result(&job.root, call, output.value);
+                            result.artifacts = vec![record.id.clone()];
+                            let index = entries.len();
+                            entries.push(result);
+                            if raw.binary && job.snapshot.vision {
+                                images.push((
+                                    record.id.clone(),
+                                    raw.body,
+                                    match raw.metadata["mime_type"].as_str() {
+                                        Some("image/jpeg") => {
+                                            rig_core::message::ImageMediaType::JPEG
+                                        }
+                                        Some("image/webp") => {
+                                            rig_core::message::ImageMediaType::WEBP
+                                        }
+                                        Some("image/gif") => rig_core::message::ImageMediaType::GIF,
+                                        _ => rig_core::message::ImageMediaType::PNG,
+                                    },
+                                ));
+                            }
+                            for (image_id, data, media) in images {
+                                let mut picture = entry(
+                                    Origin::Tool,
+                                    &job.root,
+                                    Message::User {
+                                        content: vec![UserContent::image_base64(
+                                            data,
+                                            Some(media),
+                                            None,
+                                        )],
+                                    },
+                                );
+                                picture.artifacts = vec![image_id];
+                                picture.unit_id = Some(unit.clone());
+                                entries.push(picture);
+                            }
+                            observation = Some((record.id, index, call.clone()));
+                        } else {
+                            entries.push(result);
+                        }
+                    }
+                    Err(error) => {
+                        self.store.unit_update(&job.scope,&unit,json!({"action_id":action.action_id,"name":name,"error":error.to_string()}))?;
+                        if write {
+                            requires_observation = true;
+                            let _ =
+                                self.store
+                                    .action_receipt(&job.scope, &action.action_id, "unknown");
+                        }
+                        entries.push(tool_result(
+                            &job.root,
+                            call,
+                            json!({"error":error.to_string(),"action_id":action.action_id}),
+                        ));
+                    }
+                }
+            }
+            for e in &mut entries[unit_start..] {
+                e.unit_id = Some(unit.clone());
+            }
+            self.store.unit_update(&job.scope,&unit,json!({"record_id":observation.as_ref().map(|v|&v.0),"tool_count":calls.len(),"state":if observation.is_some(){"analyzing"}else{"finished"}}))?;
+            self.save(job, &entries, &mut projection, &[])?;
+            if let Some((record, index, call)) = observation {
+                self.analyze(
+                    job,
+                    &mut entries,
+                    &mut projection,
+                    &record,
+                    index,
+                    &call,
+                    cancel.clone(),
+                )
+                .await?;
+                requires_observation = false;
+            }
+        }
+    }
+    #[allow(clippy::too_many_arguments)] // One observation barrier binds its call, projection and cancellation snapshot.
+    async fn analyze(
+        &self,
+        job: &Job,
+        entries: &mut Vec<ContextEntry>,
+        projection: &mut Projection,
+        record: &str,
+        index: usize,
+        call: &ToolCall,
+        cancel: watch::Receiver<bool>,
+    ) -> Result<()> {
+        let unit = entries[index]
+            .unit_id
+            .clone()
+            .unwrap_or_else(|| entries[index].id.clone());
+        let analysis_start = entries.len();
+        let full_body = match &entries[index].message {
+            Message::User { content } => !content.iter().any(|part| match part {
+                UserContent::ToolResult(result) => result.content.iter().any(|part| match part {
+                    ToolResultContent::Text(text) => serde_json::from_str::<Value>(&text.text)
+                        .is_ok_and(|value| value["partial"] == true),
+                    _ => false,
+                }),
+                _ => false,
+            }),
+            _ => false,
+        };
+        for _ in 0..2 {
+            let request = job.snapshot.builder.build(entries, Some(record))?;
+            let instruction = request.chat_history.last().unwrap().clone();
+            let response = self
+                .request(
+                    job,
+                    entries,
+                    Some(record),
+                    cancel.clone(),
+                    projection.history_generation,
+                )
+                .await?;
+            entries.push(entry(Origin::ObservationAnalysis, &job.root, instruction));
+            let text = response
+                .choice
+                .iter()
+                .filter_map(|c| {
+                    if let AssistantContent::Text(t) = c {
+                        Some(t.text.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            let calls = response
+                .choice
+                .iter()
+                .filter_map(|c| {
+                    if let AssistantContent::ToolCall(c) = c {
+                        Some(c.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            entries.push(entry(
+                Origin::ObservationAnalysis,
+                &job.root,
+                Message::Assistant {
+                    id: response.message_id,
+                    content: response.choice,
+                },
+            ));
+            if !calls.is_empty() {
+                for c in calls {
+                    entries.push(tool_result(
+                        &job.root,
+                        &c,
+                        json!({"error":"analysis_stage_tools_forbidden","executed":false}),
+                    ));
+                }
+                continue;
+            }
+            let analysis = serde_json::from_str::<Value>(
+                text.trim()
+                    .trim_start_matches("```json")
+                    .trim_end_matches("```")
+                    .trim(),
+            )
+            .map_err(|_| anyhow::anyhow!("invalid_analysis_json"))
+            .and_then(|digest| {
+                self.store
+                    .analyze_observation(&job.scope, record, digest, full_body)
+            });
+            let summary = match analysis {
+                Ok(summary) => summary,
+                Err(error) => {
+                    entries.push(entry(Origin::ObservationAnalysis,&job.root,Message::user(format!("Application analysis rejected: {error}. Return only the requested JSON. Every quote and fact evidence must be copied verbatim from record body text, never metadata or its JSON representation. Omit unsupported facts instead of inventing evidence; tui_lines must be an array of exact full body strings (empty if no TUI). Host supplies status and anchors."))));
+                    continue;
+                }
+            };
+            {
+                let mut stored = self.store.record(&job.scope, record, "summary", 0)?.record;
+                stored.summary = Some(summary);
+                let stable_id = entries[index].id.clone();
+                entries[index] = tool_result(
+                    &job.root,
+                    call,
+                    json!({"record_id":record,"digest":stored.summary}),
+                );
+                entries[index].id = stable_id;
+                entries[index].unit_id = Some(unit.clone());
+                for e in &mut entries[analysis_start..] {
+                    e.unit_id = Some(unit.clone());
+                }
+                entries[index].artifacts = vec![record.into()];
+                // Remove only the expanded screenshot associated with this observation.
+                entries.retain(|e| !((e.artifacts==vec![record.to_owned()] || e.unit_id.as_ref()==Some(&unit)) && matches!(&e.message,Message::User{content} if content.iter().any(|c|matches!(c,UserContent::Image(_))))));
+                self.store.append(
+                    &job.scope,
+                    "analysis",
+                    Some(&job.root),
+                    json!({"record_id":record,"summary":stored.summary}),
+                )?;
+                let preview = stored
+                    .summary
+                    .as_ref()
+                    .and_then(|v| v["summary"].as_str())
+                    .unwrap_or("")
+                    .chars()
+                    .take(2000)
+                    .collect::<String>();
+                self.store.unit_update(
+                    &job.scope,
+                    &unit,
+                    json!({"record_id":record,"state":"analyzed","summary":preview}),
+                )?;
+                self.save(job, entries, projection, &[])?;
+                return Ok(());
+            }
+        }
+        bail!("observation_analysis_pending")
+    }
+    async fn compact(
+        &self,
+        job: &Job,
+        entries: &mut Vec<ContextEntry>,
+        projection: &mut Projection,
+        cancel: watch::Receiver<bool>,
+    ) -> Result<()> {
+        let limit = (job.snapshot.context_window as usize)
+            .saturating_sub(job.snapshot.builder.settings.max_tokens as usize + 8192);
+        if request_size(&job.snapshot.builder.build(entries, None)?)? < limit {
+            return Ok(());
+        }
+        // Deterministic removal of old optional quotations; anchors and current task stay intact.
+        for e in entries.iter_mut() {
+            if let Message::User { content } = &mut e.message {
+                for c in content {
+                    if let UserContent::ToolResult(r) = c {
+                        for part in &mut r.content {
+                            if let ToolResultContent::Text(t) = part
+                                && let Ok(mut v) = serde_json::from_str::<Value>(&t.text)
+                                && let Some(d) = v.get_mut("digest").and_then(Value::as_object_mut)
+                            {
+                                d.remove("key_quotes");
+                                t.text = serde_json::to_string(&v)?;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if request_size(&job.snapshot.builder.build(entries, None)?)? < limit {
+            return Ok(());
+        }
+        for _attempt in 0..4 {
+            let before_bytes = request_size(&job.snapshot.builder.build(entries, None)?)?;
+            if before_bytes < limit {
+                return Ok(());
+            }
+            let mut split = 0;
+            // Only complete history units fit the compression request. Keep the recent tail intact.
+            let max_split = entries.len().saturating_sub(4);
+            for end in 1..=max_split {
+                if end < entries.len()
+                    && entries[end].unit_id.is_some()
+                    && entries[end].unit_id == entries[end - 1].unit_id
+                {
+                    continue;
+                }
+                if serde_json::to_vec(&job.snapshot.builder.build(&entries[..end], None)?)?.len()
+                    + 1024
+                    >= limit
+                {
+                    break;
+                }
+                split = end;
+            }
+            ensure!(split > 1, "context_cannot_compact_required_current_turn");
+            let prefix = entries[..split].to_vec();
+            let refs = prefix
+                .iter()
+                .flat_map(|e| e.artifacts.clone())
+                .collect::<std::collections::BTreeSet<_>>();
+            let mut input = prefix.clone();
+            input.push(entry(Origin::ObservationAnalysis,&job.root,Message::user("Application compression stage. Summarize previous tasks, constraints, completed actions, uncertain actions and evidence. Return JSON {\"summary\":\"...\"}. Do not call tools.")));
+            let response = self
+                .request(
+                    job,
+                    &input,
+                    None,
+                    cancel.clone(),
+                    projection.history_generation,
+                )
+                .await?;
+            ensure!(
+                !response
+                    .choice
+                    .iter()
+                    .any(|c| matches!(c, AssistantContent::ToolCall(_))),
+                "compression_tools_forbidden"
+            );
+            let text = response
+                .choice
+                .iter()
+                .filter_map(|c| {
+                    if let AssistantContent::Text(t) = c {
+                        Some(t.text.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            let digest: Value = serde_json::from_str(text.trim())?;
+            let summary = digest["summary"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .context("invalid_compression_summary")?;
+            let canonical = prefix
+                .iter()
+                .map(|e| Entry::capture(e, &job.snapshot.provider))
+                .collect::<Result<Vec<_>>>()?;
+            let archive = self.store.archive(
+                &job.scope,
+                &job.run,
+                &id(),
+                "context_index",
+                json!({"records":refs,"source_units":prefix.iter().map(|e|e.unit_id.as_ref().unwrap_or(&e.id)).collect::<Vec<_>>()}),
+                &serde_json::to_vec(&canonical)?,
+            )?;
+            projection.archive_roots = vec![archive.id.clone()];
+            let mut compacted = entry(
+                Origin::ObservationAnalysis,
+                &job.root,
+                Message::user(format!(
+                    "Earlier context summary: {summary}\nArchive UUID: {}. Original observations can be read by UUID. Current task constraints: {}",
+                    archive.id,
+                    serde_json::to_string(&projection.retained_facts)?
+                )),
+            );
+            compacted.artifacts = vec![archive.id];
+            let tail = entries.split_off(split);
+            *entries = vec![compacted];
+            entries.extend(tail);
+            let after_bytes = request_size(&job.snapshot.builder.build(entries, None)?)?;
+            ensure!(after_bytes < before_bytes, "compression_no_budget_gain");
+            self.save(job, entries, projection, &[])?;
+        }
+        ensure!(
+            request_size(&job.snapshot.builder.build(entries, None)?)? < limit,
+            "compression_budget_exhausted"
+        );
+        Ok(())
+    }
+}
+fn request_size(request: &rig_core::completion::CompletionRequest) -> Result<usize> {
+    let mut request = request.clone();
+    let mut image_budget = 0;
+    for message in &mut request.chat_history {
+        if let Message::User { content } = message {
+            for part in content {
+                if matches!(part, UserContent::Image(_)) {
+                    *part = UserContent::text("[image content]");
+                    image_budget += 16384;
+                }
+            }
+        }
+    }
+    Ok(serde_json::to_vec(&request)?.len() + image_budget)
+}
+fn tool_result(root: &str, call: &ToolCall, value: Value) -> ContextEntry {
+    entry(
+        Origin::Tool,
+        root,
+        Message::User {
+            content: vec![UserContent::tool_result_for(
+                call.id.clone(),
+                call.provider.clone(),
+                call.function.name.clone(),
+                vec![ToolResultContent::text(value.to_string())],
+            )],
+        },
+    )
+}
+fn find_call(entries: &[ContextEntry], id: &str) -> Option<ToolCall> {
+    entries.iter().rev().find_map(|e| {
+        if let Message::Assistant { content, .. } = &e.message {
+            content.iter().find_map(|c| {
+                if let AssistantContent::ToolCall(c) = c {
+                    (c.id.as_str() == id).then(|| c.clone())
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        }
+    })
+}
+
+pub fn terminal_tools(global: bool) -> Vec<ToolDefinition> {
+    let object = |properties: Value, required: Vec<&str>| json!({"type":"object","properties":properties,"required":required,"additionalProperties":false});
+    let mut tools = vec![
+        (
+            "list_sessions",
+            "List authorized terminal sessions",
+            json!({}),
+            vec![],
+        ),
+        (
+            "get_terminal_state",
+            "Observe process, control, cwd and completion evidence",
+            json!({"session_id":{"type":"string"}}),
+            vec![],
+        ),
+        (
+            "read_terminal",
+            "Read upward from a fixed terminal view. Tail needs no anchor; search requires a nonempty start_before. Use record edge references to the filtered search head/tail. Logs can end with dynamic TUI rows: exclude input prompts, status bars, spinners, progress displays and UI borders from EVERY search anchor; never copy the complete raw bottom lines. For explicit lines or candidates, declare exact TUI lines via tui_lines. If no stable log lines remain, use screen/read_record or capture a new tail; never use an empty anchor. Both boundaries excluded.",
+            json!({"session_id":{"type":"string"},"mode":{"enum":["tail","search","screen"]},"max_lines":{"type":"integer","minimum":1,"maximum":1000},"max_bytes":{"type":"integer","minimum":1,"maximum":65536},"start_before":{"type":"object","description":"Stable log anchor: {lines:[...],tui_lines?:[exact UI lines to remove]} or {record_id,edge:head|tail} or {candidate_id}; all variants accept optional tui_lines."},"stop_before":{"type":"object","description":"Same TUI-free anchor format as start_before; use a filtered old tail, not dynamic UI rows."},"view_id":{"type":"string"}}),
+            vec![],
+        ),
+        (
+            "read_record",
+            "Read an immutable UUID record, anchors, summary or paginated body",
+            json!({"record_id":{"type":"string"},"part":{"enum":["anchors","body","summary"]},"cursor":{"type":"string"}}),
+            vec!["record_id"],
+        ),
+        (
+            "input_text",
+            "Write terminal text; submit is a separate Enter action. Requires the current user write grant.",
+            json!({"session_id":{"type":"string"},"text":{"type":"string"},"submit":{"type":"boolean"}}),
+            vec!["text"],
+        ),
+        (
+            "send_keys",
+            "Send a named key with bounded repeat count",
+            json!({"session_id":{"type":"string"},"key":{"type":"string"},"modifiers":{"type":"array","items":{"enum":["ctrl","alt","shift"]},"maxItems":3,"uniqueItems":true},"repeat":{"type":"integer","minimum":1,"maximum":20}}),
+            vec!["key"],
+        ),
+        (
+            "skills_search",
+            "Find built-in or user skills",
+            json!({"query":{"type":"string"},"cursor":{"type":"string"}}),
+            vec![],
+        ),
+        (
+            "skills_read",
+            "Load a selected skill or resource",
+            json!({"skill_id":{"type":"string"},"path":{"type":"string"},"cursor":{"type":"string"}}),
+            vec!["skill_id"],
+        ),
+        (
+            "skill_action",
+            "Invoke a registered built-in action or a selected user skill script",
+            json!({"skill_id":{"type":"string"},"action":{"type":"string"},"arguments":{"type":"object"}}),
+            vec!["skill_id", "action"],
+        ),
+        (
+            "mcp_tools",
+            "Read a selected user MCP tool catalog",
+            json!({"server_id":{"type":"string"},"cursor":{"type":"string"}}),
+            vec!["server_id"],
+        ),
+        (
+            "mcp_call",
+            "Call a previously selected user MCP tool using its advertised schema",
+            json!({"server_id":{"type":"string"},"tool":{"type":"string"},"arguments":{"type":"object"}}),
+            vec!["server_id", "tool", "arguments"],
+        ),
+    ];
+    if global {
+        tools.extend([
+            (
+                "get_agent_state",
+                "Read a session agent state; reports never start model work",
+                json!({"session_id":{"type":"string"}}),
+                vec!["session_id"],
+            ),
+            (
+                "send_agent_message",
+                "Delegate within this user run; returns a task ID immediately",
+                json!({"session_id":{"type":"string"},"message":{"type":"string"}}),
+                vec!["session_id", "message"],
+            ),
+        ]);
+    }
+    let mut result = tools
+        .into_iter()
+        .map(|(name, description, properties, required)| ToolDefinition {
+            name: name.into(),
+            description: description.into(),
+            parameters: object(properties, required),
+        })
+        .collect::<Vec<_>>();
+    result.sort_by(|a, b| a.name.cmp(&b.name));
+    result
+}
+
+#[cfg(test)]
+mod runtime_contracts {
+    use super::*;
+    use rig_core::streaming::{
+        RawStreamingChoice as Raw, RawStreamingToolCall, StreamFinal, StreamingCompletionResponse,
+    };
+    struct StubModel {
+        calls: AtomicU32,
+        delay: Duration,
+        recovery: bool,
+    }
+    impl Model for StubModel {
+        fn stream(
+            &self,
+            _request: rig_core::completion::CompletionRequest,
+        ) -> BackendFuture<'_, StreamingCompletionResponse> {
+            Box::pin(async move {
+                let n = self.calls.fetch_add(1, Ordering::AcqRel);
+                tokio::time::sleep(self.delay).await;
+                let choice = if self.recovery {
+                    match n {
+                        0=>Raw::ToolCall(RawStreamingToolCall::new("read-call","read_terminal".into(),json!({"mode":"tail"}))),
+                        1|2=>Raw::Message("invalid analysis".into()),
+                        3=>Raw::Message(json!({"summary":"Exact archived text inspected","key_quotes":[],"facts":[],"tui_lines":[]}).to_string()),
+                        _=>Raw::Message("done".into()),
+                    }
+                } else {
+                    Raw::Message("done".into())
+                };
+                Ok(StreamingCompletionResponse::stream(
+                    "test",
+                    Box::pin(futures_util::stream::iter(vec![
+                        Ok(choice),
+                        Ok(Raw::FinalResponse(StreamFinal::new(
+                            "test",
+                            Default::default(),
+                        ))),
+                    ])),
+                ))
+            })
+        }
+    }
+    #[derive(Default)]
+    struct Backend {
+        reads: AtomicU32,
+    }
+    impl TerminalBackend for Backend {
+        fn authorize(&self, _write: bool) -> BackendFuture<'_, ()> {
+            Box::pin(async { Ok(()) })
+        }
+        fn invoke<'a>(
+            &'a self,
+            _context: ToolContext,
+            _name: &'a str,
+            _args: Value,
+        ) -> BackendFuture<'a, ToolOutput> {
+            Box::pin(async move {
+                self.reads.fetch_add(1, Ordering::AcqRel);
+                Ok(ToolOutput {
+                    value: json!({}),
+                    observation: Some(Observation {
+                        kind: "text".into(),
+                        body: "original terminal text".into(),
+                        model_body: None,
+                        metadata: json!({"head":["original terminal text"],"tail":["original terminal text"]}),
+                        binary: false,
+                        record_id: None,
+                    }),
+                    outcome: None,
+                })
+            })
+        }
+    }
+    fn snapshot(model: Arc<StubModel>, backend: Arc<Backend>, tools: bool) -> RunSnapshot {
+        RunSnapshot {
+            revision: 1,
+            provider: Protocol::OpenaiChat,
+            builder: RequestBuilder {
+                settings: crate::model::RequestSettings {
+                    model: "test".into(),
+                    temperature: Some(0.2),
+                    max_tokens: 2048,
+                    additional_params: None,
+                },
+                system: "fixed".into(),
+                tools: if tools { terminal_tools(false) } else { vec![] },
+            },
+            model,
+            backend,
+            context_window: 128000,
+            max_rounds: 20,
+            max_seconds: 30,
+            allow_write: true,
+            vision: false,
+        }
+    }
+    async fn settle(host: &AgentHost, scope: &Scope) -> Value {
+        for _ in 0..500 {
+            let value = host.state(scope).unwrap();
+            if !running(value["state"].as_str().unwrap()) {
+                return value;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("agent did not settle");
+    }
+    #[tokio::test]
+    async fn rejected_append_is_not_persisted_and_accepted_retries_remain_idempotent() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(&temp.path().join("data/history.db")).unwrap());
+        let scope = store.agent("o", "d", Some("s")).unwrap();
+        let host = AgentHost::new(store.clone(), tokio::runtime::Handle::current());
+        let model = Arc::new(StubModel {
+            calls: AtomicU32::new(0),
+            delay: Duration::from_secs(60),
+            recovery: false,
+        });
+        host.submit(scope.clone(), "root", "work", json!({}), true, "", || {
+            Ok(snapshot(model, Arc::new(Backend::default()), false))
+        })
+        .unwrap();
+        let append = |request: &str, message: &str, allow| {
+            host.submit(
+                scope.clone(),
+                request,
+                message,
+                json!({}),
+                allow,
+                "",
+                || panic!("append must not rebuild snapshot"),
+            )
+        };
+        append("revoke", "observe only", false).unwrap();
+        let sequence = store.latest_sequence(&scope).unwrap();
+        for _ in 0..2 {
+            let error = append("rejected", "must not enter history", true).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "write_authorization_revoked_start_new_run"
+            );
+            assert_eq!(store.latest_sequence(&scope).unwrap(), sequence);
+        }
+        assert_eq!(append("root", "work", true).unwrap()["duplicate"], true);
+        assert_eq!(store.latest_sequence(&scope).unwrap(), sequence);
+        // An already accepted request can still be retried when the mailbox is full.
+        for n in 0..30 {
+            append(&format!("queued-{n}"), "observe", false).unwrap();
+        }
+        assert_eq!(
+            append("overflow", "observe", false)
+                .unwrap_err()
+                .to_string(),
+            "agent_mailbox_full"
+        );
+        assert_eq!(
+            append("revoke", "observe only", false).unwrap()["duplicate"],
+            true
+        );
+        host.cancel(&scope).unwrap();
+        assert_eq!(settle(&host, &scope).await["state"], "cancelled");
+    }
+    #[tokio::test]
+    async fn restart_does_not_call_model_and_new_user_resumes_analysis_without_repeating_read() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("data/history.db");
+        let store = Arc::new(Store::open(&path).unwrap());
+        let scope = store.agent("o", "d", Some("s")).unwrap();
+        let model = Arc::new(StubModel {
+            calls: AtomicU32::new(0),
+            delay: Duration::ZERO,
+            recovery: true,
+        });
+        let backend = Arc::new(Backend::default());
+        let host = AgentHost::new(store.clone(), tokio::runtime::Handle::current());
+        host.submit(scope.clone(), "user-1", "read", json!({}), true, "", || {
+            Ok(snapshot(model.clone(), backend.clone(), true))
+        })
+        .unwrap();
+        assert_eq!(settle(&host, &scope).await["state"], "paused");
+        assert_eq!(model.calls.load(Ordering::Acquire), 3);
+        assert_eq!(backend.reads.load(Ordering::Acquire), 1);
+        drop(host);
+        drop(store);
+        let store = Arc::new(Store::open(&path).unwrap());
+        let host = AgentHost::new(store, tokio::runtime::Handle::current());
+        host.status(&scope, json!({"state":"changed"})).unwrap();
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert_eq!(model.calls.load(Ordering::Acquire), 3);
+        host.submit(
+            scope.clone(),
+            "user-2",
+            "continue",
+            json!({}),
+            true,
+            "",
+            || Ok(snapshot(model.clone(), backend.clone(), true)),
+        )
+        .unwrap();
+        let state = settle(&host, &scope).await;
+        assert_eq!(state["state"], "completed", "{state}");
+        assert_eq!(model.calls.load(Ordering::Acquire), 5);
+        assert_eq!(backend.reads.load(Ordering::Acquire), 1);
+    }
+    #[tokio::test]
+    async fn root_cancellation_stops_its_children_and_same_root_delegation_appends() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(&temp.path().join("data/history.db")).unwrap());
+        let global = store.agent("o", "d", None).unwrap();
+        let child = store.agent("o", "d", Some("child")).unwrap();
+        let independent = store.agent("o", "d", Some("independent")).unwrap();
+        let host = AgentHost::new(store, tokio::runtime::Handle::current());
+        let backend = Arc::new(Backend::default());
+        let model = Arc::new(StubModel {
+            calls: AtomicU32::new(0),
+            delay: Duration::from_millis(200),
+            recovery: false,
+        });
+        host.status(&child, json!({"state":"running"})).unwrap();
+        assert_eq!(model.calls.load(Ordering::Acquire), 0);
+        host.submit(
+            global.clone(),
+            "root",
+            "coordinate",
+            json!({}),
+            true,
+            "",
+            || Ok(snapshot(model.clone(), backend.clone(), false)),
+        )
+        .unwrap();
+        host.submit(
+            independent.clone(),
+            "separate",
+            "own work",
+            json!({}),
+            true,
+            "",
+            || Ok(snapshot(model.clone(), backend.clone(), false)),
+        )
+        .unwrap();
+        let job = host.jobs.lock().unwrap()[&global.agent].clone();
+        let context = ToolContext {
+            history_unit_id: "unit".into(),
+            vision: false,
+            scope: global.clone(),
+            run_id: job.run.clone(),
+            root_user_message_id: job.root.clone(),
+            action_id: "delegate".into(),
+            max_read_bytes: 4096,
+            budget: job.budget.clone(),
+            cancel: job.cancel.subscribe(),
+            execution_gate: job.execution_gate.clone(),
+        };
+        let first = host
+            .delegate(
+                &context,
+                child.clone(),
+                "delegate1",
+                "first task",
+                json!({}),
+                || Ok(snapshot(model.clone(), backend.clone(), false)),
+            )
+            .unwrap();
+        let next = host
+            .delegate(
+                &context,
+                child.clone(),
+                "delegate2",
+                "append task",
+                json!({}),
+                || panic!("append must not rebuild snapshot"),
+            )
+            .unwrap();
+        assert_eq!(first["task_id"], next["task_id"]);
+        assert_eq!(next["queued"], true);
+        host.cancel(&global).unwrap();
+        assert_eq!(settle(&host, &global).await["state"], "cancelled");
+        assert_eq!(settle(&host, &child).await["state"], "cancelled");
+        assert_eq!(settle(&host, &independent).await["state"], "completed");
+        let calls = model.calls.load(Ordering::Acquire);
+        host.status(&child, json!({"state":"exited"})).unwrap();
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert_eq!(model.calls.load(Ordering::Acquire), calls);
+    }
+}

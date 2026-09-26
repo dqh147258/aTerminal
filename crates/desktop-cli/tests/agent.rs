@@ -28,17 +28,20 @@ fn host_with_model(model_url: Option<&str>) -> (Host, Client) {
     ));
     let mut command = Command::new(env!("CARGO_BIN_EXE_aTerminal"));
     command
+        .env("AI_TERMINAL_LEGACY_ASSISTANT", "1")
         .env_remove("AI_TERMINAL_AI_BASE_URL")
         .env_remove("AI_TERMINAL_AI_MODEL")
         .env_remove("AI_TERMINAL_AI_API_KEY");
     if let Some(url) = model_url {
         command
+            .env("AI_TERMINAL_LEGACY_ASSISTANT", "1")
             .env("AI_TERMINAL_AI_BASE_URL", url)
             .env("AI_TERMINAL_AI_MODEL", "test");
     }
     let child = command
         .env("AI_TERMINAL_CREDENTIAL_STORE", "file")
         .env("XDG_CONFIG_HOME", dir.join("config"))
+        .env("HOME", &dir)
         .args(["--agent", "--state-dir"])
         .arg(&dir)
         .stdin(Stdio::null())
@@ -1159,6 +1162,699 @@ async fn switching_accounts_cannot_adopt_previous_shells() {
         .call(Request {
             operation: Operation::Shutdown as i32,
             ..Request::default()
+        })
+        .unwrap();
+    host.child.wait().unwrap();
+    server.abort();
+}
+
+#[test]
+fn configuration_rpc_is_revisioned_and_provider_secrets_are_write_only() {
+    let (mut host, client) = host();
+    let call = |value: serde_json::Value| {
+        client.call(Request {
+            operation: Operation::Configuration as i32,
+            text: value.to_string(),
+            ..Default::default()
+        })
+    };
+    let malformed =
+        call(serde_json::json!({"action":"test-provider-write-only-secret"})).unwrap_err();
+    assert!(
+        !malformed
+            .to_string()
+            .contains("test-provider-write-only-secret")
+    );
+    let initial = call(serde_json::json!({"action":"show"})).unwrap();
+    let initial: serde_json::Value = serde_json::from_str(&initial.history[0]).unwrap();
+    let revision = initial["revision"].as_u64().unwrap();
+    let config = serde_json::json!({"providers":{"local":{"id":"local","name":"Local","connection":{"protocol":"openai_chat","endpoint":"http://127.0.0.1:1","api_version":null},"catalog_url":null,"secret_ref":null,"credential_revision":0,"enabled":true}},"models":{},"bindings":{}});
+    let request = serde_json::json!({"action":"replace","expected_revision":revision,"config":config,"secrets":{"local":"test-provider-write-only-secret"}});
+    let saved = call(request.clone()).unwrap();
+    assert!(!saved.history[0].contains("test-provider-write-only-secret"));
+    assert!(call(request).is_err());
+    let saved: serde_json::Value = serde_json::from_str(&saved.history[0]).unwrap();
+    assert_eq!(saved["revision"], revision + 1);
+    assert!(saved["config"]["providers"]["local"]["secret_ref"].is_string());
+    client
+        .call(Request {
+            operation: Operation::Shutdown as i32,
+            ..Default::default()
+        })
+        .unwrap();
+    host.child.wait().unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn persistent_agent_reads_analyzes_then_inputs_through_real_mcp_and_pty() {
+    use axum::{Json, Router, extract::State, routing::post};
+    use serde_json::{Value, json};
+    use std::sync::{Arc, Mutex};
+    async fn model(
+        State(calls): State<Arc<Mutex<Vec<Value>>>>,
+        Json(body): Json<Value>,
+    ) -> impl axum::response::IntoResponse {
+        let mut calls = calls.lock().unwrap();
+        let n = calls.len();
+        calls.push(body);
+        let delta = match n {
+            0 => {
+                json!({"role":"assistant","tool_calls":[{"index":0,"id":"call_read","type":"function","function":{"name":"read_terminal","arguments":"{\"mode\":\"tail\",\"max_lines\":5}"}}]})
+            }
+            1 => {
+                json!({"content":json!({"summary":"Captured bounded terminal text","key_quotes":[],"facts":[],"tui_lines":[],"open_questions":[],"observed_status":"unknown"}).to_string()})
+            }
+            2 => {
+                json!({"role":"assistant","tool_calls":[{"index":0,"id":"call_input","type":"function","function":{"name":"input_text","arguments":json!({"text":if cfg!(windows){"Write-Output ('NEW_AGENT_' + 'OK')"}else{"printf 'NEW_AGENT_%s\\n' OK"},"submit":true}).to_string()}}]})
+            }
+            _ => json!({"content":"Command was queued; this is not proof of command completion."}),
+        };
+        let first = json!({"id":format!("response-{n}"),"object":"chat.completion.chunk","created":0,"model":"fake","choices":[{"index":0,"delta":delta,"finish_reason":null}]});
+        let end = json!({"id":format!("response-{n}"),"object":"chat.completion.chunk","created":0,"model":"fake","choices":[{"index":0,"delta":{},"finish_reason":if n==0||n==2{"tool_calls"}else{"stop"}}],"usage":{"prompt_tokens":20,"completion_tokens":10,"total_tokens":30}});
+        (
+            [("content-type", "text/event-stream")],
+            format!("data: {first}\n\ndata: {end}\n\ndata: [DONE]\n\n"),
+        )
+    }
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new()
+        .route("/chat/completions", post(model))
+        .with_state(calls.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let (mut host, client) = host();
+    let created = client
+        .call(Request {
+            operation: Operation::Create as i32,
+            rows: 8,
+            cols: 80,
+            command: if cfg!(windows) {
+                vec![
+                    "powershell.exe".into(),
+                    "-NoLogo".into(),
+                    "-NoProfile".into(),
+                ]
+            } else {
+                vec!["/bin/sh".into()]
+            },
+            ..Default::default()
+        })
+        .unwrap();
+    let session = created.info.unwrap().id;
+    attach_desktop(&client, &session);
+    let initial = client
+        .call(Request {
+            operation: Operation::Configuration as i32,
+            text: json!({"action":"show"}).to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+    let initial: Value = serde_json::from_str(&initial.history[0]).unwrap();
+    let config = json!({"providers":{"fake":{"id":"fake","name":"Fake","connection":{"protocol":"openai_chat","endpoint":format!("http://{address}"),"api_version":null},"catalog_url":null,"secret_ref":null,"credential_revision":0,"enabled":true}},"models":{"fake":{"id":"fake","name":"Fake","provider_id":"fake","model":"fake","context_window":128000,"max_tokens":2000,"temperature":null,"top_p":null,"reasoning":{"mode":"provider_default"},"capabilities":{"tools":true,"streaming":true},"max_rounds":8,"max_seconds":30,"read_only":false}},"bindings":{"session-default":{"model_id":"fake","reasoning":null}}});
+    client
+        .call(Request {
+            operation: Operation::Configuration as i32,
+            text:
+                json!({"action":"replace","expected_revision":initial["revision"],"config":config})
+                    .to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+    let rpc = |mut value: Value| {
+        value["version"] = json!(1);
+        let reply = client
+            .call(Request {
+                operation: Operation::Agent as i32,
+                session: session.clone(),
+                text: value.to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+        serde_json::from_str::<Value>(&reply.history[0]).unwrap()
+    };
+    let request = ai_terminal_agent_runtime::request_id();
+    let sent = rpc(
+        json!({"action":"send","request_id":request,"message":"Read the terminal, then print the marker once.","allow_input":true}),
+    );
+    assert_eq!(sent["state"], "running");
+    let until = Instant::now() + Duration::from_secs(20);
+    loop {
+        let state = rpc(json!({"action":"state"}));
+        if state["state"] == "completed" {
+            break;
+        }
+        assert_ne!(state["state"], "paused", "{state}");
+        assert!(Instant::now() < until, "{state}");
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    let history = rpc(json!({"action":"history"}));
+    let items = history["items"].as_array().unwrap();
+    let record = items
+        .iter()
+        .filter_map(|i| i["value"]["updates"].as_array())
+        .flatten()
+        .find_map(|u| u["record_id"].as_str())
+        .unwrap()
+        .to_owned();
+    assert!(items.iter().any(|i| i["kind"] == "interaction"));
+    assert_eq!(calls.lock().unwrap().len(), 4);
+    {
+        let requests = calls.lock().unwrap();
+        let original = requests[0]["messages"].as_array().unwrap();
+        let analysis = requests[1]["messages"].as_array().unwrap();
+        assert_eq!(&analysis[..original.len()], original.as_slice());
+        for key in ["model", "temperature", "max_tokens", "tools", "tool_choice"] {
+            assert_eq!(requests[0][key], requests[1][key], "analysis changed {key}");
+        }
+        assert!(
+            analysis
+                .last()
+                .unwrap()
+                .to_string()
+                .contains("Application analysis stage")
+        );
+    }
+    let raw = rpc(json!({"action":"record","record_id":record,"part":"body"}));
+    assert_eq!(raw["record_id"], record);
+    rpc(
+        json!({"action":"send","request_id":request,"message":"Read the terminal, then print the marker once.","allow_input":true}),
+    );
+    assert_eq!(calls.lock().unwrap().len(), 4);
+    loop {
+        let frame = client
+            .call(Request {
+                operation: Operation::Poll as i32,
+                session: session.clone(),
+                ..Default::default()
+            })
+            .unwrap()
+            .snapshot
+            .unwrap();
+        let text = frame
+            .cells
+            .iter()
+            .map(|c| c.text.as_str())
+            .collect::<String>();
+        if text.contains("NEW_AGENT_OK") {
+            break;
+        }
+        assert!(Instant::now() < until);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    client
+        .call(Request {
+            operation: Operation::Close as i32,
+            session: session.clone(),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(
+        rpc(json!({"action":"record","record_id":record,"part":"body"}))["record_id"],
+        record
+    );
+    client
+        .call(Request {
+            operation: Operation::Shutdown as i32,
+            ..Default::default()
+        })
+        .unwrap();
+    host.child.wait().unwrap();
+    server.abort();
+}
+
+#[cfg(unix)]
+#[test]
+fn opt_in_shell_hooks_report_exit_and_cwd_without_global_rc_changes() {
+    let (mut host, client) = host();
+    for shell in ["/bin/bash", "/bin/zsh"] {
+        if !std::path::Path::new(shell).exists() {
+            continue;
+        }
+        let created = client
+            .call(Request {
+                operation: Operation::Create as i32,
+                command: vec![shell.into()],
+                shell_integration: true,
+                cwd: host.dir.to_string_lossy().into_owned(),
+                rows: 8,
+                cols: 80,
+                ..Default::default()
+            })
+            .unwrap();
+        let id = created.info.unwrap().id;
+        attach_desktop(&client, &id);
+        let info;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let r = client
+                .call(Request {
+                    operation: Operation::Poll as i32,
+                    session: id.clone(),
+                    ..Default::default()
+                })
+                .unwrap();
+            let next = r.info.unwrap();
+            if !next.shell_status.is_empty() {
+                info = next;
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "shell hook did not report: {shell}"
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+        client
+            .call(Request {
+                operation: Operation::Input as i32,
+                session: id.clone(),
+                control_epoch: info.control_epoch,
+                input_seq: info.next_input_seq,
+                input_kind: 1,
+                text: "false".into(),
+                submit: true,
+                ..Default::default()
+            })
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let r = client
+                .call(Request {
+                    operation: Operation::Poll as i32,
+                    session: id.clone(),
+                    ..Default::default()
+                })
+                .unwrap();
+            let value: serde_json::Value =
+                serde_json::from_str(&r.info.unwrap().shell_status).unwrap_or_default();
+            if value["phase"] == "prompt" && value["exit_code"] == 1 {
+                assert_eq!(value["trusted_for_authorization"], false);
+                assert_eq!(
+                    std::path::Path::new(value["cwd"].as_str().unwrap())
+                        .canonicalize()
+                        .unwrap(),
+                    host.dir.canonicalize().unwrap()
+                );
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "exit status missing: {shell}: {value}"
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+        client
+            .call(Request {
+                operation: Operation::Close as i32,
+                session: id,
+                ..Default::default()
+            })
+            .unwrap();
+    }
+    client
+        .call(Request {
+            operation: Operation::Shutdown as i32,
+            ..Default::default()
+        })
+        .unwrap();
+    host.child.wait().unwrap();
+}
+
+/// Explicit opt-in only: consumes real provider quota and sends synthetic PTY text.
+/// MODELSCOPE_API_KEY_FILE is a local credential file, not committed test data.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires explicit real ModelScope credentials and network access"]
+async fn modelscope_live_terminal_agent() {
+    use serde_json::{Value, json};
+    let key = std::fs::read_to_string(
+        std::env::var("MODELSCOPE_API_KEY_FILE").expect("set MODELSCOPE_API_KEY_FILE"),
+    )
+    .unwrap();
+    let key = key.trim();
+    assert!(!key.is_empty());
+    let endpoint = std::env::var("MODELSCOPE_BASE_URL")
+        .unwrap_or_else(|_| "https://api-inference.modelscope.cn/v1".into());
+    let model = std::env::var("MODELSCOPE_MODEL").unwrap_or_else(|_| "Qwen/Qwen3.8-27B".into());
+    // A transparent test-only streaming relay captures the exact request and SSE
+    // received from the real provider. Authorization headers are never recorded.
+    type WireTrace =
+        std::sync::Arc<std::sync::Mutex<Vec<(Value, std::sync::Arc<std::sync::Mutex<Vec<u8>>>)>>>;
+    #[derive(Clone)]
+    struct LiveProxy {
+        client: reqwest::Client,
+        endpoint: String,
+        key: String,
+        trace: WireTrace,
+    }
+    async fn forward(
+        axum::extract::State(proxy): axum::extract::State<LiveProxy>,
+        axum::Json(body): axum::Json<Value>,
+    ) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        use futures_util::StreamExt;
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        proxy
+            .trace
+            .lock()
+            .unwrap()
+            .push((body.clone(), captured.clone()));
+        let response = match proxy
+            .client
+            .post(format!(
+                "{}/chat/completions",
+                proxy.endpoint.trim_end_matches('/')
+            ))
+            .bearer_auth(&proxy.key)
+            .json(&body)
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                return (
+                    axum::http::StatusCode::BAD_GATEWAY,
+                    axum::Json(json!({"error":error.to_string()})),
+                )
+                    .into_response();
+            }
+        };
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("application/json")
+            .to_owned();
+        let stream = response.bytes_stream().map(move |chunk| {
+            let bytes = chunk.map_err(std::io::Error::other)?;
+            let mut saved = captured.lock().unwrap();
+            if saved.len() + bytes.len() > 4 * 1024 * 1024 {
+                return Err(std::io::Error::other("live_trace_limit"));
+            }
+            saved.extend_from_slice(&bytes);
+            Ok(bytes)
+        });
+        axum::response::Response::builder()
+            .status(status)
+            .header("content-type", content_type)
+            .body(axum::body::Body::from_stream(stream))
+            .unwrap()
+    }
+    let wire_trace: WireTrace = Default::default();
+    let proxy = LiveProxy {
+        client: reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(120))
+            .build()
+            .unwrap(),
+        endpoint: endpoint.clone(),
+        key: key.to_owned(),
+        trace: wire_trace.clone(),
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy_endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            axum::Router::new()
+                .route("/chat/completions", axum::routing::post(forward))
+                .with_state(proxy),
+        )
+        .await
+        .unwrap()
+    });
+    let (mut host, client) = host();
+    let seed = format!("SOURCE_{:016x}", ai_terminal_agent::random_id());
+    let marker = format!("RESULT_{:016x}", ai_terminal_agent::random_id());
+    let created = client
+        .call(Request {
+            operation: Operation::Create as i32,
+            cwd: host.dir.to_string_lossy().into_owned(),
+            rows: 12,
+            cols: 100,
+            command: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                format!("printf '{seed}\\n'; exec /bin/sh -i"),
+            ],
+            ..Default::default()
+        })
+        .unwrap();
+    let session = created.info.unwrap().id;
+    attach_desktop(&client, &session);
+    let configuration = json!({
+        "providers":{"modelscope":{"id":"modelscope","name":"ModelScope live test","connection":{"protocol":"openai_chat","endpoint":proxy_endpoint},"credential_revision":0,"enabled":true}},
+        "models":{"qwen-live":{"id":"qwen-live","name":"Qwen live test","provider_id":"modelscope","model":model,"context_window":65536,"max_tokens":4096,"reasoning":{"mode":"provider_default"},"capabilities":{"tools":true,"streaming":true,"source":"explicit_live_validation"},"max_rounds":16,"max_seconds":300,"read_only":false}},
+        "bindings":{"global":{"model_id":"qwen-live"},"session-default":{"model_id":"qwen-live"}}
+    });
+    client.call(Request {
+        operation: Operation::Configuration as i32,
+        text: json!({"action":"replace","expected_revision":0,"config":configuration,"secrets":{"modelscope":key}}).to_string(),
+        ..Default::default()
+    }).unwrap();
+    let rpc = |session: &str, mut value: Value| {
+        value["version"] = json!(1);
+        let result = client
+            .call(Request {
+                operation: Operation::Agent as i32,
+                session: session.into(),
+                text: value.to_string(),
+                ..Default::default()
+            })
+            .unwrap();
+        serde_json::from_str::<Value>(&result.history[0]).unwrap()
+    };
+    // Let the synthetic source reach the authoritative terminal before authorizing work.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let reply = client
+            .call(Request {
+                operation: Operation::Poll as i32,
+                session: session.clone(),
+                ..Default::default()
+            })
+            .unwrap();
+        let text = reply
+            .snapshot
+            .unwrap()
+            .cells
+            .iter()
+            .map(|c| c.text.as_str())
+            .collect::<String>();
+        if text.contains(&seed) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "fixture PTY did not become ready"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let request_id = ai_terminal_agent_runtime::request_id();
+    let message = format!(
+        "这是已授权的隔离终端自动化测试。请严格依次完成：1. 调用 read_terminal(mode=tail,max_lines=20) 读取终端中的 SOURCE_ 标记。2. 完成应用要求的分析后，调用 input_text(text=\"printf '{marker}\\n' | tee -a live-marker.txt\",submit=true)，只执行这一次写入。3. 再次调用 read_terminal 确认输出。4. 最后回复 LIVE_OK 和你最初实际读到的完整 SOURCE_ 标记。每轮只调用一个工具；不要执行其他写操作，也不要委托。应用的分析阶段按其要求返回 JSON。不要将输入入队当作完成证据。"
+    );
+    let send =
+        json!({"action":"send","request_id":request_id,"message":message,"allow_input":true});
+    let accepted = rpc(&session, send.clone());
+    let start = Instant::now();
+    let final_state = loop {
+        let state = rpc(&session, json!({"action":"state"}));
+        client
+            .call(Request {
+                operation: Operation::Poll as i32,
+                session: session.clone(),
+                revision: u64::MAX,
+                ..Default::default()
+            })
+            .unwrap();
+        if !["running", "stopping", "finishing"].contains(&state["state"].as_str().unwrap_or("")) {
+            break state;
+        }
+        if start.elapsed() > Duration::from_secs(330) {
+            rpc(&session, json!({"action":"cancel"}));
+            panic!("real provider test timed out");
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    };
+    let history = rpc(&session, json!({"action":"history"}));
+    let database = rusqlite::Connection::open_with_flags(
+        host.dir.join("data/agent.sqlite3"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let usage = database
+        .prepare("SELECT stage,value FROM model_usage ORDER BY rowid")
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .unwrap()
+        .map(|row| {
+            let (stage, value) = row.unwrap();
+            json!({"stage":stage,"usage":serde_json::from_str::<Value>(&value).unwrap()})
+        })
+        .collect::<Vec<_>>();
+    let call_count = usage.len();
+    let retry = rpc(&session, send);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let after_retry: i64 = database
+        .query_row("SELECT COUNT(*) FROM model_usage", [], |row| row.get(0))
+        .unwrap();
+    let marker_text = std::fs::read_to_string(host.dir.join("live-marker.txt")).unwrap_or_default();
+    let records = history["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|item| item["value"]["updates"].as_array())
+        .flatten()
+        .filter_map(|update| update["record_id"].as_str())
+        .map(str::to_owned)
+        .collect::<std::collections::BTreeSet<_>>();
+    let originals = records
+        .iter()
+        .map(|id| {
+            rpc(
+                &session,
+                json!({"action":"record","record_id":id,"part":"body"}),
+            )
+        })
+        .collect::<Vec<_>>();
+    let anchor_records = records
+        .iter()
+        .map(|id| {
+            rpc(
+                &session,
+                json!({"action":"record","record_id":id,"part":"anchors"}),
+            )
+        })
+        .collect::<Vec<_>>();
+    let executed_writes: i64 = database
+        .query_row(
+            "SELECT COUNT(*) FROM actions WHERE state IN ('written','accepted')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let trace=wire_trace.lock().unwrap().iter().map(|(request,response)|json!({"request":request,"response_sse":String::from_utf8_lossy(&response.lock().unwrap())})).collect::<Vec<_>>();
+    let report = json!({"provider":"modelscope","endpoint":endpoint,"model":model,"elapsed_ms":start.elapsed().as_millis(),"accepted":accepted,"state":final_state,"request_retry":retry,"model_calls":call_count,"calls_after_retry":after_retry,"usage":usage,"marker_lines":marker_text.lines().collect::<Vec<_>>(),"expected_marker":marker,"expected_source":seed,"history":history,"originals":originals,"anchors":anchor_records,"executed_writes":executed_writes,"http_trace":trace});
+    if let Ok(path) = std::env::var("MODELSCOPE_LIVE_REPORT") {
+        let path = PathBuf::from(path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(
+            path,
+            serde_json::to_string_pretty(&report)
+                .unwrap()
+                .replace(key, "[redacted]"),
+        )
+        .unwrap();
+    }
+    eprintln!(
+        "ModelScope live: state={}, model_calls={}, elapsed={:?}",
+        final_state["state"],
+        call_count,
+        start.elapsed()
+    );
+    assert_eq!(
+        final_state["state"],
+        "completed",
+        "{}",
+        final_state.to_string().replace(key, "[redacted]")
+    );
+    assert!(
+        usage.iter().any(|u| u["stage"] == "analysis"),
+        "no actual observation analysis occurred"
+    );
+    assert_eq!(
+        marker_text.lines().collect::<Vec<_>>(),
+        vec![marker.as_str()],
+        "terminal write was missing or repeated"
+    );
+    assert!(
+        originals
+            .iter()
+            .any(|v| v["body"].as_str().is_some_and(|s| s.contains(&seed)))
+    );
+    assert!(history["items"].as_array().unwrap().iter().any(|item| {
+        item["kind"] == "assistant"
+            && item["value"]["text"]
+                .as_str()
+                .is_some_and(|s| s.contains("LIVE_OK") && s.contains(&seed))
+    }));
+    assert_eq!(
+        executed_writes, 1,
+        "unexpected additional side-effecting tools"
+    );
+    for anchor in &anchor_records {
+        assert_eq!(anchor["metadata"]["head_lines"], 10);
+        assert_eq!(anchor["metadata"]["tail_lines"], 20);
+        let tui = anchor["tui_lines"].as_array().unwrap();
+        for edge in ["search_head_anchor", "search_tail_anchor"] {
+            assert!(
+                anchor[edge]["lines"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|line| !tui.contains(line))
+            );
+        }
+    }
+    assert!(
+        anchor_records
+            .iter()
+            .any(|a| !a["tui_lines"].as_array().unwrap().is_empty()),
+        "model did not classify the interactive prompt"
+    );
+    assert_eq!(retry["duplicate"], true);
+    assert_eq!(call_count as i64, after_retry);
+    assert_eq!(
+        wire_trace.lock().unwrap().len(),
+        call_count,
+        "retry caused another HTTP request"
+    );
+    let first = &trace[0]["request"];
+    let prefix = first["messages"].as_array().unwrap();
+    for exchange in &trace {
+        let request = &exchange["request"];
+        let messages = request["messages"].as_array().unwrap();
+        if messages.last().is_some_and(|m| {
+            m["content"]
+                .as_str()
+                .is_some_and(|text| text.starts_with("Application analysis stage"))
+        }) {
+            assert_eq!(&messages[..prefix.len()], prefix.as_slice());
+            for field in ["model", "temperature", "max_tokens", "tools", "tool_choice"] {
+                assert_eq!(
+                    first[field], request[field],
+                    "live analysis changed {field}"
+                );
+            }
+        }
+    }
+    client
+        .call(Request {
+            operation: Operation::Close as i32,
+            session: session.clone(),
+            ..Default::default()
+        })
+        .unwrap();
+    for id in &records {
+        assert_eq!(
+            rpc(
+                &session,
+                json!({"action":"record","record_id":id,"part":"body"})
+            )["record_id"],
+            *id
+        );
+    }
+    client
+        .call(Request {
+            operation: Operation::Shutdown as i32,
+            ..Default::default()
         })
         .unwrap();
     host.child.wait().unwrap();

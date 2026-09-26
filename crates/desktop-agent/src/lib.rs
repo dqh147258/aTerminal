@@ -1,9 +1,20 @@
 //! Per-user local session host. Remote authorization is a separate P2 concern.
 mod account;
 mod assistant;
+mod builtin_skills;
+mod catalog;
+pub mod config;
+pub mod extensions;
+mod keys;
+mod private_acl;
+mod process;
 pub mod pty;
+pub mod raster;
 mod remote_bridge;
+mod secrets;
 mod service;
+mod shell;
+pub mod state;
 mod stream;
 use anyhow::{Result, bail};
 pub use service::{Client, default_state_dir, run_agent};

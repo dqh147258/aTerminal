@@ -7,6 +7,8 @@ license.workspace = true
 [dependencies]
 alacritty_terminal.workspace = true
 ai-terminal-protocol.workspace = true
+serde.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

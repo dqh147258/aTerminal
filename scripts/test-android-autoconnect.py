@@ -4,6 +4,7 @@ Requires freshly built desktop/server binaries and debug/instrumentation APKs.
 """
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -21,8 +22,14 @@ import urllib.request
 ROOT = Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--serial', required=True)
+parser.add_argument('--input-layout', action='store_true', help='Test keyboard palette, small font, landscape and full-screen Agent')
+parser.add_argument('--late-session', action='store_true', help='Create disposable PTYs after the App connects to an empty Desktop')
+parser.add_argument('--late-desktop', action='store_true', help='Bring the disposable Desktop online after the App initially finds none')
+parser.add_argument('--login-persistence', action='store_true', help='Test login across process death, offline launch and logout')
 parser.add_argument('--output', type=Path, required=True)
 args = parser.parse_args()
+if sum([args.input_layout, args.late_desktop, args.late_session, args.login_persistence]) > 1:
+    parser.error('Select only one test variant')
 args.output.mkdir(parents=True, exist_ok=True)
 package = 'com.yxf.aterminal'
 
@@ -52,6 +59,15 @@ def drain(fd):
         pass
 
 
+def primary_preferences():
+    result = {}
+    for name in ['account', 'connection']:
+        value = subprocess.run(['adb', '-s', args.serial, 'exec-out', 'run-as', package, 'cat', f'shared_prefs/{name}.xml'], capture_output=True)
+        result[name] = hashlib.sha256(value.stdout).hexdigest() if value.returncode == 0 else None
+    return result
+
+
+baseline = primary_preferences()
 with tempfile.TemporaryDirectory(prefix='aiterminal-autoconnect-') as directory:
     work = Path(directory)
     with socket.socket() as sock:
@@ -78,49 +94,104 @@ with tempfile.TemporaryDirectory(prefix='aiterminal-autoconnect-') as directory:
                        env=env, input=password + '\n', text=True, capture_output=True, check=True)
         wait_for(lambda: any(d['online'] for d in json.loads(subprocess.check_output(cli + ['devices', 'list'], env=env))))
         sessions = []
-        for name, marker in [('older', 'OLDER_TERMINAL_OK'), ('newer', 'NEWEST_TERMINAL_OK')]:
-            cwd = work / name
-            cwd.mkdir()
-            master, slave = pty.openpty()
-            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
-            process = subprocess.Popen(cli + ['--cwd', str(cwd), '--', '/bin/sh', '-c', f"printf '{marker}\\n'; exec /bin/sh"],
-                                       stdin=slave, stdout=slave, stderr=slave, env=dict(env, TERM='xterm-256color'), start_new_session=True)
-            os.close(slave)
-            terminals.append(process)
-            masters.append(master)
-            threading.Thread(target=drain, args=(master,), daemon=True).start()
-            def find_session():
-                lines = subprocess.check_output(cli + ['--list'], env=env, text=True).splitlines()
-                return next((line.split('\t')[0] for line in lines if line.endswith(str(cwd))), None)
-            sessions.append(wait_for(find_session))
-        print('Fixture ready: one Desktop, two live PTYs', flush=True)
+        def start_terminals():
+            for name, marker in [('older', 'OLDER_TERMINAL_OK'), ('newer', 'NEWEST_TERMINAL_OK')]:
+                cwd = work / name
+                cwd.mkdir()
+                master, slave = pty.openpty()
+                fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
+                process = subprocess.Popen(cli + ['--cwd', str(cwd), '--', '/bin/sh', '-c', f"printf '{marker}\\n'; exec /bin/sh"],
+                                           stdin=slave, stdout=slave, stderr=slave, env=dict(env, TERM='xterm-256color'), start_new_session=True)
+                os.close(slave)
+                terminals.append(process)
+                masters.append(master)
+                threading.Thread(target=drain, args=(master,), daemon=True).start()
+                def find_session():
+                    lines = subprocess.check_output(cli + ['--list'], env=env, text=True).splitlines()
+                    return next((line.split('\t')[0] for line in lines if line.endswith(str(cwd))), None)
+                sessions.append(wait_for(find_session))
+        if not args.late_session:
+            start_terminals()
+        print('Fixture ready: one Desktop; PTYs ' + ('will start later' if args.late_session else 'running'), flush=True)
         adb('install', '-r', ROOT / 'apps/android/app/build/outputs/apk/debug/app-debug.apk', capture_output=True)
         adb('install', '-r', ROOT / 'apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk', capture_output=True)
         adb('shell', 'am', 'force-stop', package, capture_output=True)
         adb('shell', 'run-as', package, 'mkdir', '-p', 'files')
-        fixture = dict(server=url, username=username, password=password, oldest=sessions[0], newest=sessions[1])
+        fixture = dict(server=url, username=username, password=password, oldest=sessions[0] if sessions else '', newest=sessions[1] if sessions else '', late_desktop=args.late_desktop, late_session=args.late_session)
         adb('shell', f"run-as {package} sh -c 'cat > files/autoconnect-fixture.json'", input=json.dumps(fixture).encode(), capture_output=True)
-        adb('shell', 'run-as', package, 'rm', '-f', 'files/autoconnect-results.json', capture_output=True)
+        adb('shell', 'run-as', package, 'rm', '-f', 'files/autoconnect-results.json', 'files/autoconnect-waiting.json', capture_output=True)
         adb('reverse', f'tcp:{port}', f'tcp:{port}', capture_output=True)
         reversed_port = True
         adb('shell', 'input', 'keyevent', 'KEYCODE_WAKEUP')
         adb('shell', 'wm', 'dismiss-keyguard')
-        with (args.output / 'instrumentation.log').open('wb') as log:
-            adb('shell', 'am', 'instrument', '-w', '-r', '-e', 'class', 'com.yxf.aterminal.AutoConnectTest',
-                package + '.test/androidx.test.runner.AndroidJUnitRunner', stdout=log, stderr=subprocess.STDOUT, timeout=180)
-        transcript = (args.output / 'instrumentation.log').read_text()
-        for name in ['latest', 'devices', 'reconnected']:
-            result = subprocess.run(['adb', '-s', args.serial, 'exec-out', 'run-as', package, 'cat', f'files/autoconnect-{name}.png'], capture_output=True)
-            if result.returncode == 0:
-                (args.output / f'{name}.png').write_bytes(result.stdout)
-        assert 'OK (1 test)' in transcript, transcript
-        report = adb('exec-out', 'run-as', package, 'cat', 'files/autoconnect-results.json', capture_output=True).stdout
-        (args.output / 'results.json').write_bytes(report)
-        assert json.loads(report)['passed']
-        print('PASS:', args.output / 'results.json', flush=True)
+        if args.login_persistence:
+            reports = []
+            for phase in ['login', 'restored', 'offline', 'logout', 'signedout', 'relogin']:
+                adb('shell', 'am', 'force-stop', package, capture_output=True)
+                if phase == 'offline':
+                    adb('reverse', '--remove', f'tcp:{port}', capture_output=True)
+                    reversed_port = False
+                elif not reversed_port:
+                    adb('reverse', f'tcp:{port}', f'tcp:{port}', capture_output=True)
+                    reversed_port = True
+                adb('shell', 'run-as', package, 'rm', '-f', f'files/login-{phase}.json', capture_output=True)
+                log_path = args.output / f'{phase}.log'
+                with log_path.open('wb') as log:
+                    adb('shell', 'am', 'instrument', '-w', '-r', '-e', 'class', 'com.yxf.aterminal.LoginPersistenceTest',
+                        '-e', 'phase', phase, package + '.test/androidx.test.runner.AndroidJUnitRunner',
+                        stdout=log, stderr=subprocess.STDOUT, timeout=120)
+                transcript = log_path.read_text()
+                assert 'OK (1 test)' in transcript, transcript
+                report = json.loads(adb('exec-out', 'run-as', package, 'cat', f'files/login-{phase}.json', capture_output=True).stdout)
+                assert report['passed']
+                reports.append(report)
+                print('PASS:', phase, flush=True)
+            assert len({report['pid'] for report in reports}) == len(reports), reports
+            assert primary_preferences() == baseline, 'Primary account preferences changed'
+            (args.output / 'results.json').write_text(json.dumps(dict(passed=True, phases=reports, primary_preferences_unchanged=True), indent=2))
+        else:
+            if args.late_desktop:
+                subprocess.run(cli + ['auth', 'logout'], env=env, capture_output=True, check=True)
+            with (args.output / 'instrumentation.log').open('wb') as log:
+                if args.late_desktop or args.late_session:
+                    test = subprocess.Popen(['adb', '-s', args.serial, 'shell', 'am', 'instrument', '-w', '-r', '-e', 'class',
+                                             'com.yxf.aterminal.AutoConnectTest', package + '.test/androidx.test.runner.AndroidJUnitRunner'], stdout=log, stderr=subprocess.STDOUT)
+                    try:
+                        def waiting_for_desktop():
+                            if test.poll() is not None:
+                                raise RuntimeError('Instrumentation ended before the late-Desktop checkpoint: ' + (args.output / 'instrumentation.log').read_text())
+                            result = subprocess.run(['adb', '-s', args.serial, 'exec-out', 'run-as', package, 'cat', 'files/autoconnect-waiting.json'], capture_output=True)
+                            return result.returncode == 0 and result.stdout == b'ready'
+                        wait_for(waiting_for_desktop)
+                        if args.late_desktop:
+                            subprocess.run(cli + ['auth', 'login', '--server', url, '--username', username, '--name', 'AutoConnect Desktop', '--password-stdin'],
+                                           env=env, input=password + '\n', text=True, capture_output=True, check=True)
+                        else:
+                            start_terminals()
+                            fixture.update(oldest=sessions[0], newest=sessions[1])
+                            adb('shell', f"run-as {package} sh -c 'cat > files/autoconnect-fixture.json'", input=json.dumps(fixture).encode(), capture_output=True)
+                        assert test.wait(timeout=180) == 0
+                    finally:
+                        if test.poll() is None:
+                            test.terminate(); test.wait(timeout=10)
+                else:
+                    adb('shell', 'am', 'instrument', '-w', '-r', '-e', 'class', 'com.yxf.aterminal.MobileInputLayoutTest' if args.input_layout else 'com.yxf.aterminal.AutoConnectTest',
+                    package + '.test/androidx.test.runner.AndroidJUnitRunner', stdout=log, stderr=subprocess.STDOUT, timeout=180)
+            transcript = (args.output / 'instrumentation.log').read_text()
+            for name in ['latest', 'devices', 'reconnected', 'special-keys', 'landscape', 'agent-fullscreen-landscape', 'agent-fullscreen-portrait', 'agent-landscape-keyboard', 'font-six']:
+                result = subprocess.run(['adb', '-s', args.serial, 'exec-out', 'run-as', package, 'cat', f'files/autoconnect-{name}.png'], capture_output=True)
+                if result.returncode == 0:
+                    (args.output / f'{name}.png').write_bytes(result.stdout)
+            assert 'OK (1 test)' in transcript, transcript
+            report = adb('exec-out', 'run-as', package, 'cat', 'files/autoconnect-results.json', capture_output=True).stdout
+            (args.output / 'results.json').write_bytes(report)
+            assert json.loads(report)['passed']
+            print('PASS:', args.output / 'results.json', flush=True)
     finally:
         subprocess.run(['adb', '-s', args.serial, 'shell', 'am', 'force-stop', package], capture_output=True)
         subprocess.run(['adb', '-s', args.serial, 'shell', 'run-as', package, 'rm', '-f', 'files/autoconnect-fixture.json'], capture_output=True)
+        if args.login_persistence:
+            subprocess.run(['adb', '-s', args.serial, 'shell', 'run-as', package, 'rm', '-f', 'shared_prefs/acceptance-account.xml', 'files/login-test-device.txt'], capture_output=True)
         if reversed_port:
             subprocess.run(['adb', '-s', args.serial, 'reverse', '--remove', f'tcp:{port}'], capture_output=True)
         for process in terminals:
