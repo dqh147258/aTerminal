@@ -184,6 +184,7 @@ impl Store {
         )?;
         db.busy_timeout(std::time::Duration::from_secs(3))?;
         db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA auto_vacuum=INCREMENTAL; BEGIN IMMEDIATE;
+          CREATE TABLE IF NOT EXISTS image_uploads(id TEXT PRIMARY KEY,scope TEXT NOT NULL,mime TEXT NOT NULL,size INTEGER NOT NULL,body BLOB NOT NULL,created INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS model_usage(id TEXT PRIMARY KEY,scope TEXT NOT NULL,run TEXT NOT NULL,root TEXT NOT NULL,stage TEXT NOT NULL,value TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value BLOB NOT NULL);
           CREATE TABLE IF NOT EXISTS owner_retention(owner TEXT NOT NULL,desktop TEXT NOT NULL,rule TEXT,PRIMARY KEY(owner,desktop));
@@ -285,10 +286,33 @@ impl Store {
         allow_write: bool,
         admit: impl FnOnce() -> Result<()>,
     ) -> Result<UserAccepted> {
+        self.accept_user_images(
+            scope,
+            request,
+            message,
+            status,
+            active,
+            allow_write,
+            &[],
+            admit,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn accept_user_images(
+        &self,
+        scope: &Scope,
+        request: &str,
+        message: &str,
+        status: Value,
+        active: Option<&str>,
+        allow_write: bool,
+        images: &[String],
+        admit: impl FnOnce() -> Result<()>,
+    ) -> Result<UserAccepted> {
         ensure!(
             !request.is_empty()
                 && request.len() <= 128
-                && !message.trim().is_empty()
+                && (!message.trim().is_empty() || !images.is_empty())
                 && message.len() <= 16000,
             "invalid_user_message"
         );
@@ -296,9 +320,34 @@ impl Store {
         let mut db = self.db.lock().unwrap();
         let tx = db.transaction()?;
         ensure_scope(&tx, &key)?;
-        let hash = blake3::hash(serde_json::to_string(&(message, allow_write))?.as_bytes())
-            .to_hex()
-            .to_string();
+        ensure!(images.len() <= 4, "image_count_limit");
+        let mut pictures = Vec::new();
+        let mut total = 0usize;
+        for upload in images {
+            let (mime, size, bytes): (String, i64, Vec<u8>) = tx
+                .query_row(
+                    "SELECT mime,size,body FROM image_uploads WHERE id=?1 AND scope=?2",
+                    params![upload, key],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .context("image_upload_expired_retry")?;
+            ensure!(bytes.len() as i64 == size, "image_upload_incomplete");
+            validate_image(&mime, &bytes)?;
+            total += size as usize;
+            ensure!(total <= 8 * 1024 * 1024, "image_total_limit");
+            pictures.push((mime, bytes));
+        }
+        let hashes: Vec<_> = pictures
+            .iter()
+            .map(|(mime, bytes)| (mime, blake3::hash(bytes).to_hex().to_string()))
+            .collect();
+        // Preserve old text-only idempotency hashes; re-uploaded identical bytes retain identity.
+        let payload = if hashes.is_empty() {
+            serde_json::to_string(&(message, allow_write))?
+        } else {
+            serde_json::to_string(&(message, allow_write, hashes))?
+        };
+        let hash = blake3::hash(payload.as_bytes()).to_hex().to_string();
         if let Some((old, root, run)) = tx
             .query_row(
                 "SELECT hash,root,run FROM users WHERE scope=?1 AND request=?2",
@@ -354,6 +403,34 @@ impl Store {
             ],
         )?;
         let seq = tx.last_insert_rowid();
+        let mut refs = Vec::new();
+        for (index, (mime, bytes)) in pictures.iter().enumerate() {
+            let record_id = id();
+            let hash = blake3::hash(bytes).to_hex().to_string();
+            let meta = json!({"binary":true,"mime_type":mime,"source":"user_image","history_unit_id":user_id});
+            tx.execute(
+                "INSERT OR IGNORE INTO blobs VALUES(?1,?2)",
+                params![hash, bytes],
+            )?;
+            tx.execute(
+                "INSERT INTO records VALUES(?1,?2,?3,'image',?4,?5,NULL,0,?6)",
+                params![
+                    record_id,
+                    key,
+                    format!("user/{request}/image/{index}"),
+                    hash,
+                    meta.to_string(),
+                    seq
+                ],
+            )?;
+            refs.push(json!({"record_id":record_id,"media_type":mime,"bytes":bytes.len()}));
+        }
+        if !refs.is_empty() {
+            tx.execute(
+                "UPDATE events SET value=?2 WHERE seq=?1",
+                params![seq, json!({"message":message,"images":refs}).to_string()],
+            )?;
+        }
         tx.execute(
             "INSERT INTO users VALUES(?1,?2,?3,?4,?5)",
             params![key, request, hash, root, run],
@@ -507,6 +584,67 @@ impl Store {
             .optional()?;
         raw.map(|raw| Ok(serde_json::from_str(&raw)?)).transpose()
     }
+    /// A retry uses the same binding; the legacy (owner, desktop, None) binding is untouched.
+    pub fn create_global(&self, owner: &str, desktop: &str, request: &str) -> Result<Scope> {
+        ensure!(
+            !request.is_empty() && request.len() <= 128,
+            "invalid_request_id"
+        );
+        let binding = serde_json::to_string(&(owner, desktop, "global", request))?;
+        let mut db = self.db.lock().unwrap();
+        let tx = db.transaction()?;
+        let raw: Option<String> = tx
+            .query_row(
+                "SELECT scope FROM agents WHERE binding=?1",
+                [&binding],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(raw) = raw {
+            return Ok(serde_json::from_str(&raw)?);
+        }
+        let scope = Scope {
+            owner: owner.into(),
+            desktop: desktop.into(),
+            agent: id(),
+            session: None,
+        };
+        tx.execute(
+            "INSERT INTO agents VALUES(?1,?2)",
+            params![binding, scope.key()?],
+        )?;
+        ensure_scope(&tx, &scope.key()?)?;
+        tx.commit()?;
+        Ok(scope)
+    }
+    /// Stable rowid pagination includes old empty default conversations without duplicating history.
+    pub fn global_page(&self, owner: &str, desktop: &str, before: Option<i64>) -> Result<Value> {
+        let db = self.db.lock().unwrap();
+        let mut query = db.prepare("SELECT rowid,scope,binding FROM agents WHERE json_extract(scope,'$.owner')=?1 AND json_extract(scope,'$.desktop')=?2 AND json_extract(scope,'$.session') IS NULL AND rowid<?3 ORDER BY rowid DESC LIMIT 25")?;
+        let rows = query
+            .query_map(params![owner, desktop, before.unwrap_or(i64::MAX)], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let more = rows.len() > 24;
+        let mut result = Vec::new();
+        let mut next = None;
+        let legacy = serde_json::to_string(&(owner, desktop, Option::<String>::None))?;
+        for (row, key, binding) in rows.into_iter().take(24) {
+            let scope: Scope = serde_json::from_str(&key)?;
+            let title: Option<String> = db.query_row("SELECT substr(coalesce(json_extract(value,'$.message'),json_extract(value,'$.text'),''),1,48) FROM events WHERE scope=?1 AND kind='user' ORDER BY seq LIMIT 1", [&key], |r| r.get(0)).optional()?;
+            let recent: Option<(i64, String)> = db.query_row("SELECT at,substr(coalesce(json_extract(value,'$.text'),json_extract(value,'$.message'),''),1,160) FROM events WHERE scope=?1 AND kind IN ('user','assistant','interaction') ORDER BY seq DESC LIMIT 1", [&key], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
+            let reply: i64 = db.query_row("SELECT coalesce(max(seq),0) FROM events WHERE scope=?1 AND kind IN ('assistant','interaction') AND length(coalesce(json_extract(value,'$.text'),''))>0", [&key], |r| r.get(0))?;
+            let (updated, preview) = recent.unwrap_or_default();
+            result.push(json!({"scope":scope,"legacy":binding==legacy,"title":title.filter(|s| !s.is_empty()).unwrap_or_else(|| "新会话".into()),"preview":preview,"updated_at":updated,"last_reply_sequence":reply}));
+            next = Some(row);
+        }
+        Ok(json!({"conversations":result,"cursor":if more { next } else { None }}))
+    }
     pub fn agent_by_id(&self, owner: &str, desktop: &str, id: &str) -> Result<Option<Scope>> {
         let db = self.db.lock().unwrap();
         let raw:Option<String>=db.query_row("SELECT scope FROM agents WHERE json_extract(scope,'$.agent')=?1 AND json_extract(scope,'$.owner')=?2 AND json_extract(scope,'$.desktop')=?3",params![id,owner,desktop],|r|r.get(0)).optional()?;
@@ -587,6 +725,94 @@ impl Store {
                 Ok(json!({"action_id":r.get::<_,String>(0)?,"state":r.get::<_,String>(1)?}))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+    /// Uploads expire after 24 hours; private scoped staging never becomes model text.
+    pub fn image_begin(&self, scope: &Scope, mime: &str, size: usize) -> Result<String> {
+        ensure!(
+            matches!(
+                mime,
+                "image/png" | "image/jpeg" | "image/webp" | "image/gif"
+            ),
+            "unsupported_image_type"
+        );
+        ensure!(size > 0 && size <= 4 * 1024 * 1024, "image_size_limit");
+        let mut db = self.db.lock().unwrap();
+        let tx = db.transaction()?;
+        tx.execute(
+            "DELETE FROM image_uploads WHERE created<?1",
+            [now() - 86_400_000],
+        )?;
+        let staged: i64 =
+            tx.query_row("SELECT COALESCE(SUM(size),0) FROM image_uploads", [], |r| {
+                r.get(0)
+            })?;
+        ensure!(
+            staged + size as i64 <= 128 * 1024 * 1024,
+            "image_staging_full"
+        );
+        let token = id();
+        tx.execute(
+            "INSERT INTO image_uploads VALUES(?1,?2,?3,?4,?5,?6)",
+            params![
+                token,
+                scope.key()?,
+                mime,
+                size as i64,
+                Vec::<u8>::new(),
+                now()
+            ],
+        )?;
+        tx.commit()?;
+        Ok(token)
+    }
+    pub fn image_release(&self, scope: &Scope, token: &str) -> Result<()> {
+        self.db.lock().unwrap().execute(
+            "DELETE FROM image_uploads WHERE id=?1 AND scope=?2",
+            params![token, scope.key()?],
+        )?;
+        Ok(())
+    }
+    pub fn image_chunk(
+        &self,
+        scope: &Scope,
+        token: &str,
+        offset: usize,
+        chunk: &[u8],
+    ) -> Result<usize> {
+        ensure!(
+            !chunk.is_empty() && chunk.len() <= 32768,
+            "image_chunk_limit"
+        );
+        let mut db = self.db.lock().unwrap();
+        let tx = db.transaction()?;
+        let (size, mut bytes): (i64, Vec<u8>) = tx
+            .query_row(
+                "SELECT size,body FROM image_uploads WHERE id=?1 AND scope=?2",
+                params![token, scope.key()?],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .context("image_upload_not_found")?;
+        ensure!(
+            offset <= bytes.len()
+                && offset
+                    .checked_add(chunk.len())
+                    .is_some_and(|end| end as i64 <= size),
+            "image_offset_invalid"
+        );
+        if offset < bytes.len() {
+            ensure!(
+                bytes.get(offset..offset + chunk.len()) == Some(chunk),
+                "image_chunk_conflict"
+            );
+        } else {
+            bytes.extend_from_slice(chunk);
+            tx.execute(
+                "UPDATE image_uploads SET body=?2 WHERE id=?1",
+                params![token, bytes],
+            )?;
+        }
+        tx.commit()?;
+        Ok(bytes.len())
     }
     pub fn record_bytes(&self, scope: &Scope, record_id: &str) -> Result<(Record, Vec<u8>)> {
         let db = self.db.lock().unwrap();
@@ -1349,8 +1575,14 @@ impl Store {
             if item.kind == "interaction" {
                 let updates = unit_updates(&db, &item.id)?;
                 item.value["updates"] = json!(updates);
+                item.value["records"] = history_records(&db, item.sequence)?;
             }
             if serde_json::to_vec(&item.value)?.len() > 12 * 1024 {
+                let record_id = if item.kind == "interaction" {
+                    history_snapshot(&db, &key, item)?
+                } else {
+                    item.id.clone()
+                };
                 let text = item.value["text"]
                     .as_str()
                     .or_else(|| item.value["message"].as_str())
@@ -1360,7 +1592,7 @@ impl Store {
                 while !text.is_char_boundary(end) {
                     end -= 1;
                 }
-                item.value = json!({"text":&text[..end],"record_id":item.id,"partial":true});
+                item.value = json!({"text":&text[..end],"record_id":record_id,"partial":true});
             }
         }
         let next = if has_more {
@@ -1694,6 +1926,44 @@ fn unit_updates(db: &Connection, unit: &str) -> Result<Vec<Value>> {
         .map(|s| Ok(serde_json::from_str(&s)?))
         .collect()
 }
+/// The bounded update tail is not a complete index of a multi-tool interaction's records.
+fn history_records(db: &Connection, sequence: i64) -> Result<Value> {
+    let mut query = db.prepare("SELECT id,kind,json_extract(metadata,'$.source') FROM records WHERE event=?1 AND kind<>'history_event' ORDER BY rowid LIMIT 1024")?;
+    Ok(json!(query.query_map([sequence], |row| Ok(json!({
+        "record_id":row.get::<_, String>(0)?, "kind":row.get::<_, String>(1)?, "source":row.get::<_, Option<String>>(2)?
+    })))?.collect::<rusqlite::Result<Vec<_>>>()?))
+}
+/// Interaction updates are mutable; each advertised full-body UUID must remain immutable.
+fn history_snapshot(db: &Connection, scope: &str, item: &HistoryItem) -> Result<String> {
+    let version: i64 = db.query_row(
+        "SELECT coalesce(max(seq),0) FROM unit_updates WHERE unit=?1",
+        [&item.id],
+        |row| row.get(0),
+    )?;
+    let request = format!("history_snapshot/{}/{version}", item.id);
+    let existing: Option<String> = db
+        .query_row(
+            "SELECT id FROM records WHERE scope=?1 AND request=?2",
+            params![scope, request],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(id) = existing {
+        return Ok(id);
+    }
+    let body = bounded_json(&item.value, 4 * 1024 * 1024)?;
+    let hash = blake3::hash(body.as_bytes()).to_hex().to_string();
+    let record_id = id();
+    let tx = db.unchecked_transaction()?;
+    tx.execute(
+        "INSERT OR IGNORE INTO blobs VALUES(?1,?2)",
+        params![hash, body.as_bytes()],
+    )?;
+    tx.execute("INSERT INTO records VALUES(?1,?2,?3,'history_event',?4,?5,NULL,0,?6)",
+        params![record_id, scope, request, hash, json!({"source":"history_event","event_kind":item.kind,"history_unit_id":item.id,"update_sequence":version}).to_string(), item.sequence])?;
+    tx.commit()?;
+    Ok(record_id)
+}
 fn materialize_event(db: &Connection, requester: &Scope, record_id: &str) -> Result<()> {
     let exists: bool = db.query_row(
         "SELECT EXISTS(SELECT 1 FROM records WHERE id=?1)",
@@ -1890,6 +2160,87 @@ mod tests {
             agent: "agent".into(),
             session: Some("session".into()),
         }
+    }
+    #[test]
+    fn uploaded_images_are_scoped_durable_atomic_and_retryable() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("data/images.db");
+        let store = Store::open(&path).unwrap();
+        let scope = scope();
+        let bytes = b"\x89PNG\r\n\x1a\nimage-data";
+        let upload = store.image_begin(&scope, "image/png", bytes.len()).unwrap();
+        let mut other = scope.clone();
+        other.owner = "other".into();
+        assert!(store.image_chunk(&other, &upload, 0, bytes).is_err());
+        assert!(store.image_chunk(&scope, &upload, 1, bytes).is_err());
+        store.image_chunk(&scope, &upload, 0, &bytes[..8]).unwrap();
+        assert!(
+            store
+                .accept_user_images(
+                    &scope,
+                    "request",
+                    "",
+                    json!({}),
+                    None,
+                    true,
+                    std::slice::from_ref(&upload),
+                    || Ok(())
+                )
+                .is_err()
+        );
+        store.image_chunk(&scope, &upload, 8, &bytes[8..]).unwrap();
+        store.image_chunk(&scope, &upload, 8, &bytes[8..]).unwrap();
+        let accepted = store
+            .accept_user_images(
+                &scope,
+                "request",
+                "",
+                json!({}),
+                None,
+                true,
+                &[upload],
+                || Ok(()),
+            )
+            .unwrap();
+        let history = store.history(&scope, None).unwrap();
+        let user = history.items.iter().find(|v| v.kind == "user").unwrap();
+        let record_id = user.value["images"][0]["record_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(!user.value.to_string().contains("image-data"));
+        assert_eq!(store.record_bytes(&scope, &record_id).unwrap().1, bytes);
+        assert!(store.record_bytes(&other, &record_id).is_err());
+        let retry = store.image_begin(&scope, "image/png", bytes.len()).unwrap();
+        store.image_chunk(&scope, &retry, 0, bytes).unwrap();
+        let again = store
+            .accept_user_images(
+                &scope,
+                "request",
+                "",
+                json!({}),
+                Some(&accepted.run_id),
+                true,
+                &[retry],
+                || panic!("retry must bypass admission"),
+            )
+            .unwrap();
+        assert!(again.duplicate);
+        assert_eq!(again.user_message_id, accepted.user_message_id);
+        assert!(
+            store
+                .image_begin(&scope, "image/png", 4 * 1024 * 1024 + 1)
+                .is_err()
+        );
+        drop(store);
+        assert_eq!(
+            Store::open(&path)
+                .unwrap()
+                .record_bytes(&scope, &record_id)
+                .unwrap()
+                .1,
+            bytes
+        );
     }
     #[test]
     fn status_deduplicates_across_sources_restarts_and_metadata() {
@@ -2264,6 +2615,153 @@ mod retention_contracts {
 mod history_contracts {
     use super::*;
     #[test]
+    fn bounded_updates_do_not_drop_earlier_tool_record_references() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&temp.path().join("data/history.db")).unwrap();
+        let scope = store.agent("owner", "desktop", Some("session")).unwrap();
+        let run = store
+            .accept_user(&scope, "request", "read", json!({}))
+            .unwrap();
+        store
+            .append_identified(
+                &scope,
+                "interaction",
+                &run.root_user_message_id,
+                "unit",
+                json!({"text":"工具调用","tools":[{"name":"read_terminal"}]}),
+                None,
+            )
+            .unwrap();
+        let mut ids = Vec::new();
+        for n in 0..10 {
+            for (source, key) in [
+                ("tool_call", "call_record_id"),
+                ("tool_result", "result_record_id"),
+            ] {
+                let record = store
+                    .archive(
+                        &scope,
+                        &run.run_id,
+                        &format!("{n}/{source}"),
+                        "associated_text",
+                        json!({"history_unit_id":"unit","source":source}),
+                        b"{}",
+                    )
+                    .unwrap();
+                store
+                    .unit_update(
+                        &scope,
+                        "unit",
+                        json!({key:record.id,"name":"read_terminal"}),
+                    )
+                    .unwrap();
+                ids.push(record.id);
+            }
+        }
+        let value = store
+            .history(&scope, None)
+            .unwrap()
+            .items
+            .into_iter()
+            .find(|item| item.id == "unit")
+            .unwrap()
+            .value;
+        assert_eq!(value["updates"].as_array().unwrap().len(), 16);
+        let records = value["records"].as_array().unwrap();
+        assert_eq!(records.len(), 20);
+        assert_eq!(records[0]["record_id"], ids[0]);
+        assert_eq!(records[0]["source"], "tool_call");
+        assert_eq!(records[1]["source"], "tool_result");
+    }
+    #[test]
+    fn large_interaction_versions_have_distinct_immutable_records() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&temp.path().join("data/history.db")).unwrap();
+        let scope = store.agent("owner", "desktop", Some("session")).unwrap();
+        store
+            .append_identified(
+                &scope,
+                "interaction",
+                "root",
+                "unit",
+                json!({"text":"说明".repeat(3000),"tools":[{"name":"read_terminal"}]}),
+                None,
+            )
+            .unwrap();
+        store
+            .unit_update(
+                &scope,
+                "unit",
+                json!({"state":"running","call_record_id":"call"}),
+            )
+            .unwrap();
+        let preview = || {
+            store
+                .history(&scope, None)
+                .unwrap()
+                .items
+                .into_iter()
+                .find(|item| item.id == "unit")
+                .unwrap()
+                .value
+        };
+        let first = preview()["record_id"].as_str().unwrap().to_owned();
+        assert_ne!(first, "unit");
+        assert_eq!(preview()["record_id"], first);
+        store
+            .unit_update(
+                &scope,
+                "unit",
+                json!({"state":"finished","result_record_id":"result"}),
+            )
+            .unwrap();
+        let second = preview()["record_id"].as_str().unwrap().to_owned();
+        assert_ne!(first, second);
+        assert_eq!(preview()["record_id"], second);
+        let read = |id: &str| {
+            let mut cursor = None;
+            let mut body = String::new();
+            loop {
+                let part = store
+                    .record_page(&scope, id, "body", cursor.as_deref(), 12288)
+                    .unwrap();
+                body.push_str(part["body"].as_str().unwrap());
+                cursor = part["cursor"].as_str().map(str::to_owned);
+                if cursor.is_none() {
+                    break;
+                }
+            }
+            serde_json::from_str::<Value>(&body).unwrap()
+        };
+        assert_eq!(read(&first)["updates"].as_array().unwrap().len(), 1);
+        let current = read(&second);
+        assert_eq!(current["updates"][1]["state"], "finished");
+        assert_eq!(current["updates"][1]["result_record_id"], "result");
+        assert_eq!(current["text"], "说明".repeat(3000));
+        assert!(current["records"].as_array().unwrap().is_empty());
+        store
+            .append(
+                &scope,
+                "assistant",
+                Some("next-root"),
+                json!({"text":"Next task"}),
+            )
+            .unwrap();
+        store
+            .clean(&scope, &Retention::KeepLast { count: 1 }, false)
+            .unwrap();
+        assert!(
+            store
+                .record_page(&scope, &first, "body", None, 12288)
+                .is_err()
+        );
+        assert!(
+            store
+                .record_page(&scope, &second, "body", None, 12288)
+                .is_err()
+        );
+    }
+    #[test]
     fn fifty_large_items_remain_bounded_and_originals_are_lossless() {
         let temp = tempfile::tempdir().unwrap();
         let store = Store::open(&temp.path().join("data/history.db")).unwrap();
@@ -2395,5 +2893,169 @@ mod tui_anchor_contracts {
             .unwrap();
         assert_eq!(all_tui["search_anchor_status"], "unavailable_tui_only");
         assert_eq!(all_tui["tail_anchor"], metadata["tail"]);
+    }
+}
+
+fn validate_image(mime: &str, bytes: &[u8]) -> Result<()> {
+    let valid = match mime {
+        "image/png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "image/jpeg" => bytes.starts_with(&[0xff, 0xd8, 0xff]),
+        "image/gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
+        "image/webp" => bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP"),
+        _ => false,
+    };
+    ensure!(valid, "image_format_mismatch");
+    Ok(())
+}
+
+#[cfg(test)]
+mod global_conversation_contracts {
+    use super::*;
+
+    #[test]
+    fn globals_are_idempotent_isolated_and_preserve_legacy_history_after_restart() {
+        let path = std::env::temp_dir()
+            .join(format!("global-{}", id()))
+            .join("history.sqlite3");
+        let legacy_id;
+        let new_id;
+        {
+            let store = Store::open(&path).unwrap();
+            let legacy = store.agent("owner", "desktop", None).unwrap();
+            legacy_id = legacy.agent.clone();
+            store
+                .accept_user(&legacy, "old-request", "旧全局历史", json!({}))
+                .unwrap();
+            store
+                .append(&legacy, "assistant", None, json!({"text":"旧回复"}))
+                .unwrap();
+            let one = store
+                .create_global("owner", "desktop", "new-request")
+                .unwrap();
+            new_id = one.agent.clone();
+            assert_eq!(
+                one,
+                store
+                    .create_global("owner", "desktop", "new-request")
+                    .unwrap()
+            );
+            let two = store
+                .create_global("owner", "desktop", "another-request")
+                .unwrap();
+            assert_ne!(one.agent, two.agent);
+            assert!(one.session.is_none());
+            assert!(
+                store
+                    .agent_by_id("other", "desktop", &one.agent)
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(
+                store
+                    .agent_by_id("owner", "other", &one.agent)
+                    .unwrap()
+                    .is_none()
+            );
+            store
+                .accept_user(&one, "same-request", "新对话一", json!({}))
+                .unwrap();
+            store
+                .accept_user(&two, "same-request", "新对话二", json!({}))
+                .unwrap();
+            let reply = store
+                .append(&one, "assistant", None, json!({"text":"独立回复"}))
+                .unwrap();
+            let terminal = store.agent("owner", "desktop", Some("terminal")).unwrap();
+            store
+                .accept_user(&terminal, "same-request", "终端历史", json!({}))
+                .unwrap();
+            let page = store.global_page("owner", "desktop", None).unwrap();
+            let rows = page["conversations"].as_array().unwrap();
+            assert_eq!(rows.len(), 3);
+            let summary = rows
+                .iter()
+                .find(|r| r["scope"]["agent"] == one.agent)
+                .unwrap();
+            assert_eq!(summary["title"], "新对话一");
+            assert_eq!(summary["preview"], "独立回复");
+            assert_eq!(summary["last_reply_sequence"], reply);
+            assert_eq!(
+                store
+                    .history(&two, None)
+                    .unwrap()
+                    .items
+                    .iter()
+                    .filter(|i| i.kind == "assistant")
+                    .count(),
+                0
+            );
+            assert_eq!(rows.iter().filter(|r| r["legacy"] == true).count(), 1);
+        }
+        {
+            let store = Store::open(&path).unwrap();
+            assert_eq!(
+                store.agent("owner", "desktop", None).unwrap().agent,
+                legacy_id
+            );
+            assert_eq!(
+                store
+                    .create_global("owner", "desktop", "new-request")
+                    .unwrap()
+                    .agent,
+                new_id
+            );
+            let page = store.global_page("owner", "desktop", None).unwrap();
+            assert_eq!(page["conversations"].as_array().unwrap().len(), 3);
+            let legacy = store
+                .agent_by_id("owner", "desktop", &legacy_id)
+                .unwrap()
+                .unwrap();
+            assert!(
+                store
+                    .history(&legacy, None)
+                    .unwrap()
+                    .items
+                    .iter()
+                    .any(|i| i.value["text"] == "旧回复")
+            );
+        }
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn global_catalog_pages_do_not_drop_older_conversations_or_include_other_scopes() {
+        let path = std::env::temp_dir()
+            .join(format!("global-page-{}", id()))
+            .join("history.sqlite3");
+        let store = Store::open(&path).unwrap();
+        assert!(
+            store.global_page("owner", "desktop", None).unwrap()["conversations"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        for i in 0..55 {
+            store
+                .create_global("owner", "desktop", &format!("request-{i}"))
+                .unwrap();
+        }
+        store.create_global("other", "desktop", "request").unwrap();
+        store.agent("owner", "desktop", Some("terminal")).unwrap();
+        let mut cursor = None;
+        let mut ids = std::collections::HashSet::new();
+        loop {
+            let page = store.global_page("owner", "desktop", cursor).unwrap();
+            assert!(page.to_string().len() < 65536);
+            for row in page["conversations"].as_array().unwrap() {
+                assert!(ids.insert(row["scope"]["agent"].as_str().unwrap().to_owned()));
+            }
+            cursor = page["cursor"].as_i64();
+            if cursor.is_none() {
+                break;
+            }
+        }
+        assert_eq!(ids.len(), 55);
+        drop(store);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

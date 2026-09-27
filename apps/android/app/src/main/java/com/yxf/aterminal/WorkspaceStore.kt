@@ -141,6 +141,15 @@ class WorkspaceMemory @JvmOverloads constructor(context: Context, server: String
         sessions.forEach { (id, exited) -> known.put(id, exited) }
         prefs.edit().putString(key, known.toString()).apply()
     }
+    fun archive(device: String, rows: List<Conversation>) {
+        val key = "archives-" + ChatStore.digest(device)
+        val known = JSONObject(prefs.getString(key, "{}")!!)
+        rows.forEach { known.put(it.sessionId, JSONObject().put("device", device).put("session", it.sessionId).put("title", it.title)) }
+        prefs.edit().putString(key, known.toString()).apply()
+    }
+    fun archives(): List<Conversation> = prefs.all.filterKeys { it.startsWith("archives-") }.values.filterIsInstance<String>().flatMap { raw ->
+        val rows = JSONObject(raw); rows.keys().asSequence().map { id -> val item = rows.getJSONObject(id); Conversation(item.getString("device"), id, item.getString("title")) }.toList()
+    }
     fun closed(device: String, session: String) = JSONObject(prefs.getString("sessions-" + ChatStore.digest(device), "{}")!!).optBoolean(session, false)
     fun clear() { prefs.edit().clear().commit() }
 }

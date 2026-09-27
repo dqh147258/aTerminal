@@ -14,6 +14,8 @@
 | argon2 | 0.5.3 | MIT OR Apache-2.0，https://github.com/RustCrypto/password-hashes |
 | keyring | 3.6.3 | MIT OR Apache-2.0，https://github.com/hwchen/keyring-rs |
 | rpassword | 7.5.4 | Apache-2.0，https://github.com/conradkleinespel/rpassword |
+| Markwon（Android Markdown） | 4.6.2 | Apache-2.0，https://github.com/noties/Markwon；许可证见 APK assets/licenses/markwon.txt |
+| commonmark-java（含 GFM 扩展） | 0.13.0 | BSD-2-Clause，https://github.com/commonmark/commonmark-java；许可证见 APK assets/licenses/commonmark-java.txt |
 | JNA | 5.17.0 | LGPL-2.1-or-later / Apache-2.0 双许可，https://github.com/java-native-access/jna |
 | Lucide（Web Admin/Android 本地图标） | 0.468.0 | ISC，https://github.com/lucide-icons/lucide；许可证见 `crates/server/admin/LUCIDE-LICENSE`、`apps/android/NOTICE-LUCIDE.md` 及 APK assets |
 

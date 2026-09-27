@@ -140,6 +140,7 @@ fn wire_text(text: &str, extra: &Option<Value>, same: bool) -> wire::Text {
 impl Entry {
     pub fn capture(entry: &ContextEntry, provider: &Protocol) -> Result<Self> {
         let mut parts = Vec::new();
+        let mut image_records = entry.artifacts.iter();
         let (role, message_id) = match &entry.message {
             wire::Message::User { content } => {
                 for item in content {
@@ -171,9 +172,8 @@ impl Entry {
                                     .unwrap()
                                     .to_owned()
                             }),
-                            record_id: entry
-                                .artifacts
-                                .first()
+                            record_id: image_records
+                                .next()
                                 .context("image_record_required")?
                                 .clone(),
                         },

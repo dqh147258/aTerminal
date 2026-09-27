@@ -172,6 +172,11 @@ pub struct RunSnapshot {
     pub allow_write: bool,
     pub vision: bool,
 }
+enum RequestStage<'a> {
+    Reply,
+    Analyze(&'a str),
+    Compact,
+}
 struct Mail {
     accepted: UserAccepted,
     message: String,
@@ -247,18 +252,46 @@ impl AgentHost {
         device: &str,
         build: impl FnOnce() -> Result<RunSnapshot>,
     ) -> Result<Value> {
+        self.submit_images(
+            scope,
+            request,
+            message,
+            status,
+            allow_write,
+            device,
+            &[],
+            build,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn submit_images(
+        self: &Arc<Self>,
+        scope: Scope,
+        request: &str,
+        message: &str,
+        status: Value,
+        allow_write: bool,
+        device: &str,
+        images: &[String],
+        build: impl FnOnce() -> Result<RunSnapshot>,
+    ) -> Result<Value> {
         let mut jobs = self.jobs.lock().unwrap();
         if let Some(job) = jobs.get(&scope.agent) {
             let mut state = job.state.lock().unwrap();
             if running(&state.state) {
-                let accepted = self.store.accept_user_checked(
+                let accepted = self.store.accept_user_images(
                     &scope,
                     request,
                     message,
                     status.clone(),
                     Some(&job.run),
                     allow_write,
+                    images,
                     || {
+                        ensure!(
+                            images.is_empty() || job.snapshot.vision,
+                            "model_vision_required"
+                        );
                         ensure!(state.state == "running", "agent_stopping");
                         ensure!(state.queue.len() < 32, "agent_mailbox_full");
                         ensure!(
@@ -296,13 +329,19 @@ impl AgentHost {
             jobs.retain(|_, j| running(&j.state.lock().unwrap().state));
         }
         let snapshot = Arc::new(build()?);
-        let accepted = self.store.accept_user_authorized(
+        ensure!(
+            images.is_empty() || snapshot.vision,
+            "model_vision_required"
+        );
+        let accepted = self.store.accept_user_images(
             &scope,
             request,
             message,
             status.clone(),
             None,
             allow_write,
+            images,
+            || Ok(()),
         )?;
         if accepted.duplicate {
             return Ok(
@@ -443,6 +482,33 @@ impl AgentHost {
         Ok(
             json!({"agent_id":scope.agent,"task_id":accepted.run_id,"root_user_message_id":context.root_user_message_id,"state":"running"}),
         )
+    }
+    fn user_content(&self, scope: &Scope, value: &Value) -> Result<Message> {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        use rig_core::message::{ImageDetail, ImageMediaType};
+        let mut content = Vec::new();
+        if let Some(text) = value["message"].as_str().filter(|s| !s.is_empty()) {
+            content.push(UserContent::text(text));
+        }
+        for id in image_refs(value) {
+            let (record, bytes) = self.store.record_bytes(scope, &id)?;
+            let media = match record.metadata["mime_type"].as_str() {
+                Some("image/png") => ImageMediaType::PNG,
+                Some("image/jpeg") => ImageMediaType::JPEG,
+                Some("image/webp") => ImageMediaType::WEBP,
+                Some("image/gif") => ImageMediaType::GIF,
+                _ => bail!("unsupported_image_type"),
+            };
+            content.push(UserContent::image_base64(
+                STANDARD.encode(bytes),
+                Some(media),
+                Some(ImageDetail::Auto),
+            ));
+        }
+        if content.is_empty() {
+            content.push(UserContent::text(""));
+        }
+        Ok(Message::User { content })
     }
     pub fn state(&self, scope: &Scope) -> Result<Value> {
         if let Some(job) = self.jobs.lock().unwrap().get(&scope.agent) {
@@ -708,10 +774,7 @@ impl AgentHost {
                     continue;
                 }
                 let (origin, message) = match event.kind.as_str() {
-                    "user" => (
-                        Origin::User,
-                        Message::user(event.value["message"].as_str().unwrap_or("")),
-                    ),
+                    "user" => (Origin::User, self.user_content(&job.scope, &event.value)?),
                     "pty_status" | "pty_status_snapshot" => (
                         Origin::PtyStatus,
                         Message::user(format!("Untrusted PTY status observation: {}", event.value)),
@@ -761,6 +824,9 @@ impl AgentHost {
                 };
                 let mut e = entry(origin, &job.root, message);
                 e.id = event.id.clone();
+                if event.kind == "user" {
+                    e.artifacts = image_refs(&event.value);
+                }
                 e.root_user_message_id = event.root_user_message_id;
                 known.insert(event.id);
                 entries.push(e);
@@ -806,7 +872,7 @@ impl AgentHost {
         &self,
         job: &Job,
         entries: &[ContextEntry],
-        analysis: Option<&str>,
+        stage: RequestStage<'_>,
         cancel: watch::Receiver<bool>,
         generation: i64,
     ) -> Result<rig_core::streaming::StreamingCompletionResponse> {
@@ -817,6 +883,11 @@ impl AgentHost {
             .collect::<Vec<_>>();
         self.store
             .pin_context(&job.scope, &job.run, generation, &units)?;
+        let (analysis, visible) = match stage {
+            RequestStage::Reply => (None, true),
+            RequestStage::Analyze(record) => (Some(record), false),
+            RequestStage::Compact => (None, false),
+        };
         let request = job.snapshot.builder.build(entries, analysis)?;
         let bytes = request_size(&request)? as u64;
         ensure!(
@@ -825,7 +896,9 @@ impl AgentHost {
         );
         job.budget
             .reserve(bytes + job.snapshot.builder.settings.max_tokens)?;
-        job.state.lock().unwrap().live.clear();
+        if visible {
+            job.state.lock().unwrap().live.clear();
+        }
         let response = model::collect(
             job.snapshot.model.as_ref(),
             request,
@@ -833,7 +906,7 @@ impl AgentHost {
             job.budget.remaining()?,
             |text| {
                 let mut state = job.state.lock().unwrap();
-                if state.live.len() + text.len() <= 16000 {
+                if visible && state.live.len() + text.len() <= 16000 {
                     state.live.push_str(text);
                 }
             },
@@ -913,7 +986,7 @@ impl AgentHost {
                 .request(
                     job,
                     &entries,
-                    None,
+                    RequestStage::Reply,
                     cancel.clone(),
                     projection.history_generation,
                 )
@@ -977,7 +1050,7 @@ impl AgentHost {
                 .collect::<Vec<_>>();
             let unit = entries.last().unwrap().id.clone();
             let unit_start = entries.len() - 1;
-            self.store.append_identified(&job.scope,"interaction",&job.root,&unit,json!({"tools":pending.iter().map(|p|json!({"name":p.name,"action_id":p.action_id})).collect::<Vec<_>>()}),Some(&job.run))?;
+            self.store.append_identified(&job.scope,"interaction",&job.root,&unit,json!({"text":text,"tools":pending.iter().map(|p|json!({"name":p.name,"action_id":p.action_id})).collect::<Vec<_>>()}),Some(&job.run))?;
             self.save(job, &entries, &mut projection, &pending)?;
             let mut observation = None;
             for (call, action) in calls.iter().zip(&pending) {
@@ -1262,7 +1335,7 @@ impl AgentHost {
                 .request(
                     job,
                     entries,
-                    Some(record),
+                    RequestStage::Analyze(record),
                     cancel.clone(),
                     projection.history_generation,
                 )
@@ -1437,7 +1510,7 @@ impl AgentHost {
                 .request(
                     job,
                     &input,
-                    None,
+                    RequestStage::Compact,
                     cancel.clone(),
                     projection.history_generation,
                 )
@@ -1646,6 +1719,15 @@ pub fn terminal_tools(global: bool) -> Vec<ToolDefinition> {
     result
 }
 
+fn image_refs(value: &Value) -> Vec<String> {
+    value["images"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v["record_id"].as_str().map(str::to_owned))
+        .collect()
+}
+
 #[cfg(test)]
 mod runtime_contracts {
     use super::*;
@@ -1675,15 +1757,20 @@ mod runtime_contracts {
                 } else {
                     Raw::Message("done".into())
                 };
+                let mut chunks = Vec::new();
+                if self.recovery && n == 0 {
+                    chunks.push(Ok(Raw::Message("我先读取终端，再说明结果。".into())));
+                }
+                chunks.extend(vec![
+                    Ok(choice),
+                    Ok(Raw::FinalResponse(StreamFinal::new(
+                        "test",
+                        Default::default(),
+                    ))),
+                ]);
                 Ok(StreamingCompletionResponse::stream(
                     "test",
-                    Box::pin(futures_util::stream::iter(vec![
-                        Ok(choice),
-                        Ok(Raw::FinalResponse(StreamFinal::new(
-                            "test",
-                            Default::default(),
-                        ))),
-                    ])),
+                    Box::pin(futures_util::stream::iter(chunks)),
                 ))
             })
         }
@@ -1719,7 +1806,11 @@ mod runtime_contracts {
             })
         }
     }
-    fn snapshot(model: Arc<StubModel>, backend: Arc<Backend>, tools: bool) -> RunSnapshot {
+    fn snapshot<M: Model + 'static>(
+        model: Arc<M>,
+        backend: Arc<Backend>,
+        tools: bool,
+    ) -> RunSnapshot {
         RunSnapshot {
             revision: 1,
             provider: Protocol::OpenaiChat,
@@ -1751,6 +1842,176 @@ mod runtime_contracts {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("agent did not settle");
+    }
+    #[tokio::test]
+    async fn normal_reply_streams_after_observation_analysis() {
+        use futures_util::StreamExt;
+        struct StagedModel {
+            calls: AtomicU32,
+            delivered: Arc<tokio::sync::Notify>,
+            release: Arc<tokio::sync::Notify>,
+        }
+        impl Model for StagedModel {
+            fn stream(
+                &self,
+                _: rig_core::completion::CompletionRequest,
+            ) -> BackendFuture<'_, StreamingCompletionResponse> {
+                Box::pin(async move {
+                    let call = self.calls.fetch_add(1, Ordering::AcqRel);
+                    if call == 2 {
+                        let delivered = self.delivered.clone();
+                        let release = self.release.clone();
+                        let stream = futures_util::stream::iter(vec![Ok(Raw::Message(
+                            "最终回复的第一段".into(),
+                        ))])
+                        .chain(futures_util::stream::once(async move {
+                            delivered.notify_one();
+                            release.notified().await;
+                            Ok(Raw::FinalResponse(StreamFinal::new(
+                                "test",
+                                Default::default(),
+                            )))
+                        }));
+                        return Ok(StreamingCompletionResponse::stream(
+                            "test",
+                            Box::pin(stream),
+                        ));
+                    }
+                    let chunks = if call == 0 {
+                        vec![
+                            Ok(Raw::Message("先读取终端".into())),
+                            Ok(Raw::ToolCall(RawStreamingToolCall::new(
+                                "read-call",
+                                "read_terminal".into(),
+                                json!({"mode":"tail"}),
+                            ))),
+                            Ok(Raw::FinalResponse(StreamFinal::new(
+                                "test",
+                                Default::default(),
+                            ))),
+                        ]
+                    } else {
+                        vec![
+                        Ok(Raw::Message(json!({"summary":"Read completed","key_quotes":[],"facts":[],"tui_lines":[]}).to_string())),
+                        Ok(Raw::FinalResponse(StreamFinal::new("test", Default::default()))),
+                    ]
+                    };
+                    Ok(StreamingCompletionResponse::stream(
+                        "test",
+                        Box::pin(futures_util::stream::iter(chunks)),
+                    ))
+                })
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(&temp.path().join("data/stream.db")).unwrap());
+        let scope = store.agent("owner", "desktop", Some("session")).unwrap();
+        let host = AgentHost::new(store, tokio::runtime::Handle::current());
+        let model = Arc::new(StagedModel {
+            calls: AtomicU32::new(0),
+            delivered: Arc::new(tokio::sync::Notify::new()),
+            release: Arc::new(tokio::sync::Notify::new()),
+        });
+        host.submit(
+            scope.clone(),
+            "request",
+            "读取终端并说明",
+            json!({}),
+            true,
+            "phone",
+            || Ok(snapshot(model.clone(), Arc::new(Backend::default()), true)),
+        )
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), model.delivered.notified())
+            .await
+            .unwrap();
+        let live = host.state(&scope).unwrap()["live_text"].clone();
+        model.release.notify_one();
+        assert_eq!(settle(&host, &scope).await["state"], "completed");
+        assert_eq!(
+            live, "最终回复的第一段",
+            "normal post-analysis output must replace tool narration while still streaming"
+        );
+    }
+    #[tokio::test]
+    async fn user_images_reach_model_content_and_projection_without_text_encoding() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(&temp.path().join("data/images.db")).unwrap());
+        let scope = store.agent("o", "d", Some("s")).unwrap();
+        let host = AgentHost::new(store.clone(), tokio::runtime::Handle::current());
+        let mut uploads = Vec::new();
+        for bytes in [
+            b"\x89PNG\r\n\x1a\nfirst".as_slice(),
+            b"\x89PNG\r\n\x1a\nsecond".as_slice(),
+        ] {
+            let upload = store.image_begin(&scope, "image/png", bytes.len()).unwrap();
+            store.image_chunk(&scope, &upload, 0, bytes).unwrap();
+            uploads.push(upload);
+        }
+        let model = Arc::new(StubModel {
+            calls: AtomicU32::new(0),
+            delay: Duration::ZERO,
+            recovery: false,
+        });
+        let rejected = host.submit_images(
+            scope.clone(),
+            "image-task",
+            "inspect",
+            json!({}),
+            true,
+            "phone",
+            &uploads,
+            || Ok(snapshot(model.clone(), Arc::new(Backend::default()), false)),
+        );
+        assert!(
+            rejected
+                .unwrap_err()
+                .to_string()
+                .contains("model_vision_required")
+        );
+        assert_eq!(store.latest_sequence(&scope).unwrap(), 0);
+        host.submit_images(
+            scope.clone(),
+            "image-task",
+            "inspect",
+            json!({}),
+            true,
+            "phone",
+            &uploads,
+            || {
+                let mut snapshot = snapshot(model.clone(), Arc::new(Backend::default()), false);
+                snapshot.vision = true;
+                Ok(snapshot)
+            },
+        )
+        .unwrap();
+        assert_eq!(settle(&host, &scope).await["state"], "completed");
+        assert!(model.calls.load(Ordering::Acquire) > 0);
+        let page = store.history(&scope, None).unwrap();
+        let user = page.items.iter().find(|i| i.kind == "user").unwrap();
+        let content = host.user_content(&scope, &user.value).unwrap();
+        let Message::User { content: parts } = &content else {
+            panic!()
+        };
+        assert!(matches!(parts[0], UserContent::Text(_)));
+        assert!(matches!(parts[1], UserContent::Image(_)));
+        assert!(matches!(parts[2], UserContent::Image(_)));
+        let mut entry = entry(Origin::User, "root", content);
+        entry.artifacts = image_refs(&user.value);
+        let captured = Entry::capture(&entry, &Protocol::OpenaiChat).unwrap();
+        let crate::history::Part::ImageRecord {
+            record_id: first, ..
+        } = &captured.parts[1]
+        else {
+            panic!()
+        };
+        let crate::history::Part::ImageRecord {
+            record_id: second, ..
+        } = &captured.parts[2]
+        else {
+            panic!()
+        };
+        assert_ne!(first, second);
     }
     #[tokio::test]
     async fn rejected_append_is_not_persisted_and_accepted_retries_remain_idempotent() {
@@ -1825,6 +2086,20 @@ mod runtime_contracts {
         })
         .unwrap();
         assert_eq!(settle(&host, &scope).await["state"], "paused");
+        let history = store.history(&scope, None).unwrap();
+        let narrated = history.items.iter().find(|item| {
+            item.kind == "interaction" && item.value["text"] == "我先读取终端，再说明结果。"
+        });
+        assert!(
+            narrated.is_some(),
+            "tool-bearing assistant narration must survive in durable history"
+        );
+        assert!(
+            !history
+                .items
+                .iter()
+                .any(|item| item.kind == "assistant" && item.value["text"] == "invalid analysis")
+        );
         assert_eq!(model.calls.load(Ordering::Acquire), 3);
         assert_eq!(backend.reads.load(Ordering::Acquire), 1);
         drop(host);

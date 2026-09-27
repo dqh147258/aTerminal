@@ -111,7 +111,7 @@ class MobileInputLayoutTest {
             icon("特殊按键"); screenshot("special-keys"); icon("关闭特殊按键")
             special("收起系统键盘")
             waitFor("explicit IME hide") { !imeVisible() }
-            icon("终端设置")
+            icon("设置")
             main {
                 val font = views().filterIsInstance<SeekBar>().first { it.contentDescription == "文字大小" }
                 val opacity = views().filterIsInstance<SeekBar>().first { it.contentDescription == "浮层不透明度" }
@@ -124,7 +124,7 @@ class MobileInputLayoutTest {
                 val paint = TerminalView::class.java.getDeclaredField("paint").apply { isAccessible = true }.get(get("terminal")) as Paint
                 assertEquals(6f * activity.resources.displayMetrics.scaledDensity, paint.textSize, .1f)
             }
-            icon("关闭终端设置")
+            icon("关闭设置")
             val session = main { get("selected") }; val generation = main { get("generation") }
             main { activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
             waitFor("landscape layout") { activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE && (get("root") as View).width > (get("root") as View).height }
@@ -145,7 +145,7 @@ class MobileInputLayoutTest {
             screenshot("agent-fullscreen-landscape")
             val beforeIme = main { availableHeight() }
             val draftPoint = main {
-                val draft = views().filterIsInstance<EditText>().first { it.hint == "发送任务或追加消息" }
+                val draft = views().filterIsInstance<EditText>().first { it.contentDescription == "发送任务或追加消息" }
                 val rect = android.graphics.Rect(); assertTrue(draft.getGlobalVisibleRect(rect))
                 rect.centerX().toFloat() to rect.centerY().toFloat()
             }
@@ -156,7 +156,7 @@ class MobileInputLayoutTest {
             }
             waitFor("landscape Agent resizes for IME") { imeVisible() && availableHeight() < beforeIme }
             main {
-                val send = views().filterIsInstance<Button>().last { it.text == "发送 / 追加" }
+                val send = views().filterIsInstance<ImageButton>().last { it.contentDescription in listOf("发送", "追加", "停止", "取消中") }
                 val rect = android.graphics.Rect()
                 assertTrue("Agent send button remains visible above IME", send.getGlobalVisibleRect(rect) && rect.height() >= send.height - 2)
             }

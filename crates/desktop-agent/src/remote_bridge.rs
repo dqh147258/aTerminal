@@ -175,8 +175,15 @@ pub(crate) fn authorize(read_only: bool, request: &Request) -> Result<()> {
         );
         if read_only {
             anyhow::ensure!(
-                ["list", "state", "history", "record"]
-                    .contains(&value["action"].as_str().unwrap_or(""))
+                [
+                    "list",
+                    "global_list",
+                    "state",
+                    "context",
+                    "history",
+                    "record"
+                ]
+                .contains(&value["action"].as_str().unwrap_or(""))
                     && value["allow_input"] != true,
                 "paired device has read-only permission"
             );
@@ -223,6 +230,40 @@ pub(crate) fn authorize(read_only: bool, request: &Request) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn image_uploads_and_sends_respect_paired_read_only_permissions() {
+        for action in [
+            "list",
+            "global_list",
+            "state",
+            "context",
+            "history",
+            "record",
+        ] {
+            let request = Request {
+                operation: Operation::Agent as i32,
+                text: serde_json::json!({"version":1,"action":action}).to_string(),
+                ..Default::default()
+            };
+            assert!(authorize(true, &request).is_ok());
+        }
+        for action in [
+            "global_create",
+            "send",
+            "cancel",
+            "image_begin",
+            "image_chunk",
+            "image_release",
+        ] {
+            let request = Request {
+                operation: Operation::Agent as i32,
+                text: serde_json::json!({"version":1,"action":action}).to_string(),
+                ..Default::default()
+            };
+            assert!(authorize(true, &request).is_err());
+            assert!(authorize(false, &request).is_ok());
+        }
+    }
     #[test]
     fn configuration_read_and_write_permissions_are_enforced() {
         let request = |text: &str| Request {

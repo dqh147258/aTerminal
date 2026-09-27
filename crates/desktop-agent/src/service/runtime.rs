@@ -19,12 +19,33 @@ use std::sync::Weak;
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum Command {
     List,
+    GlobalCreate {
+        request_id: String,
+    },
+    GlobalList {
+        cursor: Option<i64>,
+    },
     State,
+    Context,
     Send {
         request_id: String,
         message: String,
         #[serde(default)]
+        images: Vec<String>,
+        #[serde(default)]
         allow_input: bool,
+    },
+    ImageBegin {
+        media_type: String,
+        size: usize,
+    },
+    ImageRelease {
+        upload_id: String,
+    },
+    ImageChunk {
+        upload_id: String,
+        offset: usize,
+        data: String,
     },
     Cancel,
     History {
@@ -227,6 +248,37 @@ pub(super) fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
     };
     ensure!(owner == host.account.owner(), "account_changed");
     let desktop = host.config.snapshot(&owner).installation_id;
+    // Catalog operations do not create the legacy default global scope as a side effect.
+    if let Command::GlobalCreate { request_id } = &command {
+        ensure!(
+            request.session.is_empty() && agent_id.is_none(),
+            "global_scope_required"
+        );
+        let scope = host
+            .agents
+            .store
+            .create_global(&owner, &desktop, request_id)?;
+        return Ok(Reply {
+            history: vec![json!({"scope":scope}).to_string()],
+            ..Default::default()
+        });
+    }
+    if let Command::GlobalList { cursor } = &command {
+        ensure!(
+            request.session.is_empty() && agent_id.is_none(),
+            "global_scope_required"
+        );
+        let mut page = host.agents.store.global_page(&owner, &desktop, *cursor)?;
+        for row in page["conversations"].as_array_mut().unwrap() {
+            let scope: Scope = serde_json::from_value(row["scope"].clone())?;
+            // Streaming content stays in the detail endpoint; list replies remain bounded.
+            row["state"] = host.agents.state(&scope)?["state"].clone();
+        }
+        return Ok(Reply {
+            history: vec![page.to_string()],
+            ..Default::default()
+        });
+    }
     let scope = if let Some(agent_id) = agent_id {
         host.agents
             .store
@@ -263,6 +315,7 @@ pub(super) fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
         );
     }
     let value = match command {
+        Command::GlobalCreate { .. } | Command::GlobalList { .. } => unreachable!(),
         Command::List => {
             let scopes = host.agents.store.agents(&owner, &desktop)?;
             let rows = scopes
@@ -270,6 +323,15 @@ pub(super) fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
                 .map(|scope| Ok(json!({"scope":scope,"status":host.agents.state(&scope)?})))
                 .collect::<Result<Vec<_>>>()?;
             json!({"agents":rows})
+        }
+        Command::Context => {
+            let info = scope
+                .session
+                .as_deref()
+                .and_then(|session| poll(host, session, 0).ok())
+                .and_then(|reply| reply.info);
+            let cwd = info.as_ref().and_then(crate::process::cwd);
+            json!({"cwd":cwd,"available":info.is_some()})
         }
         Command::State => {
             let mut value = host.agents.state(&scope)?;
@@ -287,19 +349,21 @@ pub(super) fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
         Command::Send {
             request_id,
             message,
+            images,
             allow_input,
         } => {
             let observation = capture_status(host, &scope);
             let host_ref = host.clone();
             let target = scope.clone();
             let device = request.device_scope.clone();
-            host.agents.submit(
+            host.agents.submit_images(
                 scope,
                 &request_id,
                 &message,
                 observation,
                 allow_input,
                 &request.device_scope,
+                &images,
                 move || {
                     let view = host_ref.config.snapshot(&target.owner);
                     build_snapshot(
@@ -314,6 +378,23 @@ pub(super) fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
                     )
                 },
             )?
+        }
+        Command::ImageBegin { media_type, size } => {
+            let id = host.agents.store.image_begin(&scope, &media_type, size)?;
+            json!({"upload_id":id,"max_image_bytes":4194304,"max_total_bytes":8388608})
+        }
+        Command::ImageRelease { upload_id } => {
+            host.agents.store.image_release(&scope, &upload_id)?;
+            json!({"released":true})
+        }
+        Command::ImageChunk {
+            upload_id,
+            offset,
+            data,
+        } => {
+            ensure!(data.len() <= 44000, "image_chunk_limit");
+            let bytes = STANDARD.decode(&data).context("invalid_image_encoding")?;
+            json!({"offset":host.agents.store.image_chunk(&scope,&upload_id,offset,&bytes)?})
         }
         Command::Cancel => {
             host.agents.cancel(&scope)?;

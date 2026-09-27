@@ -50,13 +50,16 @@ async fn main() -> Result<()> {
             let messages=body["messages"].as_array().unwrap();
             let analyzing=messages.last().and_then(|m|m["content"].as_str()).is_some_and(|s|s.starts_with("Application analysis stage"));
             let observed=messages.iter().rev().filter(|m|m["role"]=="tool").find_map(|m|serde_json::from_str::<Value>(m["content"].as_str()?).ok());
-            let tool=observed.is_none()&&!analyzing;
+            let picture=messages.iter().rev().filter(|m|m["role"]=="user").find_map(|m|m["content"].as_array().and_then(|parts|parts.iter().find_map(|part|part["image_url"]["url"].as_str())));
+            let vision=picture.is_some_and(|url|url.starts_with("data:image/png;base64,iVBOR"));
+            let global_fixture = messages.iter().rev().find(|m| m["role"] == "user").is_some_and(|m| m["content"].to_string().contains("GLOBAL_FIXTURE"));
+            let tool=observed.is_none()&&!analyzing&&!vision&&!global_fixture;
             let delta=if analyzing {
                 let text=observed.as_ref().and_then(|v|v["body"].as_str()).unwrap_or("");
                 let tui=text.lines().filter(|line|line.starts_with("TUI status:")||line.trim_end().ends_with('$')).collect::<Vec<_>>();
                 json!({"content":json!({"summary":"Read fixture logs; interactive rows are separate search exclusions.","key_quotes":[],"facts":[],"tui_lines":tui,"open_questions":[]}).to_string()})
             }else if tool {json!({"role":"assistant","tool_calls":[{"index":0,"id":"device-read","type":"function","function":{"name":"read_terminal","arguments":"{\"mode\":\"tail\",\"max_lines\":100}"}}]})}
-            else{json!({"content":"UI_FIXTURE_DONE"})};
+            else{json!({"content":if vision {"VISION_FIXTURE_DONE"} else if global_fixture {"GLOBAL_FIXTURE_DONE"} else {"UI_FIXTURE_DONE"}})};
             let first=json!({"id":"device-response","object":"chat.completion.chunk","created":0,"model":"fixture","choices":[{"index":0,"delta":delta,"finish_reason":null}]});
             let end=json!({"id":"device-response","object":"chat.completion.chunk","created":0,"model":"fixture","choices":[{"index":0,"delta":{},"finish_reason":if tool{"tool_calls"}else{"stop"}}],"usage":{"prompt_tokens":20,"completion_tokens":10,"total_tokens":30}});
             ([("content-type","text/event-stream")],format!("data: {first}\n\ndata: {end}\n\ndata: [DONE]\n\n"))
@@ -148,7 +151,7 @@ async fn main() -> Result<()> {
             ..Default::default()
         })?;
         let view: serde_json::Value = serde_json::from_str(&view.history[0])?;
-        let config = serde_json::json!({"providers":{"fixture":{"id":"fixture","name":"Isolated UI fixture","connection":{"protocol":"openai_chat","endpoint":format!("{url}/agent-model")},"credential_revision":0}},"models":{"fixture":{"id":"fixture","name":"Deterministic device fixture","provider_id":"fixture","model":"fixture","context_window":128000,"max_tokens":2048,"capabilities":{"tools":true,"streaming":true},"max_rounds":8,"max_seconds":60,"read_only":false}},"bindings":{"global":{"model_id":"fixture"},"session-default":{"model_id":"fixture"}}});
+        let config = serde_json::json!({"providers":{"fixture":{"id":"fixture","name":"Isolated UI fixture","connection":{"protocol":"openai_chat","endpoint":format!("{url}/agent-model")},"credential_revision":0}},"models":{"fixture":{"id":"fixture","name":"Deterministic device fixture","provider_id":"fixture","model":"fixture","context_window":128000,"max_tokens":2048,"capabilities":{"tools":true,"streaming":true,"vision":true},"max_rounds":8,"max_seconds":60,"read_only":false}},"bindings":{"global":{"model_id":"fixture"},"session-default":{"model_id":"fixture"}}});
         local.call(Request{operation:Operation::Configuration as i32,text:serde_json::json!({"action":"replace","expected_revision":view["revision"],"config":config}).to_string(),..Default::default()})?;
     }
     let mut benchmarks = Vec::new();

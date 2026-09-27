@@ -41,4 +41,8 @@ dependencies {
     androidTestImplementation("junit:junit:4.13.2")
     implementation("net.java.dev.jna:jna:5.17.0@aar")
     implementation("androidx.annotation:annotation:1.9.1")
+    implementation("io.noties.markwon:core:4.6.2")
+    implementation("io.noties.markwon:ext-strikethrough:4.6.2")
+    implementation("io.noties.markwon:ext-tables:4.6.2")
+    implementation("io.noties.markwon:ext-tasklist:4.6.2")
 }

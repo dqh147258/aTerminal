@@ -65,7 +65,7 @@ class AgentFocusTest {
             }
             while (loads.get() < 1) Thread.sleep(40)
             instrumentation.waitForIdleSync()
-            val draft = main { all(screen.window.decorView).filterIsInstance<EditText>().first { it.hint == "发送任务或追加消息" } }
+            val draft = main { all(screen.window.decorView).filterIsInstance<EditText>().first { it.contentDescription == "发送任务或追加消息" } }
             main {
                 draft.setText("检查终端，不要发送这段测试草稿")
                 draft.requestFocus(); draft.setSelection(2, 6)

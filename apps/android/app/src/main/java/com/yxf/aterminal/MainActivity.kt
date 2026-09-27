@@ -40,12 +40,14 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     @Volatile private var accountEpoch = 0
     private val accountPersistenceLock = Any()
     private var selected: String? = null
+    private var currentTerminalPath: String? = null
     private var controlled = false
     private var desktopAttached = false
     private var sessionExited = false
     private var connected = false
     private var accountName = ""
     private var lastHeartbeatAt = 0L
+    private var lastSessionRefreshAt = 0L
     private val terminalKeyUps = mutableSetOf<Int>()
     private var serverUrl = ""
     private var deviceId = ""
@@ -78,11 +80,12 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private var overlayPanel: View? = null
     private var assistant: AssistantPanel? = null
     private var agentPanel: AgentPanel? = null
+    private var globalPanel: GlobalConversationPanel? = null
+    private var imagePicker: ((List<android.net.Uri>) -> Unit)? = null
     private var skillPicker: ((android.net.Uri) -> Unit)? = null
     private var chatStore: ChatStore? = null
     private var agentArchives:List<Conversation> = emptyList()
     private var archiveLoading=false
-    private var drawerTab = false
     private var loginBusy = false
     private var heartbeatBusy = false
     private var entryPending = false
@@ -102,7 +105,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private val drawerRefresh = object : Runnable {
         override fun run() {
             if (active && connected && overlay?.tag == "drawer") {
-                if (!drawerTab) refreshSessions()
+                refreshSessions(); loadAgentArchives()
                 ui.postDelayed(this, 3000)
             }
         }
@@ -354,8 +357,9 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             sideWorkspace = iconButton(R.drawable.ic_panel_left, "打开工作空间") { openDrawer() }
             sideAccount = iconButton(R.drawable.ic_user_round, "账号与设备") { accountPanel() }
             addView(sideWorkspace); addView(sideAccount)
-            addView(iconButton(R.drawable.ic_sliders_horizontal, "终端设置") { settingsPanel() })
+            addView(iconButton(R.drawable.ic_sliders_horizontal, "设置") { settingsPanel() })
             addView(iconButton(R.drawable.ic_message_circle, "AI 对话") { openChat() })
+            addView(iconButton(R.drawable.ic_globe, "全局AI助手") { openGlobalList() })
             addView(iconButton(R.drawable.ic_keyboard, "特殊按键") { specialKeys() })
             for (i in 0 until childCount) getChildAt(i).background = null
         }
@@ -405,6 +409,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private fun signedIn(name: String, server: String) {
         accountName = name; serverUrl = server; chatStore = null
         memory = WorkspaceMemory(this, server, name, if (terminalTest) "terminal-input" else ""); restorePending = true
+        agentArchives = memory?.archives().orEmpty()
         beginEntry()
         status.text = "$name · 选择在线 Desktop"
     }
@@ -443,7 +448,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 account.connect(id, remote)
                 val list = remote.sessions()
                 post { if (active && generation == version && epoch == accountEpoch) {
-                    connecting = false; connected = true; sessions = list; uncertainSessions.removeAll { it.first == id }; memory?.record(id, list.associate { it.id to it.exited }); connection.text = "已连接"; connection.setTextColor(Palette.green)
+                    connecting = false; connected = true; sessions = list; uncertainSessions.removeAll { it.first == id }; memory?.record(id, list.associate { it.id to it.exited }); rememberSessions(id, list); connection.text = "已连接"; connection.setTextColor(Palette.green)
                     val target = list.firstOrNull { it.id == resumeSession && !it.exited } ?: if (resumeSession == null) list.firstOrNull { !it.exited } else null
                     if (target != null) select(target.id, true, resumeChat)
                     else {
@@ -460,23 +465,28 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         if (!connected) { if (manual) notice("请先连接 Desktop"); return }
         if (sessionRefreshBusy) return
         sessionRefreshBusy = true
-        val version = generation; val device = deviceId
+        val version = generation; val device = deviceId; val pathSession = selected
         worker.execute {
             try {
                 val list = remote.sessions()
+                val cwd = pathSession?.let { id -> runCatching { JSONObject(remote.agent(id, JSONObject().put("version", 1).put("action", "context").toString())).optString("cwd").takeUnless { it.isBlank() || it == "null" } }.getOrNull() }
                 post {
                     sessionRefreshBusy = false
                     if (generation == version && connected && deviceId == device) {
                         sessions = list
+                        if (selected == pathSession) currentTerminalPath = cwd
                         uncertainSessions.removeAll { it.first == device }
-                        memory?.record(device, list.associate { it.id to it.exited })
+                        memory?.record(device, list.associate { it.id to it.exited }); rememberSessions(device, list)
                         updateSessionHeader()
                         refreshDrawer?.invoke()
-                        if (selected == null && !sessionBusy) list.firstOrNull { !it.exited }?.let { select(it.id, true) }
+                        if (selected == null && !sessionBusy && overlay == null) list.firstOrNull { !it.exited }?.let { select(it.id, true) }
                     }
                 }
             } catch (e: Exception) { post { sessionRefreshBusy = false; if (manual && generation == version) notice(e.message ?: "刷新会话失败") } }
         }
+    }
+    private fun rememberSessions(device: String, list: List<RemoteSession>) {
+        memory?.archive(device, list.map { Conversation(device, it.id, it.cwd) }); agentArchives = memory?.archives().orEmpty()
     }
     private fun updateSessionHeader() {
         val session = sessions.firstOrNull { it.id == selected } ?: return
@@ -487,7 +497,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         val reopenKeyboard = control && keyboardOpen
         beginEntry("正在打开终端…")
         terminalScrollback?.live(); terminalScrollback = null
-        closeOverlay(); toggleInput(false); generation++; val version = generation
+        closeOverlay(); toggleInput(false); currentTerminalPath = null; generation++; val version = generation
         selected = null; controlled = false; desktopAttached = false; sessionExited = false
         surface.removeAllViews(); terminal = null
         status.text = "打开会话…"
@@ -695,79 +705,143 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
 
     private fun openDrawer() {
         val body = panel("工作空间", drawer = true); overlay?.tag = "drawer"
-        if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-            body.addView(column(12).apply {
-                addView(label(sessionTitle.text.toString(), 14f))
-                addView(label(sessionMeta.text.toString(), 11f, Palette.muted))
-                addView(label("${status.text} · ${dimensions.text}", 11f, Palette.muted))
-                addView(iconButton(R.drawable.ic_user_round, "账号与设备") { accountPanel() })
+        fun symbol(icon: Int, color: Int = Palette.muted, size: Int = 20) = ImageView(this).apply {
+            setImageResource(icon); imageTintList = ColorStateList.valueOf(color)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            layoutParams = LinearLayout.LayoutParams(dp(size), dp(size))
+        }
+        val count = label("", 12f, Palette.muted)
+        val add = iconButton(R.drawable.ic_plus, "新建会话") { createSession() }.apply { background = null; isEnabled = connected }
+        val header = body.getChildAt(0) as LinearLayout
+        header.removeAllViews()
+        header.apply {
+            setPadding(dp(20), dp(16), dp(12), dp(12))
+            fill(column().apply { addView(heading("工作空间").apply { textSize = 20f }); addView(count) })
+            addView(add); addView(iconButton(R.drawable.ic_x, "关闭工作空间") { closeOverlay() }.apply { background = null })
+        }
+        body.removeViewAt(1)
+        val query = field("搜索终端或对话").apply {
+            background = null; minHeight = dp(46); textSize = 14f
+            setPadding(dp(12), dp(8), dp(8), dp(8))
+        }
+        body.addView(column().apply {
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            addView(row().apply {
+                background = shape(Palette.background, true); setPadding(dp(12), 0, dp(4), 0)
+                addView(symbol(R.drawable.ic_search)); fill(query)
             })
-        }
-        val tabs = RadioGroup(this).apply { orientation = RadioGroup.HORIZONTAL; setPadding(dp(12), dp(12), dp(12), 0) }
-        fun tab(title: String) = RadioButton(this).apply {
-            id = View.generateViewId(); text = title; buttonDrawable = null; gravity = Gravity.CENTER; minHeight = dp(44)
-            setTextColor(ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()), intArrayOf(Palette.text, Palette.muted)))
-            background = android.graphics.drawable.StateListDrawable().apply {
-                addState(intArrayOf(android.R.attr.state_checked), shape(Palette.control, true))
-                addState(intArrayOf(), shape(Color.TRANSPARENT, true))
-            }
-        }
-        val terminalsTab = tab("终端"); val historyTab = tab("AI 历史")
-        tabs.addView(terminalsTab, RadioGroup.LayoutParams(0, -2, 1f).apply { marginEnd = dp(4) })
-        tabs.addView(historyTab, RadioGroup.LayoutParams(0, -2, 1f).apply { marginStart = dp(4) })
-        tabs.check(if (drawerTab) historyTab.id else terminalsTab.id); body.addView(tabs)
-        val query = field("搜索终端或对话"); body.addView(column(12).apply { addView(query) })
-        val list = column(12); body.grow(scroll(list))
+        })
+        body.addView(row().apply {
+            setPadding(dp(16), 0, dp(16), 0); fill(label("所有会话", 12f, Palette.muted))
+            addView(iconButton(R.drawable.ic_refresh_cw, "刷新会话") { refreshSessions(manual = true); loadAgentArchives() }.apply { background = null })
+        })
+        val list = column().apply { setPadding(dp(8), 0, dp(8), 0) }
+        val viewport = scroll(list); body.grow(viewport)
         fun render() {
+            val oldY = viewport.scrollY
             list.removeAllViews()
+            add.isEnabled = connected
             val search = query.text.toString()
-            if (drawerTab) {
-                list.addView(actionButton("全局 / 当前终端 Agent 历史") { openChat() })
-                list.addView(actionButton("旧手机归档 · 只读") { val owner=accountName;val server=serverUrl;LegacyAgentHistory(this,server,owner,if (terminalTest) "terminal-input" else "",{accountName==owner&&serverUrl==server}).open() })
-                for (archive in agentArchives.filter {it.title.contains(search,true)}) {list.addView(actionButton(archive.title+" · 持久历史") {openChat(archive)})}
-                for (session in sessions.filter { it.cwd.contains(search, true) || it.id.contains(search, true) }) {
-                    list.addView(actionButton(session.cwd + " · 对话与证据") { openChat(Conversation(deviceId = deviceId, sessionId = session.id, title = session.cwd)) })
-                }
-
-            } else {
+            val merged = linkedMapOf<String, Conversation>()
+            agentArchives.filter { it.sessionId.isNotEmpty() }.forEach { merged[it.deviceId + ":" + it.sessionId] = it }
+            sessions.forEach { merged[deviceId + ":" + it.id] = Conversation(deviceId, it.id, it.cwd) }
+            val matches = merged.values.filter { it.title.contains(search, true) || it.sessionId.contains(search, true) || agentHistoryMatches(it.deviceId, it.sessionId, search) }
+                .sortedBy { chat -> when {
+                    deviceId == chat.deviceId && selected == chat.sessionId -> 0
+                    connected && deviceId == chat.deviceId && sessions.any { it.id == chat.sessionId && !it.exited && it.desktopAttached } -> 1
+                    else -> 2
+                } }
+            count.text = "${matches.size} 个会话"
+            if (matches.isEmpty()) list.addView(label(if (connected) "暂无匹配会话" else "连接 Desktop 后查看终端", 14f, Palette.muted).apply { setPadding(dp(8), dp(12), dp(8), dp(12)) })
+            for (chat in matches) {
+                val session = sessions.firstOrNull { deviceId == chat.deviceId && it.id == chat.sessionId }
+                val available = connected && session != null && !session.exited && session.desktopAttached
+                val state = sessionAvailability(chat.deviceId, chat.sessionId).removeSuffix(" · 只读")
+                val current = deviceId == chat.deviceId && selected == chat.sessionId
+                val device = devices.firstOrNull { it.id == chat.deviceId }?.name
+                    ?: deviceName.takeIf { chat.deviceId == deviceId && it.isNotEmpty() } ?: "Desktop"
+                val path = session?.cwd ?: chat.title
+                val title = path.trimEnd('/').substringAfterLast('/').ifEmpty { path }
                 list.addView(row().apply {
-                    fill(label(if (connected) deviceName else "尚未连接设备", 12f, Palette.muted))
-                    addView(iconButton(R.drawable.ic_refresh_cw, "刷新会话") { refreshSessions(manual = true) })
-                    addView(iconButton(R.drawable.ic_plus, "新建会话") { createSession() })
-                })
-                val matches = sessions.filter { it.cwd.contains(search, true) || it.id.contains(search, true) }
-                if (matches.isEmpty()) list.addView(label(if (connected) "暂无匹配会话" else "连接 Desktop 后查看终端", 14f, Palette.muted))
-                for (session in matches) {
-                    list.addView(row().apply {
-                        fill(actionButton(session.cwd + "\n" + sessionAvailability(deviceId, session.id) + " · ${session.id.take(8)}" + if (selected == session.id) " · 当前会话" else "") { select(session.id, true) }.apply { tag = session.id; gravity = Gravity.START; maxLines = 4; isEnabled = (deviceId to session.id) !in uncertainSessions })
-                        addView(iconButton(R.drawable.ic_x, "关闭 ${session.cwd} (${session.id})") { closeSession(session) }.apply { tag = "close-${session.id}"; isEnabled = !session.exited && session.desktopAttached && !sessionBusy && (deviceId to session.id) !in uncertainSessions })
-                    }); list.gap(8)
-                }
+                    background = shape(if (current) Palette.control else Color.TRANSPARENT, current)
+                    fill(row().apply {
+                        tag = chat.sessionId; isSelected = current; isClickable = true; isFocusable = true
+                        contentDescription = "$title，$path，$state，$device" + if (current) "，当前会话" else ""
+                        accessibilityDelegate = object : View.AccessibilityDelegate() {
+                            override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
+                                super.onInitializeAccessibilityNodeInfo(host, info); info.className = Button::class.java.name
+                            }
+                        }
+                        gravity = Gravity.TOP; setPadding(dp(12), dp(14), 0, dp(14))
+                        setOnClickListener { if (available) select(chat.sessionId, true) else openChat(chat) }
+                        addView(symbol(if (available) R.drawable.ic_terminal else R.drawable.ic_archive, if (current) Palette.accent else Palette.muted, 24).apply {
+                            layoutParams = LinearLayout.LayoutParams(dp(28), dp(28)).apply { topMargin = dp(2); marginEnd = dp(12) }
+                            setPadding(dp(5), dp(5), dp(5), dp(5))
+                        })
+                        fill(column().apply {
+                            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                            addView(row().apply {
+                                fill(label(title, 14f).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
+                                if (current) addView(symbol(R.drawable.ic_check, Palette.accent, 14))
+                            })
+                            addView(label(path, 11f, Palette.muted).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE })
+                            addView(row().apply {
+                                addView(View(this@MainActivity).apply { background = shape(if (available) Palette.green else Palette.muted) }, LinearLayout.LayoutParams(dp(6), dp(6)).apply { marginEnd = dp(6) })
+                                addView(label(state, 11f, Palette.text))
+                                fill(label(" · $device", 10f, Palette.muted).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
+                            })
+                        })
+                    })
+                    if (available && session != null) addView(iconButton(R.drawable.ic_x, "关闭 ${session.cwd} (${session.id})") { closeSession(session) }.apply {
+                        tag = "close-${session.id}"; background = null
+                        setPadding(dp(14), dp(14), dp(14), dp(14))
+                        isEnabled = !sessionBusy && (deviceId to session.id) !in uncertainSessions
+                    }) else addView(View(this@MainActivity), LinearLayout.LayoutParams(dp(44), 1))
+                }); list.gap(8)
             }
+            viewport.post { if (overlay?.tag == "drawer") viewport.scrollTo(0, oldY) }
         }
-        tabs.setOnCheckedChangeListener { _, id -> drawerTab = id == historyTab.id; render();if(drawerTab)loadAgentArchives() }
-        query.addTextChangedListener(watcher { render() }); render()
+        query.addTextChangedListener(watcher { viewport.scrollTo(0, 0); render() }); render()
         body.addView(divider())
         body.addView(row().apply {
-            setPadding(dp(12), dp(8), dp(12), dp(8)); fill(label(accountName.ifEmpty { "旧版配对" }))
-            addView(iconButton(R.drawable.ic_user_round, "账号与设备") { accountPanel() })
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            addView(label(accountName.take(1).uppercase().ifEmpty { "D" }, 16f, Palette.accent).apply {
+                gravity = Gravity.CENTER; background = shape(Palette.control, true); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }, LinearLayout.LayoutParams(dp(32), dp(32)))
+            fill(column().apply {
+                setPadding(dp(12), 0, 0, 0)
+                addView(label(accountName.ifEmpty { "旧版配对" }, 14f).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
+                addView(label("账号与设备", 12f, Palette.muted))
+            })
+            addView(iconButton(R.drawable.ic_monitor_smartphone, "账号与设备") { accountPanel() }.apply { background = null })
         })
         refreshDrawer = { if (overlay?.tag == "drawer") render() }
         if (connected) {
-            if(drawerTab)loadAgentArchives()
-            if (!drawerTab) refreshSessions()
-            ui.removeCallbacks(drawerRefresh)
-            ui.postDelayed(drawerRefresh, 3000)
+            loadAgentArchives(); refreshSessions()
+            ui.removeCallbacks(drawerRefresh); ui.postDelayed(drawerRefresh, 3000)
         }
     }
 
+    private fun agentHistoryMatches(device: String, session: String, query: String): Boolean {
+        if (query.isBlank()) return true
+        return AgentDraftStore(this, listOf(serverUrl, accountName, device)).search(session, query)
+    }
     private fun loadAgentArchives() {
         if(!connected||archiveLoading)return
         archiveLoading=true;val version=generation;val device=deviceId
         historyWorker.execute{try {
             val rows=JSONObject(remote.agent("",JSONObject().put("version",1).put("action","list").toString())).getJSONArray("agents")
-            val archives=(0 until rows.length()).map { val scope=rows.getJSONObject(it).getJSONObject("scope");val id=scope.optString("session").takeUnless {it=="null"}.orEmpty();Conversation(device,id,if(id.isEmpty())"全局 Agent" else "终端 "+id.take(8)) }
-            post{archiveLoading=false;if(version==generation&&device==deviceId){agentArchives=archives;refreshDrawer?.invoke()}}
+            val archives=(0 until rows.length()).mapNotNull { val scope=rows.getJSONObject(it).getJSONObject("scope");val id=scope.optString("session").takeUnless {it.isEmpty() || it=="null"};id?.let { Conversation(device,it,"终端 "+it.take(8)) } }
+            post {
+                archiveLoading = false
+                if (version == generation && device == deviceId) {
+                    val known = agentArchives.associateBy { it.deviceId to it.sessionId }
+                    val resolved = archives.map { known[it.deviceId to it.sessionId] ?: it }
+                    memory?.archive(device, resolved)
+                    agentArchives = memory?.archives() ?: (agentArchives.filter { it.deviceId != device } + resolved)
+                    refreshDrawer?.invoke()
+                }
+            }
         }catch(_:Exception){post{archiveLoading=false}}}
     }
     private fun accountPanel() {
@@ -842,8 +916,9 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     }
 
     private fun settingsPanel() {
-        val body = panel("终端设置")
-        val settings = column(20)
+        val body = panel("设置"); overlay?.tag = "settings"
+        val settings = column(16)
+        settings.addView(label("显示", 14f, Palette.muted))
         fun slider(title: String, min: Int, max: Int, current: Int, suffix: String, change: (Int) -> Unit) {
             val value = label("$title  $current$suffix", 16f).apply { setBackgroundColor(Palette.surface); setPadding(dp(12), dp(8), dp(12), dp(8)) }
             settings.addView(value)
@@ -860,7 +935,13 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         }
         slider("文字大小", 6, 24, display.fontSize, " sp") { display.fontSize = it; terminal?.zoom(it / 15f) }
         slider("浮层不透明度", 0, 100, display.opacity, "%") { display.opacity = it; (overlayPanel?.background as? android.graphics.drawable.GradientDrawable)?.setColor(panelColor()); toolRail.background = shape(panelColor(), true) }
-        settings.addView(actionButton("恢复默认") { display.reset(); terminal?.zoom(16 / 15f); toolRail.background = shape(panelColor(), true); settingsPanel() }.apply { setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_rotate_ccw, 0, 0, 0) })
+        settings.addView(actionButton("恢复显示默认值") { display.reset(); terminal?.zoom(16 / 15f); toolRail.background = shape(panelColor(), true); settingsPanel() }.apply { setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_rotate_ccw, 0, 0, 0) })
+        settings.gap(24); settings.addView(label("AI 与工具", 14f, Palette.muted))
+        listOf("llm" to "LLM 大模型", "reading" to "终端读取", "mcp" to "MCP", "skills" to "Skills").forEach { (page, title) ->
+            settings.addView(actionButton(title) { agentSettings(page) }.apply { gravity = Gravity.START }); settings.gap(8)
+        }
+        settings.gap(16); settings.addView(label("工作空间", 14f, Palette.muted))
+        settings.addView(actionButton("账号与设备") { accountPanel() })
         body.grow(scroll(settings))
     }
     private fun panelColor() = Color.argb(display.opacity * 255 / 100, 26, 29, 32)
@@ -869,15 +950,15 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         closeOverlay(hideIme = !special)
         workspace.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         toolRail.visibility = View.INVISIBLE
-        val floating = !drawer && title in setOf("终端设置", "特殊按键")
+        val floating = special
         val layer = FrameLayout(this).apply { setBackgroundColor(if (drawer) 0x66000000 else Color.TRANSPARENT); isClickable = true }
-        val body = column().apply { background = shape(if (drawer) Palette.surface else panelColor(), floating); isClickable = true; clipToOutline = floating }
+        val body = column().apply { background = shape(if (drawer) Palette.surface else panelColor(), floating).apply { if (!floating) cornerRadius = 0f }; isClickable = true; clipToOutline = floating }
         body.addView(row().apply {
             setPadding(dp(16), dp(10), dp(12), dp(10)); setBackgroundColor(Palette.surface)
             fill(heading(title)); addView(iconButton(R.drawable.ic_x, "关闭$title") { closeOverlay(hideIme = !special) })
         }); body.addView(divider())
         fun layoutPanel(width: Int, height: Int) = FrameLayout.LayoutParams(
-            if (special) (width - dp(24)).coerceAtMost(dp(232)) else if (drawer) (width * .88f).toInt().coerceAtMost(dp(420)) else if (floating) (width - dp(24)).coerceAtMost(dp(520)) else -1,
+            if (special) (width - dp(24)).coerceAtMost(dp(232)) else if (drawer) (width * .92f).toInt().coerceAtMost(dp(420)) else if (floating) (width - dp(24)).coerceAtMost(dp(520)) else -1,
             if (special) (height - dp(24)).coerceAtMost(dp(224)).coerceAtLeast(dp(80)) else if (floating) (height * .72f).toInt() else -1,
             if (special) Gravity.CENTER_VERTICAL or Gravity.END else if (floating) Gravity.BOTTOM or Gravity.END else Gravity.START
         ).apply { if (floating) { marginStart = dp(12); marginEnd = dp(12); bottomMargin = dp(12) } }
@@ -896,6 +977,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         historyClose?.invoke(); historyClose = null
         assistant?.close(); assistant = null
         agentPanel?.close(); agentPanel = null
+        globalPanel?.close(); globalPanel = null
         refreshDrawer = null; ui.removeCallbacks(drawerRefresh)
         overlay?.let { root.removeView(it) }; overlay = null; overlayPanel = null
         workspace.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
@@ -903,18 +985,52 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         if (hideIme) hideKeyboard()
         if (controlled && keyboardOpen) terminal?.requestFocus() else root.requestFocus()
     }
-    private fun openChat(history: Conversation? = null) {
-        val body = panel("AI Agent")
-        val device = deviceId; val account = accountName; val version = generation
-        agentPanel = AgentPanel(this, body, listOf(serverUrl, accountName, deviceId), history?.sessionId ?: selected.orEmpty(),
-            { connected && deviceId == device && accountName == account && generation == version },
-            { session, json ->
-                check(connected && deviceId == device && accountName == account && generation == version) { "连接已变化" }
-                remote.agent(session, json)
-            }, { agentSettings() }, history != null)
+    private fun openGlobalList() {
+        val device = deviceId; val owner = accountName; val server = serverUrl
+        val body = panel("全局AI助手"); overlay?.tag = "global-list"
+        globalPanel = GlobalConversationPanel(this, body, listOf(server, owner, device), deviceName.ifEmpty { "Desktop" },
+            { connected && deviceId == device && accountName == owner && serverUrl == server },
+            { json ->
+                check(connected && deviceId == device && accountName == owner && serverUrl == server) { "连接已变化" }
+                remote.agent("", json)
+            }, { closeOverlay() }, { row -> openChat(global = row) })
     }
-    private fun agentSettings() {
-        val body = panel("Agent 设置")
+    private fun openChat(history: Conversation? = null, global: JSONObject? = null) {
+        if (global == null && (history?.sessionId ?: selected).isNullOrEmpty()) { notice("请先选择终端会话"); return }
+        val body = panel(if (global != null) "全局AI助手" else "AI Agent")
+        if (global != null) overlay?.tag = "global-chat"
+        val device = history?.deviceId ?: deviceId; val account = accountName; val version = generation; val server = serverUrl
+        agentPanel = AgentPanel(this, body, listOf(serverUrl, accountName, device), history?.sessionId ?: selected.orEmpty(),
+            { connected && deviceId == device && accountName == account && serverUrl == server && (global != null || generation == version) },
+            { session, json ->
+                check(connected && deviceId == device && accountName == account && serverUrl == server && (global != null || generation == version)) { "连接已变化" }
+                remote.agent(session, json)
+            }, {}, history != null, workingPath = {
+                if (global != null) deviceName.ifEmpty { "Desktop" }
+                else if (history != null && history.sessionId != selected) history.title
+                else currentTerminalPath ?: if (selected == null) "未选择终端" else "路径不可用"
+            }, writeReason = { target ->
+                when {
+                    (!connected || deviceId != device) -> "设备离线 · 只读缓存"
+                    global != null -> null
+                    target.isEmpty() -> null
+                    sessions.none { it.id == target } -> "会话已关闭 · 只读"
+                    sessions.first { it.id == target }.exited -> "会话已结束 · 只读"
+                    !sessions.first { it.id == target }.desktopAttached -> "Desktop 已离开 · 只读"
+                    else -> null
+                }
+            }, pickImages = { callback ->
+                imagePicker = callback
+                val picker = if (Build.VERSION.SDK_INT >= 33) android.content.Intent(android.provider.MediaStore.ACTION_PICK_IMAGES).putExtra(android.provider.MediaStore.EXTRA_PICK_IMAGES_MAX, 4)
+                    else android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT).addCategory(android.content.Intent.CATEGORY_OPENABLE).putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE, true)
+                picker.type = "image/*"
+                startActivityForResult(picker, 831)
+            }, globalConversation = global, back = { openGlobalList() })
+    }
+    private fun agentSettings(page: String = "llm") {
+        val title = mapOf("llm" to "LLM 大模型", "reading" to "终端读取", "mcp" to "MCP", "skills" to "Skills")[page] ?: "LLM 大模型"
+        val body = panel(title); overlay?.tag = "setting-detail"
+        (body.getChildAt(0) as LinearLayout).addView(iconButton(R.drawable.ic_arrow_left, "返回设置") { settingsPanel() }, 0)
         body.addView(label("$accountName · $deviceName",12f,Palette.muted))
         val device=deviceId; val account=accountName;val version=generation
         AgentSettingsPanel(this, body, { json ->
@@ -923,7 +1039,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         }, selected.orEmpty(), { callback ->
             skillPicker=callback
             startActivityForResult(android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT_TREE),830)
-        })
+        }, page)
     }
 
     private fun restoreLastSession() {
@@ -978,6 +1094,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 }
             }
         }
+        if (connected && now - lastSessionRefreshAt >= 3000) { lastSessionRefreshAt = now; refreshSessions() }
         if (selected != null) try {
             remote.pollDisplay()?.let { batch ->
                 batch.update?.let { terminal?.apply(it); dimensions.text = "${it.cols} 列 × ${it.rows} 行 · UTF-8" }
@@ -998,7 +1115,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     }
     private fun disconnect() {
         terminalScrollback?.live(); terminalScrollback = null
-        generation++; selected = null; controlled = false; desktopAttached = false; sessionExited = false; connected = false; connecting = false; sessions = emptyList()
+        generation++; selected = null; currentTerminalPath = null; controlled = false; desktopAttached = false; sessionExited = false; connected = false; connecting = false; sessions = emptyList()
         sessionRefreshBusy = false
         aiStatus.visibility = View.GONE
         connection.text = "未连接"; connection.setTextColor(Palette.muted)
@@ -1007,17 +1124,17 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         work { remote.disconnect() }
     }
     override fun onStart() {
-        super.onStart(); active = true; Choreographer.getInstance().postFrameCallback(this)
+        super.onStart(); agentPanel?.resume(); globalPanel?.resume(); active = true; Choreographer.getInstance().postFrameCallback(this)
         if (accountName.isNotEmpty() && !connected) { beginEntry(); restorePending = true; val epoch = accountEpoch; work { loadDevices(epoch) } }
     }
     override fun onStop() {
         terminalScrollback?.live(); terminalScrollback = null
-        active = false; terminalKeyUps.clear(); toast?.cancel(); closeOverlay(); Choreographer.getInstance().removeFrameCallback(this)
-        disconnect(); super.onStop()
+        active = false; terminalKeyUps.clear(); toast?.cancel(); agentPanel?.pause(); globalPanel?.pause(); Choreographer.getInstance().removeFrameCallback(this)
+        if (imagePicker == null && skillPicker == null) { closeOverlay(); disconnect() }; super.onStop()
     }
     override fun onDestroy() {
         synchronized(accountPersistenceLock) { accountEpoch++ }
-        assistant?.close(); worker.execute { remote.close(); account.close() }; worker.shutdown(); historyWorker.shutdown()
+        agentPanel?.close(); globalPanel?.close(); assistant?.close(); worker.execute { remote.close(); account.close() }; worker.shutdown(); historyWorker.shutdown()
         super.onDestroy()
     }
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -1031,15 +1148,23 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         }
         return super.dispatchKeyEvent(event)
     }
-    override fun onBackPressed() { if (overlay != null) closeOverlay() else if (keyboardOpen) toggleInput(false) else super.onBackPressed() }
+    override fun onBackPressed() { if (agentPanel?.closeDetails() == true) return; if (overlay?.tag == "global-chat") openGlobalList() else if (overlay?.tag == "setting-detail") settingsPanel() else if (overlay != null) closeOverlay() else if (keyboardOpen) toggleInput(false) else super.onBackPressed() }
     @Deprecated("Legacy activity result bridge")
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:android.content.Intent?) {
         super.onActivityResult(requestCode,resultCode,data)
+        if (requestCode == 831) {
+            val callback = imagePicker; imagePicker = null
+            if (resultCode == RESULT_OK && data != null) {
+                val uris = data.clipData?.let { clip -> (0 until clip.itemCount).map { clip.getItemAt(it).uri } } ?: listOfNotNull(data.data)
+                callback?.invoke(uris)
+            }
+        }
         if(requestCode==830) {val callback=skillPicker;skillPicker=null;if(resultCode==RESULT_OK)data?.data?.let{callback?.invoke(it)}}
     }
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         assistant?.permissionResult(requestCode, grantResults)
+        agentPanel?.permissionResult(requestCode, grantResults)
     }
 }
 

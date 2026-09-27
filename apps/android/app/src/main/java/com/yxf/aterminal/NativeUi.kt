@@ -16,6 +16,8 @@ object Palette {
     val control = 0xff24292d.toInt()
     val line = 0xff30363a.toInt()
     val text = 0xffedf0f2.toInt()
+    val secondary = 0xffcbd0d4.toInt()
+    val warning = 0xffd8c18f.toInt()
     val muted = 0xffa0a8ae.toInt()
     val accent = 0xffa5c4d4.toInt()
     val green = 0xffa2c6ae.toInt()

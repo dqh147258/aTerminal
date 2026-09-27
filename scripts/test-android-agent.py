@@ -56,9 +56,9 @@ with tempfile.TemporaryDirectory(prefix='aterminal-agent-ui-') as directory:
         reading = json.loads(saved)['result']['terminal_reading']
         assert reading == {'head_lines': 7, 'tail_lines': 31}, reading
         (args.output/'desktop-reading.json').write_text(saved)
-        print('PASS: native Agent settings, encrypted RPC, PTY evidence and TUI filtering:', args.output/'results.json')
+        print('PASS: native Agent settings, encrypted RPC, PTY evidence, current path and vision upload:', args.output/'results.json')
     finally:
-        for name in ['defaults', 'settings-saved', 'conversation', 'history', 'evidence']:
+        for name in ['defaults', 'settings-saved', 'conversation', 'history', 'evidence', 'vision', 'global-wire']:
             picture = subprocess.run([args.adb, '-s', args.serial, 'exec-out', 'run-as', package, 'cat', f'files/agent-ui-{name}.png'], capture_output=True)
             if picture.returncode == 0:
                 (args.output/f'{name}.png').write_bytes(picture.stdout)

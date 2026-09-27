@@ -278,3 +278,56 @@ async fn generation_does_not_follow_redirects_or_resend_context() {
     assert_eq!(received.load(Ordering::SeqCst), 0);
     server.abort();
 }
+
+#[tokio::test]
+async fn user_picture_is_serialized_as_vision_content_on_actual_http_request() {
+    use rig_core::message::{ImageMediaType, UserContent};
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new()
+        .route("/chat/completions", post(reply))
+        .with_state(calls.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let model = connect(
+        &Connection {
+            protocol: Protocol::OpenaiChat,
+            endpoint: format!("http://{address}"),
+            api_version: None,
+        },
+        "test-model",
+        "local-test",
+    )
+    .unwrap();
+    let mut picture = entry();
+    picture.message = Message::User {
+        content: vec![
+            UserContent::text("inspect this"),
+            UserContent::image_base64("aW1hZ2U=", Some(ImageMediaType::PNG), None),
+        ],
+    };
+    let (_tx, rx) = watch::channel(false);
+    collect(
+        model.as_ref(),
+        builder().build(&[picture], None).unwrap(),
+        rx,
+        Duration::from_secs(5),
+        |_| {},
+    )
+    .await
+    .unwrap();
+    let calls = calls.lock().unwrap();
+    let user = calls[0]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "user")
+        .unwrap();
+    assert_eq!(user["content"][0]["text"], "inspect this");
+    assert_eq!(user["content"][1]["type"], "image_url");
+    assert_eq!(
+        user["content"][1]["image_url"]["url"],
+        "data:image/png;base64,aW1hZ2U="
+    );
+    server.abort();
+}
