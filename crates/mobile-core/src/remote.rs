@@ -43,6 +43,27 @@ pub struct RemoteSession {
     pub exit_code: u32,
     pub desktop_attached: bool,
 }
+#[derive(Clone, uniffi::Record)]
+pub struct TerminalHistoryCursor {
+    pub session: String,
+    pub epoch: u64,
+    pub view_id: u64,
+    pub offset: u32,
+}
+#[derive(uniffi::Record)]
+pub struct TerminalHistoryPage {
+    pub cursor: TerminalHistoryCursor,
+    pub lines: Vec<String>,
+    pub total: u32,
+    pub has_more: bool,
+    pub truncated: bool,
+}
+#[derive(uniffi::Record)]
+pub struct TerminalHistoryViewport {
+    pub cursor: TerminalHistoryCursor,
+    pub frame: RenderFrame,
+    pub total: u32,
+}
 struct State {
     replica: Replica,
     desired: Option<String>,
@@ -548,6 +569,140 @@ impl RemoteTerminal {
         }
         Ok(lines)
     }
+    pub fn read_history_page(
+        &self,
+        cursor: Option<TerminalHistoryCursor>,
+    ) -> Result<TerminalHistoryPage, CoreError> {
+        let (_, state) = self.shared()?;
+        let (mut request, generation) = {
+            let current = state.lock().map_err(ffi)?;
+            (
+                current.request(Operation::Scrollback).map_err(ffi)?,
+                current.generation,
+            )
+        };
+        if let Some(cursor) = cursor {
+            if cursor.session != request.session || cursor.epoch != request.session_epoch {
+                return Err(ffi("history_session_changed"));
+            }
+            request.scrollback_id = cursor.view_id;
+            request.history_offset = cursor.offset;
+        }
+        request.history_limit = 200;
+        let reply = self.call(request.clone()).map_err(|error| {
+            if error.to_string().contains("unknown operation") {
+                ffi("Desktop Agent needs an update to read complete history")
+            } else {
+                error
+            }
+        })?;
+        if reply.snapshot.is_some() {
+            return Err(ffi(
+                "Desktop Agent needs an update to read complete history",
+            ));
+        }
+        let (_, active) = self.shared()?;
+        let current = state.lock().map_err(ffi)?;
+        if !Arc::ptr_eq(&active, &state) || current.generation != generation {
+            drop(current);
+            let _ = self.release_history(TerminalHistoryCursor {
+                session: request.session,
+                epoch: request.session_epoch,
+                view_id: reply.scrollback_id,
+                offset: reply.history_next,
+            });
+            return Err(ffi("history_session_changed"));
+        }
+        if reply.scrollback_id == 0
+            || (request.scrollback_id != 0 && reply.scrollback_id != request.scrollback_id)
+            || (reply.history_has_more && reply.history.is_empty())
+            || reply.history_next < request.history_offset
+            || reply.history_next - request.history_offset != reply.history.len() as u32
+            || reply.history_next > reply.history_total
+            || reply.history_has_more != (reply.history_next < reply.history_total)
+        {
+            return Err(ffi("invalid_history_page"));
+        }
+        Ok(TerminalHistoryPage {
+            cursor: TerminalHistoryCursor {
+                session: request.session,
+                epoch: request.session_epoch,
+                view_id: reply.scrollback_id,
+                offset: reply.history_next,
+            },
+            lines: reply.history,
+            total: reply.history_total,
+            has_more: reply.history_has_more,
+            truncated: reply.history_truncated,
+        })
+    }
+    pub fn release_history(&self, cursor: TerminalHistoryCursor) -> Result<(), CoreError> {
+        self.call(Request {
+            operation: Operation::ReleaseScrollback as i32,
+            session: cursor.session,
+            session_epoch: cursor.epoch,
+            scrollback_id: cursor.view_id,
+            ..Request::default()
+        })?;
+        Ok(())
+    }
+    /// Styled reading window, independent of the live replica. Offset counts lines above live.
+    pub fn read_history_viewport(
+        &self,
+        cursor: Option<TerminalHistoryCursor>,
+        offset: u32,
+    ) -> Result<TerminalHistoryViewport, CoreError> {
+        let (_, state) = self.shared()?;
+        let (mut request, generation) = {
+            let current = state.lock().map_err(ffi)?;
+            (
+                current.request(Operation::Scrollback).map_err(ffi)?,
+                current.generation,
+            )
+        };
+        if let Some(cursor) = cursor {
+            if cursor.session != request.session || cursor.epoch != request.session_epoch {
+                return Err(ffi("history_session_changed"));
+            }
+            request.scrollback_id = cursor.view_id;
+        }
+        request.history_offset = offset;
+        let reply = self.call(request.clone())?;
+        let frame = reply
+            .snapshot
+            .ok_or_else(|| ffi("missing_history_viewport"))?;
+        frame.validate().map_err(ffi)?;
+        let cursor = TerminalHistoryCursor {
+            session: request.session,
+            epoch: request.session_epoch,
+            view_id: reply.scrollback_id,
+            offset: reply.scrollback_offset,
+        };
+        let (_, active) = self.shared()?;
+        let current = state.lock().map_err(ffi)?;
+        if !Arc::ptr_eq(&active, &state) || current.generation != generation {
+            drop(current);
+            let _ = self.release_history(cursor);
+            return Err(ffi("history_session_changed"));
+        }
+        if frame.epoch != cursor.epoch
+            || cursor.view_id == 0
+            || (request.scrollback_id != 0 && cursor.view_id != request.scrollback_id)
+            || cursor.offset > reply.scrollback_total
+        {
+            return Err(ffi("invalid_history_viewport"));
+        }
+        if !history_viewport_is_current(current.replica.state(), &frame) {
+            drop(current);
+            let _ = self.release_history(cursor);
+            return Err(ffi("history_viewport_changed"));
+        }
+        Ok(TerminalHistoryViewport {
+            cursor,
+            frame: render_frame(&frame),
+            total: reply.scrollback_total,
+        })
+    }
     pub fn close_selected(&self) -> Result<(), CoreError> {
         let (_, state) = self.shared()?;
         let req = state
@@ -562,6 +717,16 @@ impl RemoteTerminal {
         s.replica.reset();
         Ok(())
     }
+}
+fn history_viewport_is_current(
+    live: Option<&ai_terminal_protocol::Snapshot>,
+    history: &ai_terminal_protocol::Snapshot,
+) -> bool {
+    live.is_none_or(|live| {
+        live.revision < history.revision
+            || (live.dimensions_epoch == history.dimensions_epoch
+                && live.alternate_screen == history.alternate_screen)
+    })
 }
 fn session(s: SessionInfo) -> RemoteSession {
     let desktop_attached = desktop_available(&s);
@@ -832,6 +997,19 @@ fn subscription_boundary(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn delayed_history_viewport_cannot_restore_old_dimensions_or_screen_mode() {
+        let history = screen(1, 2, "a");
+        let mut live = screen(1, 3, "b");
+        assert!(history_viewport_is_current(Some(&live), &history));
+        live.dimensions_epoch += 1;
+        assert!(!history_viewport_is_current(Some(&live), &history));
+        live.dimensions_epoch = history.dimensions_epoch;
+        live.alternate_screen = !history.alternate_screen;
+        assert!(!history_viewport_is_current(Some(&live), &history));
+        live.revision = 1;
+        assert!(history_viewport_is_current(Some(&live), &history));
+    }
     #[test]
     fn delayed_subscription_replies_never_roll_back_the_applied_cursor() {
         let mut last_reply = 0;

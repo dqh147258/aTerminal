@@ -1,4 +1,5 @@
 mod runtime;
+mod scrollback;
 use crate::{
     Control,
     pty::{Output, Session},
@@ -727,12 +728,14 @@ fn session_loop(
         ..SessionInfo::default()
     };
     let mut snapshots = VecDeque::from([engine.snapshot()]);
+    let mut scrollback = scrollback::Views::default();
     let mut eof = false;
     let mut shell_poll = Instant::now() - Duration::from_secs(1);
     let mut last_publish = Instant::now();
     let mut warned_invalid_frame = false;
     let mut watchers: Vec<(Request, SyncSender<Reply>, Instant)> = Vec::new();
     loop {
+        scrollback.expire(&engine);
         if presence.expire() {
             info.desktop_attached = false;
             info.availability_epoch = presence.epoch;
@@ -817,6 +820,7 @@ fn session_loop(
                     &mut presence,
                     &mut info,
                     &mut snapshots,
+                    &mut scrollback,
                     None,
                 );
                 let _ = tx.send(result.unwrap_or_else(|e| error(e.to_string())));
@@ -856,6 +860,7 @@ fn session_loop(
                     &mut presence,
                     &mut info,
                     &mut snapshots,
+                    &mut scrollback,
                     gate,
                 );
                 if close && let Ok(reply) = &result {
@@ -879,6 +884,7 @@ fn handle_session(
     presence: &mut DesktopPresence,
     info: &mut SessionInfo,
     snapshots: &mut VecDeque<Snapshot>,
+    scrollback: &mut scrollback::Views,
     gate: Option<ExecutionGate>,
 ) -> Result<Reply> {
     let op = Operation::try_from(req.operation)?;
@@ -886,6 +892,7 @@ fn handle_session(
         bail!("stale session epoch")
     }
     presence.touch(req.client);
+    scrollback.touch(req.client);
     let guarded = matches!(
         op,
         Operation::AgentAcquire
@@ -928,6 +935,12 @@ fn handle_session(
     }
     let mut reply = Reply::default();
     match op {
+        Operation::Scrollback => {
+            reply = scrollback.read(&req, engine)?;
+        }
+        Operation::ReleaseScrollback => {
+            scrollback.release_view(req.client, req.scrollback_id);
+        }
         Operation::AttachDesktop => {
             if info.exited {
                 bail!("session exited")
@@ -942,6 +955,7 @@ fn handle_session(
             control.acquire(req.client)?;
         }
         Operation::Detach | Operation::AgentRelease => {
+            scrollback.release(req.client);
             control.release(req.client);
             presence.detach(req.client);
         }

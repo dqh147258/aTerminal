@@ -129,7 +129,7 @@ pub(crate) async fn serve(
                     result.state_sequence = update_id;
                 }
                 result
-            } else if op == Operation::History {
+            } else if matches!(op, Operation::History | Operation::Scrollback) {
                 if history.is_some() {
                     Reply {
                         error: "history request already pending".into(),

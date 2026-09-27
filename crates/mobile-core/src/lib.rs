@@ -8,7 +8,10 @@ mod agent_cache;
 pub use agent_cache::AgentCache;
 mod remote;
 pub use account::{Account, AccountDevice};
-pub use remote::{RemoteSession, RemoteTerminal};
+pub use remote::{
+    RemoteSession, RemoteTerminal, TerminalHistoryCursor, TerminalHistoryPage,
+    TerminalHistoryViewport,
+};
 
 /// P0 build probe: force the native WebRTC symbols to link into mobile artifacts.
 #[uniffi::export]

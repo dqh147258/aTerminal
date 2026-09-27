@@ -18,6 +18,20 @@ import android.widget.ScrollView
 import uniffi.ai_terminal_mobile.*
 
 class TerminalView(context: Context, private var frame: RenderFrame) : View(context) {
+    var beforeInput: () -> Unit = {}
+    var historyInvalidated: () -> Unit = {}
+    private var historyFrame: RenderFrame? = null
+    private val displayedFrame get() = historyFrame ?: frame
+    val rowHeight get() = cellHeight
+    fun showHistory(value: RenderFrame?) {
+        if (value != null && (value.rows != frame.rows || value.cols != frame.cols)) {
+            historyInvalidated()
+            return
+        }
+        historyFrame = value; rowNodes.clear(); changedRows.clear(); requestLayout(); invalidate()
+        followCursor = value == null
+        if (value == null) revealCursor()
+    }
     var canType: () -> Boolean = { false }
     var sendText: (String) -> Boolean = { false }
     var sendPaste: (String) -> Boolean = { false }
@@ -35,7 +49,7 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
         isFocusableInTouchMode = true
         setOnClickListener { focusKeyboard() }
         setOnLongClickListener {
-            val text = frame.cells.chunked(frame.cols.toInt()).joinToString("\n") { row -> row.filter { it.width > 0u }.joinToString("") { it.text } }
+            val text = displayedFrame.cells.chunked(displayedFrame.cols.toInt()).joinToString("\n") { row -> row.filter { it.width > 0u }.joinToString("") { it.text } }
             (context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager)
                 .setPrimaryClip(android.content.ClipData.newPlainText("Terminal", text))
             true
@@ -43,6 +57,7 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
     }
     fun focusKeyboard(): Boolean {
         if (!canType()) { readOnlyTapped(); return false }
+        beforeInput()
         followCursor = true
         requestFocus()
         (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
@@ -53,7 +68,7 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
     }
     fun stopFollowingCursor() { followCursor = false }
     private fun revealCursor() {
-        if (!followCursor || !frame.cursorVisible) return
+        if (historyFrame != null || !followCursor || !frame.cursorVisible) return
         post {
             if (!followCursor || !frame.cursorVisible) return@post
             val horizontal = parent as? HorizontalScrollView ?: return@post
@@ -170,7 +185,7 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
     private val rowNodes = mutableMapOf<Int, RenderNode>()
     private val changedRows = mutableSetOf<Int>()
     fun zoom(scale: Float) { rowNodes.clear(); paint.textSize = 15f * resources.displayMetrics.scaledDensity * scale; metrics.textSize = paint.textSize; cellWidth = metrics.measureText("M"); cellHeight = metrics.fontSpacing; baseline = -metrics.fontMetrics.top; requestLayout(); invalidate() }
-    fun update(next: RenderFrame) { rowNodes.clear(); changedRows.clear(); val resized = next.rows != frame.rows || next.cols != frame.cols; cells = next.cells.toMutableList(); frame = next.copy(cells = cells); sourceEpoch = null; sourceGeneration = null; if (resized) requestLayout(); invalidate(); revealCursor() }
+    fun update(next: RenderFrame) { historyInvalidated(); historyFrame = null; rowNodes.clear(); changedRows.clear(); val resized = next.rows != frame.rows || next.cols != frame.cols; cells = next.cells.toMutableList(); frame = next.copy(cells = cells); sourceEpoch = null; sourceGeneration = null; if (resized) requestLayout(); invalidate(); revealCursor() }
     fun apply(update: RenderUpdate) {
         val resized = frame.rows != update.rows || frame.cols != update.cols
         val count = update.rows.toLong() * update.cols.toLong()
@@ -188,11 +203,13 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
             previous = index
         }
         require(!update.full || update.patches.size.toLong() == count) { "Incomplete display snapshot" }
+        if (resized) { historyInvalidated(); historyFrame = null }
         val dirty = mutableSetOf(frame.cursorRow.toInt(), update.cursorRow.toInt())
         if (update.full) cells = update.patches.mapTo(ArrayList(update.patches.size)) { it.cell }
         else for (patch in update.patches) { val i = patch.index.toInt(); cells[i] = patch.cell; dirty.add(i / update.cols.toInt()) }
         frame = RenderFrame(update.rows, update.cols, update.revision, cells, update.cursorRow, update.cursorCol, update.cursorVisible, update.cursorShape)
         sourceEpoch = update.epoch; sourceGeneration = update.generation
+        if (historyFrame != null) return
         if (update.full || resized) { rowNodes.clear(); changedRows.clear() } else changedRows.addAll(dirty)
         if (resized) requestLayout()
         if (update.full) invalidate() else for (row in dirty) invalidate(0, (row * cellHeight).toInt(), width, kotlin.math.ceil((row + 1) * cellHeight.toDouble()).toInt())
@@ -204,27 +221,27 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
     private var cellHeight = metrics.fontSpacing
     private var baseline = -metrics.fontMetrics.top
     override fun onMeasure(width: Int, height: Int) {
-        setMeasuredDimension((frame.cols.toInt() * cellWidth).toInt(), (frame.rows.toInt() * cellHeight).toInt())
+        setMeasuredDimension((displayedFrame.cols.toInt() * cellWidth).toInt(), (displayedFrame.rows.toInt() * cellHeight).toInt())
     }
     private fun drawRow(canvas: Canvas, row: Int, y: Float) {
-        val cols = frame.cols.toInt()
+        val cols = displayedFrame.cols.toInt()
         var col = 0
         paint.style = Paint.Style.FILL; paint.isAntiAlias = false; paint.alpha = 255
         while (col < cols) {
-            val start = col; val background = frame.cells[row * cols + col].background
-            while (col < cols && frame.cells[row * cols + col].background == background) col++
+            val start = col; val background = displayedFrame.cells[row * cols + col].background
+            while (col < cols && displayedFrame.cells[row * cols + col].background == background) col++
             paint.color = background.toInt() or 0xff000000.toInt()
             canvas.drawRect(start * cellWidth, y, col * cellWidth, y + cellHeight, paint)
         }
         paint.isAntiAlias = true; col = 0
         while (col < cols) {
-            val cell = frame.cells[row * cols + col]
+            val cell = displayedFrame.cells[row * cols + col]
             if (cell.width == 0u) { col++; continue }
             val start = col; col += cell.width.toInt()
             val text = StringBuilder(cell.text)
             if (cell.width == 1u && cell.text.length == 1 && cell.text[0].code in 32..126) {
                 while (col < cols) {
-                    val next = frame.cells[row * cols + col]
+                    val next = displayedFrame.cells[row * cols + col]
                     if (next.width != 1u || next.text.length != 1 || next.text[0].code !in 32..126 || next.foreground != cell.foreground || next.style != cell.style) break
                     text.append(next.text); col++
                 }
@@ -246,7 +263,7 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
         super.onDraw(canvas)
         val clip = canvas.clipBounds
         val firstRow = (clip.top / cellHeight).toInt().coerceAtLeast(0)
-        val endRow = kotlin.math.ceil(clip.bottom / cellHeight.toDouble()).toInt().coerceAtMost(frame.rows.toInt())
+        val endRow = kotlin.math.ceil(clip.bottom / cellHeight.toDouble()).toInt().coerceAtMost(displayedFrame.rows.toInt())
         for (row in firstRow until endRow) {
             if (Build.VERSION.SDK_INT >= 29 && canvas.isHardwareAccelerated) {
                 var node = rowNodes[row]
@@ -260,18 +277,18 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
             } else { drawRow(canvas, row, row * cellHeight) }
         }
         paint.alpha = 255
-        if (frame.cursorVisible) {
-            val x = frame.cursorCol.toInt() * cellWidth
-            val y = frame.cursorRow.toInt() * cellHeight
+        if (displayedFrame.cursorVisible) {
+            val x = displayedFrame.cursorCol.toInt() * cellWidth
+            val y = displayedFrame.cursorRow.toInt() * cellHeight
             val stroke = (2f * resources.displayMetrics.density).coerceAtLeast(2f)
             paint.color = 0xffe5e5e5.toInt(); paint.style = Paint.Style.FILL; paint.alpha = 255
-            when (frame.cursorShape) {
+            when (displayedFrame.cursorShape) {
                 0u, 1u -> canvas.drawRect(x, y, x + stroke, y + cellHeight, paint)
                 2u -> canvas.drawRect(x, y + cellHeight - stroke, x + cellWidth, y + cellHeight, paint)
                 3u -> { paint.style = Paint.Style.STROKE; paint.strokeWidth = stroke; canvas.drawRect(x + stroke / 2, y + stroke / 2, x + cellWidth - stroke / 2, y + cellHeight - stroke / 2, paint) }
                 else -> {
                     canvas.drawRect(x, y, x + cellWidth, y + cellHeight, paint)
-                    val cell = frame.cells[frame.cursorRow.toInt() * frame.cols.toInt() + frame.cursorCol.toInt()]
+                    val cell = displayedFrame.cells[displayedFrame.cursorRow.toInt() * displayedFrame.cols.toInt() + displayedFrame.cursorCol.toInt()]
                     if (cell.width > 0u && cell.text.isNotBlank()) {
                         val saved = canvas.save(); canvas.clipRect(x, y, x + cellWidth, y + cellHeight)
                         paint.color = 0xff101014.toInt(); paint.isFakeBoldText = false; paint.isUnderlineText = false; paint.isStrikeThruText = false; paint.textSkewX = 0f

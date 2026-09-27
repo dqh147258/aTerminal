@@ -31,6 +31,9 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private val account = Account()
     private val worker = Executors.newSingleThreadExecutor()
     private val historyWorker = Executors.newSingleThreadExecutor()
+    private var terminalScrollback: TerminalScrollback? = null
+    private var historyStatus: String? = null
+    private var historyClose: (() -> Unit)? = null
     private val ui = Handler(Looper.getMainLooper())
     private var active = false
     @Volatile private var generation = 0
@@ -332,13 +335,14 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 false
             }
         }
-        var scrollStartY = 0f
-        region.addView(scroll(surface).apply {
-            setOnTouchListener { _, event ->
-                if (event.actionMasked == MotionEvent.ACTION_DOWN) scrollStartY = event.y
-                if (event.actionMasked == MotionEvent.ACTION_MOVE && kotlin.math.abs(event.y - scrollStartY) > dp(8)) terminal?.stopFollowingCursor()
-                false
-            }
+        region.addView(TerminalScrollView(this).apply {
+            isFillViewport = true
+            addView(surface)
+            canReadHistory = { selected != null && connected && this@MainActivity.overlay == null }
+            isReading = { terminalScrollback?.reading == true }
+            lineHeight = { terminal?.rowHeight ?: 20f }
+            scrollHistory = { terminalScrollback?.scroll(it) }
+            stopFollowing = { terminal?.stopFollowingCursor() }
         }, FrameLayout.LayoutParams(-1, -1))
         empty = column(24).apply {
             gravity = Gravity.CENTER
@@ -482,6 +486,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private fun select(id: String, control: Boolean, chat: Boolean = false) {
         val reopenKeyboard = control && keyboardOpen
         beginEntry("正在打开终端…")
+        terminalScrollback?.live(); terminalScrollback = null
         closeOverlay(); toggleInput(false); generation++; val version = generation
         selected = null; controlled = false; desktopAttached = false; sessionExited = false
         surface.removeAllViews(); terminal = null
@@ -505,8 +510,15 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         }
     }
     private fun show(frame: RenderFrame) {
+        terminalScrollback?.live()
+        val version = generation
+        terminalScrollback = TerminalScrollback(remote, historyWorker, ui,
+            { active && generation == version && selected != null && connected },
+            { terminal?.showHistory(it) }, { historyStatus = it; if (it != null) status.text = it }, { notice(it) })
         empty.visibility = View.GONE
         if (terminal == null) { terminal = TerminalView(this, frame).apply {
+            beforeInput = { terminalScrollback?.live() }
+            historyInvalidated = { terminalScrollback?.live() }
             canType = { selected != null && controlled && (this@MainActivity.overlay == null || this@MainActivity.overlay?.tag == "keys") }
             sendText = { text -> enqueue { remote.typeText(text) } }
             sendPaste = { text -> enqueue { remote.sendText(text, false) } }
@@ -519,6 +531,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         dimensions.text = "${frame.cols} 列 × ${frame.rows} 行 · UTF-8"
     }
     private fun enqueue(action: () -> Unit): Boolean {
+        terminalScrollback?.live()
         if (!controlled || selected == null) { notice(readOnlyReason()); return false }
         return try { action(); true } catch (e: Exception) { notice(e.message ?: "输入失败"); false }
     }
@@ -628,17 +641,56 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             }.show()
     }
     private fun terminalHistory() {
+        terminalScrollback?.live()
         if (selected == null) { notice("请先选择会话"); return }
         val version = generation
-        historyWorker.execute {
-            try {
-                val text = remote.readHistory().joinToString("\n")
-                post { if (active && generation == version) {
-                    val body = panel("终端历史")
-                    body.grow(scroll(label(text.ifEmpty { "暂无终端历史" }, display.fontSize.toFloat()).apply { setBackgroundColor(Palette.surface); typeface = Typeface.MONOSPACE; setTextIsSelectable(true); setPadding(dp(16), dp(16), dp(16), dp(16)) }))
-                } }
-            } catch (e: Exception) { post { if (active && generation == version) notice(e.message ?: "读取失败") } }
+        val body = panel("终端历史")
+        val summary = label("正在读取历史", 12f, Palette.muted)
+        val more = actionButton("加载更早记录") {}
+        val refresh = actionButton("读取最新历史") { terminalHistory() }
+        val text = label("", display.fontSize.toFloat()).apply {
+            setBackgroundColor(Palette.surface); typeface = Typeface.MONOSPACE
+            setTextIsSelectable(true); setPadding(dp(16), dp(16), dp(16), dp(16))
         }
+        body.addView(summary); body.addView(more); body.addView(refresh)
+        val viewport = scroll(text)
+        body.grow(viewport)
+        var cursor: TerminalHistoryCursor? = null
+        val lines = mutableListOf<String>()
+        var closed = false
+        var loading = false
+        fun release(value: TerminalHistoryCursor?) {
+            if (value != null && !historyWorker.isShutdown) historyWorker.execute { runCatching { remote.releaseHistory(value) } }
+        }
+        historyClose = { closed = true; release(cursor); cursor = null }
+        fun load() {
+            if (closed || loading) return
+            loading = true; more.isEnabled = false
+            val previous = cursor
+            historyWorker.execute {
+                try {
+                    val page = remote.readHistoryPage(previous)
+                    post {
+                        if (!active || generation != version || closed) { release(page.cursor); return@post }
+                        val oldHeight = text.height; val oldY = viewport.scrollY
+                        cursor = page.cursor; lines.addAll(0, page.lines)
+                        text.text = lines.joinToString("\n").ifEmpty { "暂无终端历史" }
+                        summary.text = "已加载 ${page.cursor.offset} / ${page.total} 行" + if (page.truncated) " · 更早记录已超出保留范围" else ""
+                        more.visibility = if (page.hasMore) View.VISIBLE else View.GONE
+                        more.isEnabled = page.hasMore; loading = false
+                        if (previous != null) text.post { if (!closed) viewport.scrollTo(0, oldY + text.height - oldHeight) }
+                        else viewport.post { if (!closed) viewport.fullScroll(View.FOCUS_DOWN) }
+                    }
+                } catch (e: Exception) {
+                    post { if (active && generation == version && !closed) {
+                        loading = false; more.isEnabled = false
+                        summary.text = "历史读取失败，请读取最新历史：${e.message}"
+                    } }
+                }
+            }
+        }
+        more.setOnClickListener { load() }
+        load()
     }
 
     private fun openDrawer() {
@@ -841,6 +893,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         return body
     }
     private fun closeOverlay(hideIme: Boolean = true) {
+        historyClose?.invoke(); historyClose = null
         assistant?.close(); assistant = null
         agentPanel?.close(); agentPanel = null
         refreshDrawer = null; ui.removeCallbacks(drawerRefresh)
@@ -937,12 +990,14 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                     controlled -> "可输入"
                     else -> "只读权限"
                 }
-                if (status.text.toString() != next) status.text = next
+                val shownStatus = historyStatus ?: next
+                if (status.text.toString() != shownStatus) status.text = shownStatus
             }
         } catch (e: Exception) { disconnect(); notice(e.message ?: "显示同步失败，请重新连接") }
         Choreographer.getInstance().postFrameCallback(this)
     }
     private fun disconnect() {
+        terminalScrollback?.live(); terminalScrollback = null
         generation++; selected = null; controlled = false; desktopAttached = false; sessionExited = false; connected = false; connecting = false; sessions = emptyList()
         sessionRefreshBusy = false
         aiStatus.visibility = View.GONE
@@ -956,6 +1011,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         if (accountName.isNotEmpty() && !connected) { beginEntry(); restorePending = true; val epoch = accountEpoch; work { loadDevices(epoch) } }
     }
     override fun onStop() {
+        terminalScrollback?.live(); terminalScrollback = null
         active = false; terminalKeyUps.clear(); toast?.cancel(); closeOverlay(); Choreographer.getInstance().removeFrameCallback(this)
         disconnect(); super.onStop()
     }

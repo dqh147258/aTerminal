@@ -1,6 +1,6 @@
 use crate::{
     Args, input,
-    render::{Renderer, TerminalGuard},
+    render::{ColorLevel, Renderer, TerminalGuard},
 };
 use ai_terminal_agent::{Client, default_state_dir};
 use ai_terminal_protocol::{
@@ -63,8 +63,17 @@ fn attach_desktop(client: &Client, id: &str, epoch: u64) -> Result<bool> {
     }
 }
 pub fn run(args: Args) -> Result<u32> {
+    let management = args.list || args.close.is_some() || args.history.is_some() || args.agent_stop;
+    let _terminal = if management {
+        None
+    } else {
+        if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+            bail!("attach requires a terminal; --snapshot captures non-interactively")
+        }
+        Some(TerminalGuard::enter()?)
+    };
     let state_dir = args.state_dir.map(Ok).unwrap_or_else(default_state_dir)?;
-    let client = if args.list || args.close.is_some() || args.history.is_some() || args.agent_stop {
+    let client = if management {
         Client::connect(&state_dir).context("no running Agent")?
     } else {
         Client::ensure(&state_dir, &std::env::current_exe()?)?
@@ -129,9 +138,7 @@ pub fn run(args: Args) -> Result<u32> {
         }
         return Ok(0);
     }
-    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-        bail!("attach requires a terminal; --snapshot captures non-interactively")
-    }
+    let colors = ColorLevel::detect();
     let (cols, rows) = terminal::size()?;
     let (reply, legacy_agent) = if let Some(id) = args.attach {
         let legacy = if args.watch {
@@ -301,8 +308,14 @@ pub fn run(args: Args) -> Result<u32> {
             thread::sleep(Duration::from_millis(3));
         }
     });
-    let _terminal = TerminalGuard::enter()?;
-    let mut renderer = Renderer::default();
+    let mut renderer = Renderer::new(colors);
+    let mut browser = crate::scrollback::Browser::default();
+    let request = Request {
+        session: id.clone(),
+        session_epoch: epoch,
+        ..Request::default()
+    };
+    let mut size = (cols, rows);
     renderer.viewport(cols, rows);
     let mut out = io::stdout().lock();
     loop {
@@ -313,9 +326,12 @@ pub fn run(args: Args) -> Result<u32> {
         if let Some(e) = error {
             bail!("Agent connection ended: {e}; session may still be running")
         }
-        if renderer.revision() != frame.revision {
-            renderer.draw(&mut out, (*frame).clone())?;
+        if !browser.compatible(&frame) {
+            browser.leave(&client, &request)?;
         }
+        let display = browser.frame.as_ref().unwrap_or(&frame);
+        let bar = browser.bar(display, size);
+        renderer.draw_view(&mut out, display, bar)?;
         if info.exited {
             return Ok(info.exit_code);
         }
@@ -325,16 +341,18 @@ pub fn run(args: Args) -> Result<u32> {
         if event::poll(Duration::from_millis(3))? {
             let event = event::read()?;
             if let Event::Resize(cols, rows) = &event {
+                browser.leave(&client, &request)?;
+                size = (*cols, *rows);
                 renderer.viewport(*cols, *rows);
             }
             if is_detach_key(&event) {
                 return Ok(0);
             }
-            if args.watch {
+            if browser.mouse(&event, size, args.watch, &client, &request, &frame)? {
                 continue;
             }
             match event {
-                Event::Resize(cols, rows) => {
+                Event::Resize(cols, rows) if !args.watch => {
                     client.call(Request {
                         session: id.clone(),
                         session_epoch: epoch,
@@ -345,18 +363,28 @@ pub fn run(args: Args) -> Result<u32> {
                         ..Request::default()
                     })?;
                 }
+                Event::Resize(..) => (),
                 e => {
-                    if let Some(bytes) = input::encode(e, frame.input_modes) {
-                        client.call(Request {
-                            session: id.clone(),
-                            session_epoch: epoch,
-                            operation: Operation::Input as i32,
-                            control_epoch,
-                            input_seq: seq,
-                            input: bytes,
-                            ..Request::default()
-                        })?;
-                        seq += 1;
+                    let typing = matches!(&e, Event::Key(_) | Event::Paste(_));
+                    match input::route(e, &frame, browser.active(), args.watch) {
+                        input::Action::Scroll(delta) => {
+                            browser.scroll(delta, &client, &request, &frame)?
+                        }
+                        input::Action::Live => browser.leave(&client, &request)?,
+                        input::Action::Bytes(bytes) => {
+                            if typing {
+                                browser.leave(&client, &request)?;
+                            }
+                            client.call(Request {
+                                operation: Operation::Input as i32,
+                                control_epoch,
+                                input_seq: seq,
+                                input: bytes,
+                                ..request.clone()
+                            })?;
+                            seq += 1;
+                        }
+                        input::Action::Ignore => (),
                     }
                 }
             }

@@ -28,6 +28,11 @@ final class TerminalModel: ObservableObject {
     @Published var sessionExited = false
     @Published var history = ""
     @Published var historyLoading = false
+    @Published var historyHasMore = false
+    @Published var historySummary = ""
+    private var historyCursor: TerminalHistoryCursor?
+    private var historyVersion = 0
+    private let historyWorker = DispatchQueue(label: "terminal.history")
     private var accountBusy = false
     private var sessionsRefreshInFlight = false
     @Published private(set) var generation = 0
@@ -279,6 +284,7 @@ final class TerminalModel: ObservableObject {
         }
     }
     func select(_ id: String, control: Bool) {
+        closeHistory()
         guard !busy else { return }; busy = true; preparingWorkspace = true; error = nil
         generation += 1; let version = generation; selected = nil; hasControl = false; desktopAttached = false; sessionExited = false; screen = nil; history = ""
         worker.async { [weak self] in guard let self else { return }
@@ -361,14 +367,41 @@ final class TerminalModel: ObservableObject {
             }
         }
     }
+    func closeHistory() {
+        historyVersion += 1; historyLoading = false; historyHasMore = false
+        let cursor = historyCursor; historyCursor = nil
+        if let cursor { historyWorker.async { [weak self] in try? self?.core.releaseHistory(cursor: cursor) } }
+    }
     func readHistory() {
-        let version = generation
-        history = ""; historyLoading = true
-        worker.async { [weak self] in guard let self else { return }
-            do { let text = try self.core.readHistory().joined(separator: "\n"); DispatchQueue.main.async { if self.generation == version { self.history = text; self.historyLoading = false } } }
-            catch { DispatchQueue.main.async { if self.generation == version { self.status = terminalError(error); self.history = terminalError(error); self.historyLoading = false } } }
+        closeHistory(); history = ""; historySummary = ""
+        loadEarlierHistory()
+    }
+    func loadEarlierHistory() {
+        guard !historyLoading else { return }
+        let version = generation; let reading = historyVersion; let cursor = historyCursor
+        historyLoading = true
+        historyWorker.async { [weak self] in guard let self else { return }
+            do {
+                let page = try self.core.readHistoryPage(cursor: cursor)
+                DispatchQueue.main.async {
+                    guard self.generation == version, self.historyVersion == reading else {
+                        self.historyWorker.async { try? self.core.releaseHistory(cursor: page.cursor) }; return
+                    }
+                    let text = page.lines.joined(separator: "\n")
+                    self.history = cursor == nil ? text : text + "\n" + self.history
+                    self.historyCursor = page.cursor; self.historyHasMore = page.hasMore
+                    self.historySummary = "已加载 \(page.cursor.offset) / \(page.total) 行" + (page.truncated ? " · 更早记录已超出保留范围" : "")
+                    self.historyLoading = false
+                }
+            } catch {
+                DispatchQueue.main.async { if self.generation == version && self.historyVersion == reading {
+                    self.historySummary = "历史读取失败，请读取最新历史：" + terminalError(error)
+                    self.historyHasMore = false; self.historyLoading = false
+                } }
+            }
         }
     }
+
     func agent(scope: ChatScope, json: String, configuration: Bool = false) async throws -> String {
         guard connected, identity == scope.identity, deviceID == scope.device else { throw ChatFailure.message("账号或设备连接已变化") }
         return try await withCheckedThrowingContinuation { continuation in

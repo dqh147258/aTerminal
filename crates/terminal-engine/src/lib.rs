@@ -1,5 +1,6 @@
 //! Desktop-only authoritative terminal engine. It alone answers application queries.
 pub mod reading;
+pub mod scrollback;
 use ai_terminal_protocol::{self as wire, Cell, Cursor, Snapshot};
 use alacritty_terminal::{
     Term,
@@ -168,6 +169,7 @@ impl Engine {
             sgr,
             drag,
             motion,
+            self.term.mode().contains(TermMode::ALTERNATE_SCROLL),
         ];
         bits.iter()
             .enumerate()
@@ -260,10 +262,40 @@ impl Engine {
     pub fn snapshot(&self) -> Snapshot {
         let rows = self.term.screen_lines();
         let cols = self.term.columns();
-        let mut cells = Vec::with_capacity(rows * cols);
-        for row in 0..rows {
+        let cells = self.cells(0, rows as i32);
+        let cursor = self.term.renderable_content().cursor;
+        let mut state = Snapshot {
+            version: wire::VERSION,
+            epoch: self.epoch,
+            revision: self.revision,
+            rows: rows as u32,
+            cols: cols as u32,
+            cells,
+            cursor: Some(Cursor {
+                row: cursor.point.line.0.max(0) as u32,
+                col: cursor.point.column.0 as u32,
+                visible: cursor.shape != CursorShape::Hidden,
+                shape: match cursor.shape {
+                    CursorShape::Beam => 1,
+                    CursorShape::Underline => 2,
+                    CursorShape::HollowBlock => 3,
+                    _ => 0,
+                },
+            }),
+            alternate_screen: self.term.mode().contains(TermMode::ALT_SCREEN),
+            hash: Vec::new(),
+            dimensions_epoch: self.dimensions_epoch,
+            input_modes: self.input_modes(),
+        };
+        state.seal();
+        state
+    }
+    fn cells(&self, start: i32, end: i32) -> Vec<Cell> {
+        let cols = self.term.columns();
+        let mut cells = Vec::with_capacity((end - start) as usize * cols);
+        for row in start..end {
             for col in 0..cols {
-                let c = &self.term.grid()[Point::new(Line(row as i32), Column(col))];
+                let c = &self.term.grid()[Point::new(Line(row), Column(col))];
                 let mut fg = self.color(c.fg);
                 let mut bg = self.color(c.bg);
                 if c.flags.contains(Flags::INVERSE) {
@@ -316,32 +348,7 @@ impl Engine {
                 });
             }
         }
-        let cursor = self.term.renderable_content().cursor;
-        let mut state = Snapshot {
-            version: wire::VERSION,
-            epoch: self.epoch,
-            revision: self.revision,
-            rows: rows as u32,
-            cols: cols as u32,
-            cells,
-            cursor: Some(Cursor {
-                row: cursor.point.line.0.max(0) as u32,
-                col: cursor.point.column.0 as u32,
-                visible: cursor.shape != CursorShape::Hidden,
-                shape: match cursor.shape {
-                    CursorShape::Beam => 1,
-                    CursorShape::Underline => 2,
-                    CursorShape::HollowBlock => 3,
-                    _ => 0,
-                },
-            }),
-            alternate_screen: self.term.mode().contains(TermMode::ALT_SCREEN),
-            hash: Vec::new(),
-            dimensions_epoch: self.dimensions_epoch,
-            input_modes: self.input_modes(),
-        };
-        state.seal();
-        state
+        cells
     }
     fn color(&self, color: Color) -> u32 {
         match color {
@@ -364,7 +371,7 @@ pub fn check_size(rows: u16, cols: u16) -> Result<(), wire::ProtocolError> {
         Ok(())
     }
 }
-fn palette(i: usize) -> u32 {
+pub fn palette(i: usize) -> u32 {
     const ANSI: [u32; 16] = [
         0x000000, 0xcd0000, 0x00cd00, 0xcdcd00, 0x0000ee, 0xcd00cd, 0x00cdcd, 0xe5e5e5, 0x7f7f7f,
         0xff0000, 0x00ff00, 0xffff00, 0x5c5cff, 0xff00ff, 0x00ffff, 0xffffff,

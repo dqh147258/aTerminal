@@ -3,6 +3,70 @@ use crossterm::event::{
 };
 
 struct Modes(u32);
+pub enum Action {
+    Scroll(i32),
+    Live,
+    Bytes(Vec<u8>),
+    Ignore,
+}
+
+/// Local reading actions are resolved before encoding application input.
+pub fn route(
+    event: Event,
+    frame: &ai_terminal_protocol::Snapshot,
+    reading: bool,
+    watch: bool,
+) -> Action {
+    if let Event::Key(key) = &event
+        && key.kind != KeyEventKind::Release
+    {
+        if key.modifiers == M::SHIFT {
+            match key.code {
+                KeyCode::PageUp => {
+                    return Action::Scroll(frame.rows.saturating_sub(1).max(1) as i32);
+                }
+                KeyCode::PageDown => {
+                    return Action::Scroll(-(frame.rows.saturating_sub(1).max(1) as i32));
+                }
+                _ => (),
+            }
+        }
+        if reading && key.code == KeyCode::Esc {
+            return Action::Live;
+        }
+    }
+    if let Event::Mouse(mouse) = &event {
+        let direction = match mouse.kind {
+            MK::ScrollUp => 1,
+            MK::ScrollDown => -1,
+            _ => 0,
+        };
+        if direction != 0 {
+            if reading || watch || mouse.modifiers.contains(M::SHIFT) {
+                return Action::Scroll(direction * 3);
+            }
+            if frame.input_modes & 8 == 0 {
+                if !frame.alternate_screen {
+                    return Action::Scroll(direction * 3);
+                }
+                if frame.input_modes & 128 != 0 {
+                    return Action::Bytes(
+                        if direction > 0 { b"\x1bOA" } else { b"\x1bOB" }.repeat(3),
+                    );
+                }
+                return Action::Ignore;
+            }
+        }
+        // Coordinates in a historical frame never target the live application.
+        if reading {
+            return Action::Ignore;
+        }
+    }
+    if watch {
+        return Action::Ignore;
+    }
+    encode(event, frame.input_modes).map_or(Action::Ignore, Action::Bytes)
+}
 impl Modes {
     fn application_cursor(&self) -> bool {
         self.0 & 1 != 0
@@ -181,6 +245,74 @@ mod tests {
     use super::*;
     use ai_terminal_engine::Engine;
     use crossterm::event::KeyEvent;
+    fn wheel(kind: MK, modifiers: M) -> Event {
+        Event::Mouse(crossterm::event::MouseEvent {
+            kind,
+            modifiers,
+            column: 3,
+            row: 2,
+        })
+    }
+    #[test]
+    fn wheel_routes_history_mouse_and_alternate_scroll() {
+        let mut engine = Engine::new(4, 12, 1).unwrap();
+        let up = || wheel(MK::ScrollUp, M::NONE);
+        assert!(matches!(
+            route(up(), &engine.snapshot(), false, false),
+            Action::Scroll(3)
+        ));
+        engine.feed(b"\x1b[?1000h\x1b[?1006h");
+        match route(up(), &engine.snapshot(), false, false) {
+            Action::Bytes(bytes) => assert_eq!(bytes, b"\x1b[<64;4;3M"),
+            _ => panic!("mouse protocol lost"),
+        }
+        assert!(matches!(
+            route(
+                wheel(MK::ScrollUp, M::SHIFT),
+                &engine.snapshot(),
+                false,
+                false
+            ),
+            Action::Scroll(3)
+        ));
+        assert!(matches!(
+            route(up(), &engine.snapshot(), false, true),
+            Action::Scroll(3)
+        ));
+        engine.feed(b"\x1b[?1000l\x1b[?1049h\x1b[?1007h");
+        match route(up(), &engine.snapshot(), false, false) {
+            Action::Bytes(bytes) => assert_eq!(bytes, b"\x1bOA\x1bOA\x1bOA"),
+            _ => panic!("alternate scroll lost"),
+        }
+        engine.feed(b"\x1b[?1007l");
+        assert!(matches!(
+            route(up(), &engine.snapshot(), false, false),
+            Action::Ignore
+        ));
+    }
+    #[test]
+    fn page_keys_and_escape_are_local_only_when_needed() {
+        let frame = Engine::new(24, 80, 1).unwrap().snapshot();
+        let key = |code, modifiers| Event::Key(KeyEvent::new(code, modifiers));
+        assert!(matches!(
+            route(key(KeyCode::PageUp, M::SHIFT), &frame, false, false),
+            Action::Scroll(23)
+        ));
+        assert!(matches!(
+            route(key(KeyCode::Esc, M::NONE), &frame, true, true),
+            Action::Live
+        ));
+        assert!(
+            matches!(route(key(KeyCode::Esc, M::NONE), &frame, false, false), Action::Bytes(bytes) if bytes == [27])
+        );
+        assert!(
+            matches!(route(key(KeyCode::Char('x'), M::NONE), &frame, true, false), Action::Bytes(bytes) if bytes == b"x")
+        );
+        assert!(matches!(
+            route(key(KeyCode::Char('x'), M::NONE), &frame, true, true),
+            Action::Ignore
+        ));
+    }
     #[test]
     fn arrows_follow_inner_modes_and_ctrl_c_is_forwarded() {
         let mut e = Engine::new(4, 12, 1).unwrap();

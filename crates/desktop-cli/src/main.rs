@@ -5,6 +5,8 @@ mod extensions;
 mod input;
 mod managed;
 mod render;
+mod scrollback;
+mod scrollbar;
 use ai_terminal_agent::pty as session;
 use ai_terminal_engine::Engine;
 use anyhow::{Context, Result, bail};

@@ -210,6 +210,8 @@ pub(crate) fn authorize(read_only: bool, request: &Request) -> Result<()> {
                 | Operation::Poll
                 | Operation::Subscribe
                 | Operation::History
+                | Operation::Scrollback
+                | Operation::ReleaseScrollback
                 | Operation::Detach
         )
     {
@@ -238,6 +240,28 @@ mod tests {
     }
     #[test]
     fn observe_permission_is_enforced_outside_the_ui() {
+        for operation in [Operation::Scrollback, Operation::ReleaseScrollback] {
+            assert!(
+                authorize(
+                    false,
+                    &Request {
+                        operation: operation as i32,
+                        ..Request::default()
+                    }
+                )
+                .is_ok()
+            );
+            assert!(
+                authorize(
+                    true,
+                    &Request {
+                        operation: operation as i32,
+                        ..Request::default()
+                    }
+                )
+                .is_ok()
+            );
+        }
         assert!(
             authorize(
                 false,

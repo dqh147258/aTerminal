@@ -534,6 +534,17 @@ async fn mobile_core_reads_types_and_cannot_override_readonly_pair() {
                 .assistant("missing-session".into(), r#"{"action":"status"}"#.into())
                 .is_err()
         );
+        #[cfg(unix)]
+        {
+            mobile.send_text("i=0; while [ $i -lt 450 ]; do printf 'HISTORY_%03d\\n' $i; i=$((i+1)); done; echo MOBILE_RESUMED".into(), true).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let reply = desktop.call(Request { session: session.id.clone(), operation: Operation::Poll as i32, ..Request::default() }).unwrap();
+                if let Some(frame) = reply.snapshot && has_output(frame.cells.iter().map(|c| c.text.as_str()), frame.cols as usize, "HISTORY_449") { break; }
+                assert!(Instant::now() < deadline, "history fixture output missing");
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
         mobile.send_text("exit".into(), true).unwrap();
         let until_exit = Instant::now() + Duration::from_secs(5);
         loop {
@@ -593,6 +604,59 @@ async fn mobile_core_reads_types_and_cannot_override_readonly_pair() {
         );
         assert!(!mobile.has_control());
         assert!(mobile.send_text("must not run".into(), true).is_err());
+        let live = mobile.refresh().unwrap().unwrap();
+        let viewport = mobile.read_history_viewport(None, u32::MAX).unwrap();
+        assert!(viewport.total > 0);
+        assert_eq!(viewport.cursor.offset, viewport.total);
+        assert!(!viewport.frame.cursor_visible);
+        assert!(
+            mobile.refresh().unwrap().is_none(),
+            "history changed the live replica"
+        );
+        assert_ne!(
+            live.cells
+                .iter()
+                .map(|c| c.text.as_str())
+                .collect::<String>(),
+            viewport
+                .frame
+                .cells
+                .iter()
+                .map(|c| c.text.as_str())
+                .collect::<String>()
+        );
+        let mut stale = viewport.cursor.clone();
+        stale.session = "wrong-session".into();
+        assert!(mobile.read_history_viewport(Some(stale), 1).is_err());
+        mobile.release_history(viewport.cursor).unwrap();
+        let first = mobile.read_history_page(None).unwrap();
+        assert!(!first.lines.is_empty());
+        assert!(first.total >= first.cursor.offset);
+        let mut cursor = first.cursor;
+        let mut more = first.has_more;
+        let mut loaded = first.lines.len() as u32;
+        let mut lines = first.lines.clone();
+        while more {
+            let page = mobile.read_history_page(Some(cursor)).unwrap();
+            loaded += page.lines.len() as u32;
+            lines.splice(0..0, page.lines.clone());
+            assert_eq!(loaded, page.cursor.offset);
+            more = page.has_more;
+            cursor = page.cursor;
+        }
+        assert_eq!(loaded, first.total);
+        #[cfg(unix)]
+        {
+            assert!(first.total > 450);
+            let markers: Vec<_> = lines
+                .iter()
+                .filter(|line| line.starts_with("HISTORY_"))
+                .collect();
+            assert_eq!(markers.len(), 450);
+            assert_eq!(markers[0].as_str(), "HISTORY_000");
+            assert_eq!(markers[449].as_str(), "HISTORY_449");
+        }
+        mobile.release_history(cursor).unwrap();
         mobile.disconnect().unwrap();
     })
     .await

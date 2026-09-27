@@ -40,6 +40,39 @@ class DisplayConsistencyTest {
         view.layout(0, 0, view.measuredWidth, view.measuredHeight)
         return Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888).also { view.draw(Canvas(it)) }
     }
+    @Test fun historyCannotRestoreOldSizeAfterResize() = main {
+        val original = screen()
+        val view = TerminalView(instrumentation.targetContext, original)
+        var invalidations = 0
+        view.historyInvalidated = { invalidations++; view.showHistory(null) }
+        val resized = RenderFrame(1u, 2u, 2uL, listOf(cell("1"), cell("2")), 0u, 0u, true, 1u)
+        view.apply(snapshot(resized))
+        val before = pixels(view)
+        view.showHistory(original)
+        assertEquals(2, invalidations)
+        assertTrue(before.sameAs(pixels(view)))
+    }
+    @Test fun crossingFromGridIntoHistoryDoesNotCountGridMovementTwice() = main {
+        val context = instrumentation.targetContext
+        val scroll = TerminalScrollView(context)
+        scroll.addView(object : View(context) {
+            override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) { setMeasuredDimension(300, 1000) }
+        }, android.widget.FrameLayout.LayoutParams(300, 1000))
+        scroll.measure(View.MeasureSpec.makeMeasureSpec(300, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(300, View.MeasureSpec.EXACTLY))
+        scroll.layout(0, 0, 300, 300)
+        scroll.scrollTo(0, 200)
+        assertEquals(200, scroll.scrollY)
+        assertTrue(scroll.canScrollVertically(-1))
+        scroll.canReadHistory = { true }; scroll.lineHeight = { 10f }
+        var lines = 0; scroll.scrollHistory = { lines += it }
+        val now = SystemClock.uptimeMillis()
+        fun touch(action: Int, y: Float) = android.view.MotionEvent.obtain(now, now, action, 150f, y, 0)
+        touch(android.view.MotionEvent.ACTION_DOWN, 10f).let { scroll.onInterceptTouchEvent(it); it.recycle() }
+        touch(android.view.MotionEvent.ACTION_MOVE, 210f).let { scroll.onInterceptTouchEvent(it); it.recycle() }
+        scroll.scrollTo(0, 0)
+        touch(android.view.MotionEvent.ACTION_MOVE, 220f).let { assertTrue(scroll.onInterceptTouchEvent(it)); scroll.onTouchEvent(it); it.recycle() }
+        assertEquals("200px of grid movement was counted as history", 1, lines)
+    }
     @Test fun incrementalAndFullFramesHaveIdenticalPixelsAcrossCursorStylesZoomAndResize() = main {
         val first = screen()
         val changed = first.cells.toMutableList().apply { this[0] = cell("Z", style = 15u); this[6] = cell("q", style = 16u) }

@@ -3,6 +3,9 @@ use crate::{Delta, MAX_MESSAGE_BYTES, Snapshot};
 use prost::Message;
 use std::io::{self, Read, Write};
 
+pub const SCROLLBACK_EXPIRED: &str = "scrollback expired";
+pub const SCROLLBACK_BUSY: &str = "scrollback reader limit reached";
+
 /// A session actor was removed after an explicit close. Clients may end attachment normally.
 pub const SESSION_CLOSED_ERROR: &str = "session closed";
 
@@ -62,6 +65,9 @@ pub struct Request {
     pub shell_integration: bool,
     #[prost(uint32, tag = "25")]
     pub key_repeat: u32,
+    /// Zero captures a new reading copy; otherwise reads this client's existing copy.
+    #[prost(uint64, tag = "26")]
+    pub scrollback_id: u64,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, prost::Enumeration)]
 #[repr(i32)]
@@ -97,6 +103,10 @@ pub enum Operation {
     AgentClose = 22,
     AgentResize = 23,
     AgentRelease = 24,
+    /// Read-only frozen history. history_limit=0 selects a styled viewport;
+    /// a positive limit selects a text page, newest page first.
+    Scrollback = 25,
+    ReleaseScrollback = 26,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -157,6 +167,18 @@ pub struct Reply {
     /// Stream subscription boundary; earlier state events belong to the previous subscription.
     #[prost(uint64, tag = "9")]
     pub state_sequence: u64,
+    #[prost(uint64, tag = "10")]
+    pub scrollback_id: u64,
+    #[prost(uint32, tag = "11")]
+    pub scrollback_offset: u32,
+    #[prost(uint32, tag = "12")]
+    pub scrollback_total: u32,
+    #[prost(uint32, tag = "13")]
+    pub history_total: u32,
+    #[prost(uint32, tag = "14")]
+    pub history_next: u32,
+    #[prost(bool, tag = "15")]
+    pub history_has_more: bool,
 }
 pub fn write_message<W: Write, M: Message>(out: &mut W, message: &M) -> io::Result<()> {
     let bytes = message.encode_to_vec();

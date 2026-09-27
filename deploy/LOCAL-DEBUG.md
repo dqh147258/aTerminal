@@ -54,6 +54,22 @@ python3 scripts/build-artifacts.py --dry-run desktop,android
 
 `aTerminal` 创建 Shell；`aTerminal --list` 列出会话；`aTerminal --attach SESSION_ID` 在桌面重新附着并恢复手机输入；`aTerminal --history SESSION_ID` 查看历史。Desktop 和手机附着同一运行会话时均可输入，回车、Tab、Ctrl-C 应作用于同一 PTY。桌面按 Ctrl+] 脱离后，手机保留画面与历史，但该会话暂停手机输入；重新附着后恢复。Shell 真正结束时只保留历史，不能复原原进程。
 
+Desktop 内用滚轮回看输出，或用 Shift+PageUp/PageDown 按页浏览；Esc、滚回底部或键入内容返回实时画面。浏览时新输出继续保存在会话中，阅读位置不跳动；颜色、中文和组合字符保留。`--watch` 支持相同浏览操作但不发送键入内容。应用启用鼠标协议时滚轮交给应用；Shift+滚轮改为本地回看。Vim 等备用屏按应用启用的 alternate-scroll 模式接收滚动方向键。
+
+鼠标移到 aTerminal **内容区最右一列**即可显示内部滚动条；点击轨道可跳转，按住滑块上下拖动可定位，回看时滚动条保持可见。返回底部并松开后恢复实时输出。普通应用已接管鼠标或使用备用屏时，右侧事件仍归应用；可按住 Shift 使用本地历史浏览。滚动条只覆盖本地显示，不缩窄 PTY 或移动端画面，隐藏后恢复被覆盖的字符。
+
+aTerminal 使用宿主备用屏：iTerm/Terminal.app 的原生滚动条不代表 aTerminal 会话历史，请用上述内部浏览方式。进入时清空备用屏并归位光标，退出恢复宿主主屏，不删除宿主历史。CLI 根据自身宿主的 `COLORTERM` / `TERM` 选择 truecolor、256 色或基础 ANSI 色；内层 Shell 的 truecolor 能力不受宿主降级影响。
+
+Android/iOS 的“终端历史”从同一 Agent 历史副本分页读取，每页最多 200 行，点“加载更早记录”可读到保留范围的最早记录；200 是页大小，不是保留长度。面板显示已加载/总行数及保留上限提示，“读取最新历史”建立新副本。两端与 Desktop 统一按权威终端物理行计数，范围包含历史和捕获时的当前屏幕；手机换行显示不会改变总行数。仅当捕获时刻、会话和尺寸相同时，才应比较相同的总数。纯文本分页保留内容，Desktop 另保留样式。只读配对也可读完整历史；关闭面板、切换会话或断开后释放/回收副本。旧 Agent 会提示升级，不能静默把最近 200 行当成全部记录。
+
+Android **终端主画面**也可直接查看历史：手指向下拖动内容可回看更早输出，向上拖动返回较新的输出，滚到最底部恢复实时。实时网格本身高于屏幕时，先平移到网格顶部，再继续拖动即可进入历史；横向仍可平移宽终端。鼠标滚轮同样支持。回看状态显示当前位置并隐藏实时光标，新输出继续接收但不打断阅读；开始输入、改变终端尺寸或切换会话会返回实时。历史手势不发送 Shell 方向键，避免误翻命令历史。该主画面手势已在 Android emulator-5586 验证；iOS 本轮未改动主画面手势，仍保留独立历史面板。
+
+Android 主画面手势回归可用 `python3 scripts/test-android-scroll.py --serial emulator-5586 --output .local/mobile-scroll-check/verified`：使用独立账号/PTY，安装 Debug 与测试 APK，验证真实上下滑动、横向平移、后台追加、输入一次和鼠标滚轮，保留正常账号数据。依赖已构建的 `account_demo` 示例与 Desktop binary；测试会临时打开隔离界面，结束后可重新启动 App 回到正常账号。
+
+Agent 保留最多 10,000 行输出历史。回看副本按客户端隔离，最多 150 万个单元/64 MiB；同一会话至多 4 个副本、合计 128 MiB。遇到历史/内存裁剪时最早一页会显示提示；返回实时、脱离、尺寸或主备用屏改变会释放副本，失联客户端在 30 秒后回收。原会话历史不因此删除。历史目前存放在 Agent 内存中，停止 Agent 或显式关闭会话后不能恢复。
+
+滚动功能需要 CLI 和 Agent 都更新。连接旧 Agent 时仍可实时使用，会提示一次升级需求，不会自动重启后台。先完成需要保留的 Shell 工作，再执行 `aTerminal --agent-stop`，下一次运行 `aTerminal` 会启动新版 Agent；停止前应自行保存需要的输出。若要保留当前 Agent 并单独试用，可运行 `aTerminal --state-dir /tmp/aterminal-desktop-trial`，试用后用同一 `--state-dir` 加 `--agent-stop` 关闭隔离 Agent。隔离实例不会继承当前手机配对与会话。
+
 用电脑键盘控制 Android/iOS 模拟器时，只要当前终端会话可输入且没有打开弹窗，普通字符、Enter 和 Tab 会直接送到 Shell；即使焦点曾落在终端工具按钮上，Enter 也不会打开“历史”。弹窗中的文本框仍正常接收键盘输入。移动端默认显示细竖线光标，Desktop CLI 将默认光标形状交由宿主 Terminal 的设置决定。
 
 终端键盘和输入法已提交的字符使用 `RemoteTerminal.typeText`，避免 Zsh 把逐字输入当作粘贴而反白显示。输入法提交的 TAB 和模拟器文本事件也会转为终端 Tab 补全；显式粘贴接口 `sendText` 继续保留 bracketed paste 语义。这项修复只需更新手机 App，无需重启 Desktop Agent 或现有 Shell。

@@ -101,7 +101,7 @@ struct WorkspaceScreen: View {
         .onChange(of: model.connected) { connected in syncChat(); if connected && panel == .devices { panel = nil } }
         .onChange(of: drawer) { value in if value { keysVisible = false; if !historyTab { model.refreshSessions() } } }
         .onChange(of: historyTab) { value in if !value && drawer { model.refreshSessions() } }
-        .onChange(of: panel) { value in assistant.setVisible(value == .chat, core: model.core); if value != nil { inputVisible = false; keysVisible = false } }
+        .onChange(of: panel) { value in if value != .terminalHistory { model.closeHistory() }; assistant.setVisible(value == .chat, core: model.core); if value != nil { inputVisible = false; keysVisible = false } }
         .onChange(of: model.hasControl) { value in if !value { inputVisible = false; keysVisible = false } }
         .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
             if drawer && !historyTab { model.refreshSessions() }
@@ -302,6 +302,12 @@ struct WorkspaceScreen: View {
             case .devices: devicesPanel
             case .account: AccountPanel(model: model, logout: { logoutConfirm = true })
             case .terminalHistory:
+                HStack {
+                    Text(model.historySummary).font(.caption).foregroundColor(.secondary)
+                    Spacer()
+                    if model.historyHasMore { Button("加载更早记录") { model.loadEarlierHistory() }.disabled(model.historyLoading) }
+                    Button("读取最新历史") { model.readHistory() }.disabled(model.historyLoading)
+                }.padding(.horizontal, 16)
                 if model.historyLoading { ProgressView("正在读取历史").padding() }
                 ScrollView([.horizontal, .vertical]) {
                     Text(model.history.isEmpty ? "暂无终端历史" : model.history).font(.system(size: fontSize, design: .monospaced)).textSelection(.enabled).padding(16).frame(maxWidth: .infinity, alignment: .leading)
