@@ -251,6 +251,7 @@ class AgentSettingsPanel(private val activity: Activity, private val body: Linea
         val temperature = field("温度（可留空）").apply { inputType=InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL;setText(old?.opt("temperature")?.takeUnless {it==JSONObject.NULL}?.toString().orEmpty()) }
         val topP = field("Top P（可留空）").apply { inputType=InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL;setText(old?.opt("top_p")?.takeUnless {it==JSONObject.NULL}?.toString().orEmpty()) }
         var caps = old?.optJSONObject("capabilities")?.let { JSONObject(it.toString()) } ?: JSONObject()
+        var capabilitiesFromSnapshot = old != null
         val tools = CheckBox(activity).apply { buttonTintList = android.content.res.ColorStateList.valueOf(Palette.accent); text = "已确认模型支持工具"; isChecked = caps.optBoolean("tools") }
         val vision = CheckBox(activity).apply { buttonTintList = android.content.res.ColorStateList.valueOf(Palette.accent); text = "已确认模型支持图片"; isChecked = caps.optBoolean("vision") }
         val levels = field("供应商声明的思考等级（逗号分隔）").apply { setText(caps.optJSONArray("reasoning_levels")?.let { a -> (0 until a.length()).joinToString(",") { a.getString(it) } }.orEmpty()) }
@@ -261,6 +262,7 @@ class AgentSettingsPanel(private val activity: Activity, private val body: Linea
         val adaptive = CheckBox(activity).apply { buttonTintList = android.content.res.ColorStateList.valueOf(Palette.accent); text = "供应商支持 adaptive"; isChecked = caps.optBoolean("reasoning_adaptive") }
         val disabled = CheckBox(activity).apply { buttonTintList = android.content.res.ColorStateList.valueOf(Palette.accent); text = "供应商支持关闭思考"; isChecked = caps.optBoolean("reasoning_disabled") }
         model.addTextChangedListener(watcher {
+            capabilitiesFromSnapshot = false
             caps = JSONObject();temperature.setText("");topP.setText("");modes.setSelection(0);strength.setText("");levels.setText("");budgetMin.setText("");budgetMax.setText("");tools.isChecked=false;vision.isChecked=false;adaptive.isChecked=false;disabled.isChecked=false
         })
         val binding = spinner(listOf("不改默认", "全局默认", "终端默认") + if (session.isNotEmpty()) listOf("当前终端") else emptyList())
@@ -270,6 +272,7 @@ class AgentSettingsPanel(private val activity: Activity, private val body: Linea
                 model.setText(selected.getString("id"))
                 selected.optLong("context_window").takeIf { it > 0 }?.let { context.setText(it.toString()) }
                 selected.optLong("max_output_tokens").takeIf { it > 0 }?.let { output.setText(it.toString()) }
+                capabilitiesFromSnapshot = false
                 caps = selected.optJSONObject("capabilities")?.let { JSONObject(it.toString()) } ?: JSONObject()
                 tools.isChecked = caps.optBoolean("tools"); vision.isChecked = caps.optBoolean("vision")
                 levels.setText(caps.optJSONArray("reasoning_levels")?.let { a -> (0 until a.length()).joinToString(",") { a.getString(it) } }.orEmpty())
@@ -316,6 +319,14 @@ class AgentSettingsPanel(private val activity: Activity, private val body: Linea
                 if (ctx == null || ctx !in 4096L..4000000L) { advanced.visibility = View.VISIBLE; reject(context, "上下文须在 4096–4000000 之间"); return@saveForm }
                 val max = output.text.toString().toLongOrNull()
                 if (max == null || max <= 0 || max >= ctx - 2048) { advanced.visibility = View.VISIBLE; reject(output, "输出须大于 0 且小于上下文减 2048"); return@saveForm }
+                // Only untouched declarations inherit refreshed hidden fields. A catalog selection
+                // (even the same ID), or an identity reset, owns its new/unknown capabilities.
+                if (capabilitiesFromSnapshot) {
+                    val latest = m.optJSONObject("capabilities")
+                    listOf("streaming", "temperature", "top_p").forEach { key ->
+                        if (latest?.has(key) == true) caps.put(key, latest.get(key)) else caps.remove(key)
+                    }
+                }
                 fun sampling(field: EditText, top: Boolean): Boolean {
                     if (field.text.isEmpty()) return true
                     val value = field.text.toString().toDoubleOrNull()
@@ -328,10 +339,6 @@ class AgentSettingsPanel(private val activity: Activity, private val body: Linea
                 val lower = budgetMin.text.toString().toLongOrNull(); val upper = budgetMax.text.toString().toLongOrNull()
                 if ((budgetMin.text.isNotEmpty() || budgetMax.text.isNotEmpty()) && (lower == null || upper == null || lower < 0 || upper < lower)) {
                     advanced.visibility = View.VISIBLE; reject(budgetMin, "预算上下限须为非负整数，且下限不超过上限"); return@saveForm
-                }
-                if (old != null && old.optString("model") == model.text.toString() && old.optString("provider_id") == provider.selectedItem.toString()) {
-                    val latest = candidate.getJSONObject("models").optJSONObject(mid)?.optJSONObject("capabilities")
-                    listOf("streaming", "temperature", "top_p").forEach { key -> if (latest?.has(key) == true) caps.put(key, latest.get(key)) }
                 }
                 caps.put("tools", tools.isChecked).put("vision", vision.isChecked).put("source", "user_declared").put("reasoning_levels", JSONArray(levels.text.toString().split(',').map { it.trim() }.filter { it.isNotEmpty() })).put("reasoning_adaptive", adaptive.isChecked).put("reasoning_disabled", disabled.isChecked)
                 if (budgetMin.text.isNotEmpty() && budgetMax.text.isNotEmpty()) caps.put("reasoning_budget", JSONArray(listOf(budgetMin.text.toString().toLong(), budgetMax.text.toString().toLong()))) else caps.remove("reasoning_budget")

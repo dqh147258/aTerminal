@@ -5,3 +5,7 @@
 - [x] 新增关键受控 RPC 回归并编译，静态编译/lint/diff 检查及自审通过
 - [x] 交接实际验证及协调者设备用例；instrumentation 未运行不记通过
 - [x] 仅提交本任务实现/测试/文档，标记未 Review；不 merge
+
+- [x] R1 区分原 snapshot 能力与目录/身份重置能力，增加同 ID payload 回归
+- [x] R2 等待串行 worker 与 UI 完成后断言迟到安全及父表单可继续保存
+- [x] 编译/lint/diff 检查，提交 review 修复并报告新 hash

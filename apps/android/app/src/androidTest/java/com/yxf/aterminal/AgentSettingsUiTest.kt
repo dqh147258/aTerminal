@@ -14,6 +14,7 @@ import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -39,6 +40,14 @@ class AgentSettingsUiTest {
         val until = SystemClock.elapsedRealtime() + 8000
         while (SystemClock.elapsedRealtime() < until) { if (main(predicate)) return; Thread.sleep(30) }
         fail("Timed out: $name")
+    }
+    private fun awaitWorkerUi() {
+        val drained = CountDownLatch(1)
+        val worker = main { AgentSettingsPanel::class.java.getDeclaredField("worker").apply { isAccessible = true }.get(panel) as ExecutorService }
+        // FIFO worker task runs after the RPC has posted its UI result. Its UI marker
+        // is queued behind that result, so awaiting it proves both queues have drained.
+        worker.execute { activity.runOnUiThread { drained.countDown() } }
+        assertTrue("Settings worker and its preceding UI callback must finish", drained.await(8, TimeUnit.SECONDS))
     }
     private fun gate() = CountDownLatch(1).also { gates.add(it) }
     private fun snapshot(revision: Int = 7) = JSONObject("""{"revision":$revision,"config":{
@@ -143,9 +152,39 @@ class AgentSettingsUiTest {
         waitFor("provider reset") { field("模型 ID / Azure deployment").text.isEmpty() }
     }
 
+    @Test fun reselectingSameCatalogModelPreservesFreshAndUnknownHiddenCapabilities() {
+        var saved: JSONObject? = null
+        val fixture = snapshot().apply {
+            getJSONObject("config").getJSONObject("models").getJSONObject("m").getJSONObject("capabilities")
+                .put("streaming", true).put("temperature", true).put("top_p", true)
+        }
+        launch { command -> when (command.getString("action")) {
+            "show" -> fixture
+            "discover" -> JSONObject().put("models", JSONArray().put(JSONObject().put("id", "model-one")
+                .put("capabilities", JSONObject().put("streaming", JSONObject.NULL).put("temperature", false)
+                    .put("tools", true).put("reasoning_levels", JSONArray().put("high")))))
+            "replace" -> { saved = command; JSONObject().put("revision", 8).put("config", command.getJSONObject("config")) }
+            else -> error("unexpected action")
+        } }
+        main { row("model-one").performClick(); button("搜索供应商模型目录").performClick() }
+        waitFor("same-ID directory result") { all(body).any { it.contentDescription == "model-one" } }
+        main { row("model-one").performClick(); assertEquals("model-one", field("模型 ID / Azure deployment").text.toString()); save() }
+        waitFor("same-ID directory selection saved") { text("作用域绑定") }
+        val model = saved!!.getJSONObject("config").getJSONObject("models").getJSONObject("m")
+        val caps = model.getJSONObject("capabilities")
+        assertEquals("model-one", model.getString("model")); assertEquals("p", model.getString("provider_id"))
+        assertTrue(caps.has("streaming")); assertTrue(caps.isNull("streaming"))
+        assertFalse(caps.getBoolean("temperature")); assertFalse(caps.has("top_p"))
+        assertEquals(17, model.getInt("max_rounds"))
+    }
+
     @Test fun catalogPaginationAndLateResultCannotReplaceParentForm() {
         val late = gate(); val entered = gate(); val searches = mutableListOf<JSONObject>()
-        launch { command -> if (command.getString("action") != "discover") snapshot() else {
+        var saved: JSONObject? = null
+        launch { command -> if (command.getString("action") == "replace") {
+            saved = command
+            JSONObject().put("revision", 8).put("config", command.getJSONObject("config"))
+        } else if (command.getString("action") != "discover") snapshot() else {
             synchronized(searches) { searches.add(command) }
             if (command.optString("search") == "late") { entered.countDown(); check(late.await(8, TimeUnit.SECONDS)) }
             JSONObject().put("models", JSONArray().put(JSONObject().put("id", if (command.has("cursor")) "page-two" else "catalog-one"))).put("cursor", if (command.has("cursor")) JSONObject.NULL else "next")
@@ -155,8 +194,13 @@ class AgentSettingsUiTest {
         main { button("下一页").performClick() }; waitFor("catalog page two") { text("page-two") }
         main { assertEquals("next", searches.last().getString("cursor")); field("搜索模型").setText("late"); button("搜索").performClick() }
         assertTrue(entered.await(8, TimeUnit.SECONDS)); main { activity.onBackPressed(); assertEquals("model-one", field("模型 ID / Azure deployment").text.toString()) }
-        late.countDown(); instrumentation.waitForIdleSync()
-        main { assertFalse(text("catalog-one")); assertEquals("model-one", field("模型 ID / Azure deployment").text.toString()) }
+        late.countDown(); awaitWorkerUi()
+        main {
+            assertFalse(text("catalog-one")); assertEquals("model-one", field("模型 ID / Azure deployment").text.toString())
+            field("模型 ID / Azure deployment").setText("still-editable"); save()
+        }
+        waitFor("parent remains savable after late result") { text("作用域绑定") }
+        assertEquals("still-editable", saved!!.getJSONObject("config").getJSONObject("models").getJSONObject("m").getString("model"))
     }
 
     @Test fun bindingsRemoveOverrides() {

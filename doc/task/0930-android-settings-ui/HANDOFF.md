@@ -41,3 +41,10 @@ git diff --check
 5. MCP/Skill 真实完整文件夹上传含非 Markdown 资源，以及编辑/启停/删除，需要协调者实际联调；本轮编译不能替代真实 RPC 验收。
 
 主要残留风险是未经设备验证的测量/键盘/SAF 生命周期和测试选择器；Android 原生字号单位保留 sp，原型显示 px。iOS 后续同步，未改。提交标记 `[未Review]`，通过编译不等于代码审查或视觉验收通过。
+
+## 2026-10-01 独立 review 修复 R1 / R2
+
+- R1：增加 `capabilitiesFromSnapshot` 标记，模型/provider 重置或目录选择后不再回填旧隐藏能力。同 ID 再选目录也保留新的 streaming/temperature/top_p，缺失或 null 保持未知。仍沿用原声明时才合并新 snapshot 隐藏字段，并在采样预验证前完成合并。
+- 新增 `reselectingSameCatalogModelPreservesFreshAndUnknownHiddenCapabilities`，断言同 provider/model ID 的目录声明保存为 streaming=null、temperature=false、top_p 缺失，同时保留 max_rounds。受控测试总数现在为 11。
+- R2：迟到测试在同一个串行 executor 上排入后续任务，由它向 Activity UI 队列发送 latch 标记并等待完成；FIFO 顺序保证原 RPC 已返回且其 UI callback 已处理。随后断言父表单未变，再修改并保存，核对 payload。移除了仅依赖 waitForIdleSync 的假完成条件，没有固定 sleep。
+- 实际验证：`compileDebugKotlin`、`compileDebugAndroidTestKotlin`、`lintDebug`（offline）及 `git diff --check` 通过。此 executor 未运行 instrumentation、未 merge、未操作设备；协调者集成新提交后执行上述新增/补强用例。

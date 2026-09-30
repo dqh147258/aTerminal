@@ -20,5 +20,7 @@
 
 实施与受控测试已完成，Debug/AndroidTest Kotlin 编译、lint 与 diff 检查通过。设备 instrumentation/视觉截图由协调者集成后执行，详见 HANDOFF.md；不宣称设备测试通过。
 
+2026-10-01 按独立 review 修复 R1（同 ID 目录能力优先于旧 snapshot）及 R2（迟到测试串行 worker/UI 屏障）；原批准范围内修正。
+
 ## 未决问题、歧义与确认
 None.
