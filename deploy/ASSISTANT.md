@@ -66,6 +66,8 @@ aTerminal skills remove user/SKILL_ID
 
 内置 Terminal MCP 和五个内置 Skills 由二进制发布，`builtin/` 镜像不能覆盖运行时实现。用户 MCP 支持 stdio / Streamable HTTP，按 Run 惰性连接、固定目录，禁止会话过期后自动重发副作用调用；不接受 sampling。目录/输出/诊断/超时均有界，诊断对注入环境值脱敏。
 
+全局和 Session Agent 均提供只读内置 MCP `wait`，例如 `wait({"duration_ms":1000})`。`duration_ms` 必须明确提供整数 1–30000；缺失、类型错误或越界会报错，不自动截断。它只异步延时并返回实际 `elapsed_ms`，不查询或操作 Terminal，也不表示任务完成；取消与 Run 总时限会中止等待。Terminal 任务可能耗时，可按 `wait` → `get_terminal_state` / `read_terminal` → 未完成继续等待回读的顺序循环，直到取得可靠完成证据、被取消或 Run 预算耗尽。不能根据静默或提示符猜测完成。现有 `skill_action` 的 `builtin/wait-terminal` / `wait` 仍等待 Terminal revision 变化或超时，返回 `changed` / `state`。
+
 用户 Skills 支持 frontmatter、`agents/openai.yaml`、资源分页、显式 `$name`、隐式策略、依赖声明和受管脚本。App 可以从手机文件夹分块上传、编辑用户 SKILL.md、启停或删除。路径逃逸、内置覆盖、版本文件变更被拒绝。脚本使用显式解释器与参数，不自动安装依赖。未引用且超过七天的旧版本在 Desktop 启动时回收，同时保留配置备份引用；不会删除活动 Run 使用的包。
 
 新建终端可显式启用会话内 Shell hooks：

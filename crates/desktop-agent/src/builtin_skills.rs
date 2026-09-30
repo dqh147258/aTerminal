@@ -16,8 +16,8 @@ pub(crate) const CATALOG: &[(&str, &str, &str)] = &[
     ),
     (
         "builtin/wait-terminal",
-        "Wait for terminal changes and interpret evidence",
-        "Use skill_action skill_id=builtin/wait-terminal action=wait arguments={session_id?,timeout_ms}. Waiting is bounded inside this user run. A shell still running does not mean its command is running; an application task stays unknown without an adapter.",
+        "Wait for terminal changes or delay before reading completion evidence",
+        "Terminal tasks can take time. Use wait with explicit duration_ms (integer 1–30000) for a pure delay; it returns actual elapsed_ms, never reads or changes a Terminal, and never proves completion. Then call get_terminal_state/read_terminal; if unfinished, repeat wait and read until reliable completion evidence, cancellation or the run time budget is exhausted. Never infer completion from quiet output or a prompt. The existing skill_action skill_id=builtin/wait-terminal action=wait arguments={session_id?,timeout_ms} instead waits for a terminal revision change or timeout and returns changed/state; its behavior is preserved. Both waits are bounded inside this user run. A shell still running does not mean its command is running; an application task stays unknown without an adapter.",
     ),
     (
         "builtin/terminal-history",

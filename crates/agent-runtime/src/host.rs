@@ -75,6 +75,7 @@ pub trait TerminalBackend: Send + Sync {
                 | "skills_search"
                 | "skills_read"
                 | "get_agent_state"
+                | "wait"
         )
     }
 }
@@ -91,6 +92,35 @@ pub struct ToolContext {
     pub cancel: watch::Receiver<bool>,
     pub execution_gate: Arc<Mutex<bool>>,
 }
+
+/// Pure delay for the built-in Broker tool; it never observes a Terminal.
+pub async fn wait(context: &ToolContext, args: Value) -> Result<ToolOutput> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Arguments {
+        duration_ms: u64,
+    }
+    let args: Arguments = serde_json::from_value(args).context("invalid_wait_arguments")?;
+    ensure!(
+        (1..=30000).contains(&args.duration_ms),
+        "invalid_wait_duration_ms"
+    );
+    let mut cancel = context.cancel.clone();
+    ensure!(!*cancel.borrow(), "cancelled");
+    let remaining = context.budget.remaining()?;
+    let started = Instant::now();
+    tokio::select! {
+        biased;
+        _ = cancel.wait_for(|value| *value) => bail!("cancelled"),
+        result = tokio::time::timeout(remaining, tokio::time::sleep(Duration::from_millis(args.duration_ms))) => result.context("run_time_budget")?,
+    };
+    context.budget.remaining()?;
+    ensure!(!*cancel.borrow(), "cancelled");
+    Ok(ToolOutput::value(
+        json!({"elapsed_ms": started.elapsed().as_millis() as u64}),
+    ))
+}
+
 pub struct Budget {
     deadline: Instant,
     calls: AtomicU32,
@@ -1625,6 +1655,12 @@ pub fn terminal_tools(global: bool) -> Vec<ToolDefinition> {
     let object = |properties: Value, required: Vec<&str>| json!({"type":"object","properties":properties,"required":required,"additionalProperties":false});
     let mut tools = vec![
         (
+            "wait",
+            "Delay for the explicit duration_ms (integer 1–30000) within this run's cancellation and total time budget. Returns actual elapsed_ms only; never reads or changes a Terminal and never proves completion. Terminal tasks can take time: then read get_terminal_state/read_terminal and repeat wait/read while unfinished, until reliable completion evidence, cancellation or the run deadline. Quiet output or a prompt is not completion evidence.",
+            json!({"duration_ms":{"type":"integer","minimum":1,"maximum":30000}}),
+            vec!["duration_ms"],
+        ),
+        (
             "list_sessions",
             "List authorized terminal sessions",
             json!({}),
@@ -1808,7 +1844,7 @@ mod runtime_contracts {
     }
     fn snapshot<M: Model + 'static>(
         model: Arc<M>,
-        backend: Arc<Backend>,
+        backend: Arc<dyn TerminalBackend>,
         tools: bool,
     ) -> RunSnapshot {
         RunSnapshot {
@@ -1843,6 +1879,246 @@ mod runtime_contracts {
         }
         panic!("agent did not settle");
     }
+
+    #[derive(Default)]
+    struct WaitBackend {
+        authorized: AtomicU32,
+        entered: tokio::sync::Notify,
+        finished: tokio::sync::Notify,
+        outputs: Mutex<Vec<Value>>,
+    }
+    impl TerminalBackend for WaitBackend {
+        fn authorize(&self, write: bool) -> BackendFuture<'_, ()> {
+            Box::pin(async move {
+                ensure!(!write, "write_authorization_forbidden");
+                self.authorized.fetch_add(1, Ordering::AcqRel);
+                Ok(())
+            })
+        }
+        fn invoke<'a>(
+            &'a self,
+            context: ToolContext,
+            name: &'a str,
+            args: Value,
+        ) -> BackendFuture<'a, ToolOutput> {
+            Box::pin(async move {
+                assert_eq!(name, "wait", "wait must not invoke any Terminal tool");
+                self.entered.notify_one();
+                let result = wait(&context, args).await;
+                self.outputs.lock().unwrap().push(match &result {
+                    Ok(output) => {
+                        assert!(output.observation.is_none());
+                        assert!(output.outcome.is_none());
+                        output.value.clone()
+                    }
+                    Err(error) => json!({"error":error.to_string()}),
+                });
+                self.finished.notify_one();
+                result
+            })
+        }
+    }
+    struct WaitModel {
+        calls: AtomicU32,
+        duration_ms: u64,
+        initial_delay: Duration,
+    }
+    impl Model for WaitModel {
+        fn stream(
+            &self,
+            _: rig_core::completion::CompletionRequest,
+        ) -> BackendFuture<'_, StreamingCompletionResponse> {
+            Box::pin(async move {
+                let choice = if self.calls.fetch_add(1, Ordering::AcqRel) == 0 {
+                    tokio::time::sleep(self.initial_delay).await;
+                    Raw::ToolCall(RawStreamingToolCall::new(
+                        "wait-call",
+                        "wait".into(),
+                        json!({"duration_ms":self.duration_ms}),
+                    ))
+                } else {
+                    Raw::Message("delay received".into())
+                };
+                Ok(StreamingCompletionResponse::stream(
+                    "test",
+                    Box::pin(futures_util::stream::iter(vec![
+                        Ok(choice),
+                        Ok(Raw::FinalResponse(StreamFinal::new(
+                            "test",
+                            Default::default(),
+                        ))),
+                    ])),
+                ))
+            })
+        }
+    }
+    #[tokio::test]
+    async fn wait_runs_through_mcp_without_write_grant_or_terminal_calls() {
+        for session in [None, Some("session")] {
+            let temp = tempfile::tempdir().unwrap();
+            let store = Arc::new(Store::open(&temp.path().join("data/wait.db")).unwrap());
+            let scope = store.agent("owner", "desktop", session).unwrap();
+            let host = AgentHost::new(store.clone(), tokio::runtime::Handle::current());
+            let model = Arc::new(WaitModel {
+                calls: AtomicU32::new(0),
+                duration_ms: 20,
+                initial_delay: Duration::ZERO,
+            });
+            let backend = Arc::new(WaitBackend::default());
+            let started = Instant::now();
+            host.submit(scope.clone(), "root", "delay", json!({}), false, "", || {
+                let mut snapshot = snapshot(model.clone(), backend.clone(), true);
+                snapshot.allow_write = false;
+                snapshot.builder.tools = terminal_tools(session.is_none());
+                Ok(snapshot)
+            })
+            .unwrap();
+            let state = settle(&host, &scope).await;
+            assert_eq!(state["state"], "completed", "{state}");
+            assert!(started.elapsed() >= Duration::from_millis(20));
+            let outputs = backend.outputs.lock().unwrap();
+            assert_eq!(outputs.len(), 1);
+            assert!(outputs[0]["elapsed_ms"].as_u64().unwrap() >= 20);
+            assert_eq!(outputs[0].as_object().unwrap().len(), 1);
+            assert!(backend.authorized.load(Ordering::Acquire) > 0);
+            assert_eq!(
+                model.calls.load(Ordering::Acquire),
+                2,
+                "no Terminal analysis stage"
+            );
+            assert!(
+                store.pending_actions(&scope).unwrap().is_empty(),
+                "read-only wait has no write ledger"
+            );
+        }
+    }
+    #[tokio::test]
+    async fn wait_mcp_rejects_missing_invalid_and_extra_arguments_without_clamping() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&temp.path().join("data/wait.db")).unwrap();
+        let scope = store.agent("owner", "desktop", None).unwrap();
+        let (_sender, cancel) = watch::channel(false);
+        let context = ToolContext {
+            history_unit_id: "unit".into(),
+            vision: false,
+            scope: scope.clone(),
+            run_id: "run".into(),
+            root_user_message_id: "root".into(),
+            action_id: "action".into(),
+            max_read_bytes: 1024,
+            budget: Arc::new(Budget::new(30, 10, 10000, scope)),
+            cancel,
+            execution_gate: Arc::new(Mutex::new(true)),
+        };
+        let backend = Arc::new(WaitBackend::default());
+        let tools = terminal_tools(true);
+        let definition = tools.iter().find(|tool| tool.name == "wait").unwrap();
+        let schema = jsonschema::validator_for(&definition.parameters).unwrap();
+        for duration_ms in [1, 30000] {
+            assert!(schema.is_valid(&json!({"duration_ms":duration_ms})));
+        }
+        let gateway = crate::builtin::Gateway::open(backend.clone(), &tools)
+            .await
+            .unwrap();
+        for args in [
+            json!({}),
+            json!({"duration_ms":0}),
+            json!({"duration_ms":30001}),
+            json!({"duration_ms":-1}),
+            json!({"duration_ms":1.5}),
+            json!({"duration_ms":"1"}),
+            json!({"duration_ms":null}),
+            json!({"duration_ms":true}),
+            json!({"duration_ms":1,"session_id":"session"}),
+            json!({"timeout_ms":1}),
+        ] {
+            assert!(!schema.is_valid(&args), "{args}");
+            let error = gateway
+                .call(context.clone(), "wait", args)
+                .await
+                .err()
+                .unwrap();
+            assert!(error.to_string().starts_with("invalid_wait_"), "{error}");
+        }
+        let output = gateway
+            .call(context, "wait", json!({"duration_ms":1}))
+            .await
+            .unwrap();
+        assert!(output.value["elapsed_ms"].as_u64().unwrap() >= 1);
+    }
+    #[tokio::test]
+    async fn wait_is_cancelled_with_its_run() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(&temp.path().join("data/wait.db")).unwrap());
+        let scope = store.agent("owner", "desktop", Some("session")).unwrap();
+        let host = AgentHost::new(store, tokio::runtime::Handle::current());
+        let backend = Arc::new(WaitBackend::default());
+        host.submit(scope.clone(), "root", "delay", json!({}), false, "", || {
+            let model = Arc::new(WaitModel {
+                calls: AtomicU32::new(0),
+                duration_ms: 30000,
+                initial_delay: Duration::ZERO,
+            });
+            let mut snapshot = snapshot(model, backend.clone(), true);
+            snapshot.allow_write = false;
+            Ok(snapshot)
+        })
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), backend.entered.notified())
+            .await
+            .unwrap();
+        let started = Instant::now();
+        host.cancel(&scope).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), backend.finished.notified())
+            .await
+            .unwrap();
+        assert_eq!(settle(&host, &scope).await["state"], "cancelled");
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(backend.outputs.lock().unwrap()[0]["error"], "cancelled");
+    }
+    #[tokio::test]
+    async fn wait_uses_the_run_deadline_instead_of_a_fresh_tool_budget() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(&temp.path().join("data/wait.db")).unwrap());
+        let scope = store.agent("owner", "desktop", None).unwrap();
+        let host = AgentHost::new(store, tokio::runtime::Handle::current());
+        let backend = Arc::new(WaitBackend::default());
+        let model = Arc::new(WaitModel {
+            calls: AtomicU32::new(0),
+            duration_ms: 30000,
+            initial_delay: Duration::from_millis(600),
+        });
+        let started = Instant::now();
+        host.submit(scope.clone(), "root", "delay", json!({}), false, "", || {
+            let mut snapshot = snapshot(model.clone(), backend.clone(), true);
+            snapshot.allow_write = false;
+            snapshot.max_seconds = 1;
+            snapshot.builder.tools = terminal_tools(true);
+            Ok(snapshot)
+        })
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), backend.entered.notified())
+            .await
+            .unwrap();
+        let wait_started = Instant::now();
+        let state = settle(&host, &scope).await;
+        assert_eq!(state["state"], "paused", "{state}");
+        assert_eq!(state["error"], "run_time_budget", "{state}");
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(
+            wait_started.elapsed() < Duration::from_millis(800),
+            "earlier model time must reduce the wait budget"
+        );
+        tokio::time::timeout(Duration::from_secs(1), backend.finished.notified())
+            .await
+            .unwrap();
+        assert_eq!(
+            backend.outputs.lock().unwrap()[0]["error"],
+            "run_time_budget"
+        );
+        assert_eq!(model.calls.load(Ordering::Acquire), 1);
+    }
+
     #[tokio::test]
     async fn normal_reply_streams_after_observation_analysis() {
         use futures_util::StreamExt;
