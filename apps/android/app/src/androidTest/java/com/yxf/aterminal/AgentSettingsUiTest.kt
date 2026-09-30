@@ -55,6 +55,12 @@ class AgentSettingsUiTest {
       "models":{"m":{"id":"m","name":"Model","provider_id":"p","model":"model-one","context_window":128000,"max_tokens":4096,"max_rounds":17,"max_seconds":123,"read_only":true,"capabilities":{"tools":true,"vision":true,"streaming":true,"reasoning_levels":["high"]},"reasoning":{"mode":"level","level":"high"}}},
       "bindings":{"global":{"model_id":"m"},"session-default":{"model_id":"m"},"session/s":{"model_id":"m","reasoning":{"mode":"level","level":"high"}}},
       "mcp":{},"skills":{},"credentials":{"alias":"unchanged"},"skill_sources":[],"terminal_reading":{"head_lines":10,"tail_lines":20}}}""")
+    private fun extensionSnapshot(kind: String, revision: Int = 7, enabled: Boolean = true) = snapshot(revision).apply {
+        val item = if (kind == "mcp") JSONObject().put("command", "/usr/bin/example").put("args", JSONArray())
+        else JSONObject().put("id", "sample").put("name", "sample").put("description", "Fixture skill")
+            .put("version", "0".repeat(64)).put("root", "/fixture/sample").put("source", "installed").put("interface", JSONObject.NULL)
+        getJSONObject("config").getJSONObject(kind).put("sample", item.put("enabled", enabled))
+    }
     private fun launch(page: String = "llm", callback: (JSONObject) -> JSONObject = { snapshot() }) {
         val context = instrumentation.targetContext
         context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK).putExtra("isolated_ui", true))
@@ -246,6 +252,111 @@ class AgentSettingsUiTest {
         main { assertEquals("# Edited skill", field("SKILL.md").text.toString()); save() }
         waitFor("skill details") { text("Skill 详情") && all(body).none { it.tag == "settings-save" } }
         assertEquals(7, submitted!!.getInt("expected_revision")); assertEquals("SKILL.md", submitted!!.getString("path")); assertEquals("# Edited skill", submitted!!.getString("body"))
+    }
+
+    @Test fun desktopSkillInstallAcceptsNativeAbsolutePathsAndRejectsRelativePaths() {
+        val installs = mutableListOf<JSONObject>(); var fixture = snapshot()
+        launch("skills") { command -> when (command.getString("action")) {
+            "show" -> fixture
+            "skill_install" -> {
+                installs.add(command)
+                fixture = snapshot(7 + installs.size)
+                fixture.getJSONObject("config").getJSONObject("skills").put(command.getString("id"),
+                    JSONObject().put("name", command.getString("id")).put("enabled", true))
+                fixture
+            }
+            else -> error("unexpected action")
+        } }
+        val paths = listOf("/Users/carl/skills/sample", "C:\\Users\\Carl\\skills\\sample", "D:/skills/sample", "\\\\desktop\\skills\\sample")
+        paths.forEachIndexed { index, path ->
+            main {
+                button("安装 Desktop 上的 Skill").performClick(); field("Skill ID").setText("sample-$index")
+                field("Desktop 上的绝对目录").setText(path); save()
+            }
+            waitFor("absolute Desktop path installed: $index") { text("已安装") && all(body).none { it.tag == "settings-save" } }
+            assertEquals(index + 1, installs.size)
+            assertEquals(path, installs.last().getString("path"))
+            assertEquals(7 + index, installs.last().getInt("expected_revision"))
+        }
+        main {
+            button("安装 Desktop 上的 Skill").performClick(); field("Skill ID").setText("relative-sample")
+            listOf("", "skills/sample", "C:skills\\sample", "\\skills\\sample", "\\\\desktop").forEach { path ->
+                field("Desktop 上的绝对目录").setText(path); save()
+                assertNotNull("Relative Desktop path must be rejected: $path", field("Desktop 上的绝对目录").error)
+            }
+        }
+        awaitWorkerUi(); assertEquals(paths.size, installs.size)
+    }
+
+    private fun deletedExtensionDetailsRejectRetainedActions(kind: String) {
+        val shows = AtomicInteger(); val replaces = AtomicInteger(); val reads = AtomicInteger()
+        launch(kind) { command -> when (command.getString("action")) {
+            "show" -> if (shows.incrementAndGet() == 1) extensionSnapshot(kind) else snapshot(9)
+            "replace" -> { replaces.incrementAndGet(); error("config_revision_conflict") }
+            "skill_read" -> { reads.incrementAndGet(); JSONObject().put("body", "# Fixture skill") }
+            else -> error("unexpected action")
+        } }
+        main { row("sample").performClick(); button("停用").performClick() }
+        waitFor("deleted extension refreshed: $kind") { text("配置已变化") }
+        main {
+            button("停用").performClick(); assertTrue(text("此扩展已删除"))
+            button("查看 / 编辑").performClick(); assertTrue(text("此扩展已删除"))
+            assertTrue(all(body).none { it is EditText })
+        }
+        awaitWorkerUi(); assertEquals(1, replaces.get()); assertEquals(0, reads.get())
+    }
+    @Test fun deletedMcpDetailsRejectRetainedToggleAndRead() = deletedExtensionDetailsRejectRetainedActions("mcp")
+    @Test fun deletedSkillDetailsRejectRetainedToggleAndRead() = deletedExtensionDetailsRejectRetainedActions("skills")
+
+    private fun deletedExtensionEditorCannotSaveAfterConflict(kind: String) {
+        val shows = AtomicInteger(); val writes = AtomicInteger()
+        launch(kind) { command -> when (command.getString("action")) {
+            "show" -> if (shows.incrementAndGet() == 1) extensionSnapshot(kind) else snapshot(9)
+            "skill_read" -> JSONObject().put("body", "# Original skill")
+            "replace", "skill_edit" -> { writes.incrementAndGet(); error("config_revision_conflict") }
+            else -> error("unexpected action")
+        } }
+        main { row("sample").performClick(); button("查看 / 编辑").performClick() }
+        val editorName = if (kind == "mcp") "MCP JSON" else "SKILL.md"
+        waitFor("extension editor: $kind") { all(body).filterIsInstance<EditText>().any { it.hint == editorName } }
+        val draft = if (kind == "mcp") """{"command":"/usr/bin/example","args":["--draft"],"enabled":true}""" else "# Retained draft"
+        main { field(editorName).setText(draft); save() }
+        waitFor("deleted extension editor refreshed: $kind") { text("配置已变化") }
+        main {
+            save(); assertTrue(text("此扩展已删除")); assertEquals(draft, field(editorName).text.toString())
+        }
+        awaitWorkerUi(); assertEquals(1, writes.get())
+    }
+    @Test fun deletedMcpEditorCannotRecreateServiceOnRetry() = deletedExtensionEditorCannotSaveAfterConflict("mcp")
+    @Test fun deletedSkillEditorRejectsRetainedSaveOnRetry() = deletedExtensionEditorCannotSaveAfterConflict("skills")
+
+    @Test fun retainedToggleKeepsRequestedTargetWhenAnotherClientAlreadyAppliedIt() {
+        val shows = AtomicInteger(); val replaces = AtomicInteger(); val retries = mutableListOf<JSONObject>()
+        launch("mcp") { command -> when (command.getString("action")) {
+            "show" -> when (shows.incrementAndGet()) {
+                1 -> extensionSnapshot("mcp")
+                2 -> extensionSnapshot("mcp", 9, false)
+                else -> extensionSnapshot("mcp", 11, true)
+            }
+            "replace" -> {
+                val count = replaces.incrementAndGet()
+                if (count % 2 == 1) error("config_revision_conflict")
+                retries.add(command); JSONObject().put("revision", 8 + count).put("config", command.getJSONObject("config"))
+            }
+            else -> error("unexpected action")
+        } }
+        main { row("sample").performClick(); button("停用").performClick() }
+        waitFor("disable conflict") { text("配置已变化") }
+        main { button("停用").performClick() }
+        waitFor("disable retry completed") { text("MCP 详情") && all(body).filterIsInstance<Button>().any { it.text == "启用" } }
+        assertFalse(retries[0].getJSONObject("config").getJSONObject("mcp").getJSONObject("sample").getBoolean("enabled"))
+        assertEquals(9, retries[0].getInt("expected_revision"))
+        main { button("启用").performClick() }
+        waitFor("enable conflict") { text("配置已变化") }
+        main { button("启用").performClick() }
+        waitFor("enable retry completed") { text("MCP 详情") && all(body).filterIsInstance<Button>().any { it.text == "停用" } }
+        assertTrue(retries[1].getJSONObject("config").getJSONObject("mcp").getJSONObject("sample").getBoolean("enabled"))
+        assertEquals(11, retries[1].getInt("expected_revision")); assertEquals(4, replaces.get())
     }
 
     @Test fun reasoningPreflightMatchesProtocolAndSamplingConstraints() {

@@ -87,7 +87,7 @@ class TerminalAgentWorkflowUiTest {
         finally { bitmap.recycle() }
         screenshots.put(file.name)
     }
-    private fun record(id: String): String {
+    private fun record(id: String, terminalInteraction: String? = null): String {
         val body = StringBuilder()
         var cursor: String? = null
         val seen = mutableSetOf<String>()
@@ -96,6 +96,11 @@ class TerminalAgentWorkflowUiTest {
             cursor?.let { request.put("cursor", it) }
             val page = agent("record", request)
             assertEquals("utf8", page.getString("encoding"))
+            if (terminalInteraction != null) {
+                assertEquals("text", page.getString("kind"))
+                assertEquals(session, page.getJSONObject("metadata").getString("session_id"))
+                assertEquals(terminalInteraction, page.getJSONObject("metadata").getString("history_unit_id"))
+            }
             body.append(page.getString("body"))
             assertTrue("Record exceeds 256 KiB: $id", body.length <= 256 * 1024)
             cursor = page.optString("cursor").takeUnless { it.isEmpty() || it == "null" }
@@ -125,47 +130,162 @@ class TerminalAgentWorkflowUiTest {
         }
         throw AssertionError("Run history exceeds 24 pages")
     }
+
+    private data class TerminalEvidence(val recordId: String, val sequence: Long, val body: String)
+    // Split simple shell commands outside quoted arguments, comments and substitutions.
+    // Here-documents are deliberately unsupported: their body is not executable shell input.
+    private fun shellCommands(text: String): List<String> {
+        val commands = mutableListOf<String>()
+        val command = StringBuilder()
+        var quote: Char? = null
+        var escaped = false
+        var comment = false
+        var depth = 0
+        for (index in text.indices) {
+            val char = text[index]
+            if (comment) { if (char != '\n') continue; comment = false }
+            if (escaped) { command.append(char); escaped = false; continue }
+            if (char == '\\' && quote != '\'') { command.append(char); escaped = true; continue }
+            if (quote != null) { command.append(char); if (char == quote) quote = null; continue }
+            if (char in "\"'`") { command.append(char); quote = char; continue }
+            if (char == '#' && (command.isEmpty() || command.last().isWhitespace())) { comment = true; continue }
+            if (char == '<' && text.getOrNull(index + 1) == '<') return emptyList()
+            if (char == '(') depth++
+            if (char == ')') depth--
+            if (depth == 0 && char in "\n;&|") { commands.add(command.toString()); command.clear() }
+            else command.append(char)
+        }
+        if (quote != null || escaped || depth != 0) return emptyList()
+        commands.add(command.toString())
+        return commands.filter { it.isNotBlank() }
+    }
+    private val codexExec = Regex("^\\s*(?:(?:command|exec)\\s+)?(?:/[^\\s\\\"';&|]+/)?codex\\s+exec(?=\\s|$)")
+    private val exitPrint = Regex("""^\s*printf\s+['"]([A-Z][A-Z0-9_]*_EXIT)=%[sd]\\n['"]\s+["']?\$\?["']?\s*$""")
+    private val codexBanner = Regex("""(?m)^OpenAI Codex \(v[0-9][^\r\n)]*\)\s*$""")
+    private fun accepted(evidence: JSONObject): Boolean = evidence.optJSONObject("result")?.let {
+        it.optBoolean("accepted") && !it.has("error") && it.opt("executed") != false
+    } == true
+    private fun verifiedLaunch(calls: List<JSONObject>, observations: List<TerminalEvidence>): JSONObject? {
+        val ordered = calls.sortedWith(compareBy({ it.getLong("sequence") }, { it.getInt("position") }))
+        for ((index, evidence) in ordered.withIndex()) {
+            val call = evidence.getJSONObject("call")
+            if (call.optString("name") != "input_text" || !accepted(evidence)) continue
+            val args = call.getJSONObject("arguments")
+            val commands = shellCommands(args.optString("text"))
+            val launches = commands.indices.filter { codexExec.containsMatchIn(commands[it]) }
+            if (launches.isEmpty()) continue
+            val submission = if (args.optBoolean("submit")) evidence else {
+                // A draft qualifies only when the next terminal write is an accepted, plain Enter.
+                val next = ordered.drop(index + 1).firstOrNull {
+                    it.getJSONObject("call").optString("name") in setOf("input_text", "send_keys")
+                } ?: continue
+                val nextCall = next.getJSONObject("call")
+                val keys = nextCall.getJSONObject("arguments")
+                if (nextCall.optString("name") != "send_keys" || !accepted(next) ||
+                    keys.optString("key").lowercase() != "enter" || (keys.optJSONArray("modifiers")?.length() ?: 0) != 0 ||
+                    keys.optInt("repeat", 1) != 1) continue
+                next
+            }
+            val markers = launches.mapNotNull { commands.getOrNull(it + 1)?.let { command -> exitPrint.matchEntire(command)?.groupValues?.get(1) } }
+            val observed = observations.firstOrNull { observation ->
+                observation.sequence >= submission.getLong("sequence") &&
+                    (codexBanner.containsMatchIn(observation.body) || observation.body.lineSequence().any { line -> markers.any { line.trimEnd('\r') == "$it=0" } })
+            } ?: continue
+            return JSONObject().put("call_record_id", evidence.getString("record_id"))
+                .put("submission_record_id", submission.getString("record_id")).put("terminal_record_id", observed.recordId)
+        }
+        return null
+    }
+
     private fun verifyCalls(items: JSONArray, message: String) {
         val calls = JSONArray()
         report.put("tool_calls", calls)
         var foundMessage = false
         var foundElapsedWait = false
         val seen = mutableSetOf<String>()
+        val observations = mutableListOf<TerminalEvidence>()
         for (index in 0 until items.length()) {
             val item = items.getJSONObject(index)
             var value = item.getJSONObject("value")
             if (value.optBoolean("partial")) value = JSONObject(record(value.getString("record_id")))
             if (item.getString("kind") == "user") foundMessage = foundMessage || value.optString("message") == message
             if (item.getString("kind") != "interaction") continue
-            val updates = value.optJSONArray("updates") ?: continue
-            var waitCall: JSONObject? = null
-            for (update in 0 until updates.length()) {
-                val entry = updates.getJSONObject(update)
-                if (entry.optString("name") !in setOf("wait", "input_text")) continue
-                val id = entry.optString("call_record_id")
-                if (id.isNotEmpty() && id != "null" && seen.add(id)) {
-                    val call = JSONObject(record(id))
-                    val evidence = JSONObject().put("record_id", id).put("interaction_id", item.getString("id")).put("call", call)
-                    calls.put(evidence)
-                    if (call.optString("name") == "wait") waitCall = evidence
-                }
-                val resultId = entry.optString("result_record_id")
-                if (entry.optString("name") == "wait" && resultId.isNotEmpty() && resultId != "null" && seen.add(resultId)) {
-                    val result = JSONObject(record(resultId))
-                    waitCall?.put("result_record_id", resultId)?.put("result", result)
-                    if (result.length() == 1 && result.opt("elapsed_ms") is Number && result.getLong("elapsed_ms") > 0) foundElapsedWait = true
+            // The complete record index preserves call/result order; updates retain only a bounded tail.
+            val records = value.getJSONArray("records")
+            var precedingCall: JSONObject? = null
+            for (position in 0 until records.length()) {
+                val entry = records.getJSONObject(position)
+                val id = entry.getString("record_id")
+                if (!seen.add(id)) continue
+                when (entry.optString("source")) {
+                    "tool_call" -> {
+                        val call = JSONObject(record(id))
+                        precedingCall = JSONObject().put("record_id", id).put("interaction_id", item.getString("id")).put("call", call)
+                            .put("sequence", item.getLong("sequence")).put("position", position)
+                        if (call.optString("name") in setOf("wait", "input_text", "send_keys")) calls.put(precedingCall)
+                    }
+                    "tool_result" -> {
+                        val call = precedingCall ?: continue
+                        val name = call.getJSONObject("call").optString("name")
+                        if (name !in setOf("wait", "input_text", "send_keys")) continue
+                        val result = JSONObject(record(id))
+                        call.put("result_record_id", id).put("result", result)
+                        if (name == "wait" && result.length() == 1 && result.opt("elapsed_ms") is Number && result.getLong("elapsed_ms") > 0) foundElapsedWait = true
+                    }
+                    else -> if (entry.optString("kind") == "text" && precedingCall?.getJSONObject("call")?.optString("name") == "read_terminal") {
+                        observations.add(TerminalEvidence(id, item.getLong("sequence"), record(id, item.getString("id"))))
+                    }
                 }
             }
         }
         assertTrue("This Run did not contain the message submitted from the UI", foundMessage)
-        val recorded = (0 until calls.length()).map { calls.getJSONObject(it).getJSONObject("call") }
-        assertTrue("No actual wait tool-call record in this Run", recorded.any { it.optString("name") == "wait" })
+        val recorded = (0 until calls.length()).map { calls.getJSONObject(it) }
+        assertTrue("No actual wait tool-call record in this Run", recorded.any { it.getJSONObject("call").optString("name") == "wait" })
         assertTrue("No wait result containing only a positive elapsed_ms in this Run", foundElapsedWait)
-        // Match an executable at a shell command boundary, not 'codex' mentioned in a prompt/echo.
-        val executable = Regex("(?:^|[\\n;&|])\\s*(?:(?:command|exec)\\s+)?(?:/[^\\s\\\"';&|]+/)?codex(?=\\s|$)")
-        assertTrue("No input_text starting Codex in this Run", recorded.any {
-            it.optString("name") == "input_text" && executable.containsMatchIn(it.getJSONObject("arguments").optString("text"))
-        })
+        val launch = verifiedLaunch(recorded, observations)
+        assertNotNull("No accepted, submitted codex exec followed by archived Codex launch/completion output", launch)
+        report.put("verified_codex_launch", launch)
+    }
+
+    private fun fixtureCall(name: String, args: JSONObject, result: JSONObject? = JSONObject().put("accepted", true), sequence: Long = 1): JSONObject =
+        JSONObject().put("record_id", "call-$sequence").put("sequence", sequence).put("position", 0)
+            .put("call", JSONObject().put("name", name).put("arguments", args)).also { evidence -> result?.let { evidence.put("result", it) } }
+
+    @Test fun codexWorkflowEvidenceRejectsProbesDraftsAndRejectedInput() {
+        val output = listOf(TerminalEvidence("terminal", 2, "OpenAI Codex (v0.159.2)\n"))
+        fun input(text: String, submit: Boolean = true, result: JSONObject? = JSONObject().put("accepted", true)) =
+            fixtureCall("input_text", JSONObject().put("text", text).put("submit", submit), result)
+        for (probe in listOf("codex --version", "command -v codex; codex --version", "echo 'sample; codex exec task'",
+            "echo sample # codex exec task", "cat <<EOF\ncodex exec task\nEOF")) {
+            assertNull("A probe or quoted prompt must not prove launch: $probe", verifiedLaunch(listOf(input(probe)), output))
+        }
+        assertNull("Typed input has not started a task", verifiedLaunch(listOf(input("codex exec task", false)), output))
+        assertNull("A request without a result is not execution evidence", verifiedLaunch(listOf(input("codex exec task", result = null)), output))
+        assertNull("Rejected input must not qualify", verifiedLaunch(listOf(input("codex exec task", result = JSONObject().put("error", "lease_lost").put("executed", false))), output))
+        assertNull("An explicitly unexecuted result must not qualify", verifiedLaunch(listOf(input("codex exec task", result = JSONObject().put("accepted", true).put("executed", false))), output))
+        assertNull("Accepted input alone does not prove launch", verifiedLaunch(listOf(input("codex exec task")), emptyList()))
+        assertNull("Assistant summaries do not prove launch", verifiedLaunch(listOf(input("codex exec task")), listOf(TerminalEvidence("terminal", 2, "Codex completed the requested task."))))
+        assertNull("Earlier terminal output does not prove this launch", verifiedLaunch(listOf(input("codex exec task")), listOf(output.single().copy(sequence = 0))))
+    }
+
+    @Test fun codexWorkflowEvidenceAcceptsSubmittedExecWithArchivedOutput() {
+        val banner = listOf(TerminalEvidence("terminal", 2, "OpenAI Codex (v0.159.2)\n"))
+        for (text in listOf("codex exec 'draw a pelican'", "cd /fixture && command /usr/local/bin/codex exec 'draw a pelican'")) {
+            val submitted = fixtureCall("input_text", JSONObject().put("text", text).put("submit", true))
+            assertNotNull(verifiedLaunch(listOf(submitted), banner))
+        }
+        val completion = fixtureCall("input_text", JSONObject().put("text", "codex exec task; printf 'CODEX_FIXTURE_EXIT=%s\\n' \"\$?\"").put("submit", true))
+        assertNotNull("The command's actual successful exit marker proves execution", verifiedLaunch(listOf(completion), listOf(TerminalEvidence("terminal", 2, "CODEX_FIXTURE_EXIT=0\n"))))
+        assertNull("An unrelated marker must not qualify", verifiedLaunch(listOf(completion), listOf(TerminalEvidence("terminal", 2, "CODEX_OTHER_EXIT=0\n"))))
+        assertNull("A failed task must not qualify through completion alone", verifiedLaunch(listOf(completion), listOf(TerminalEvidence("terminal", 2, "CODEX_FIXTURE_EXIT=1\n"))))
+        val draft = fixtureCall("input_text", JSONObject().put("text", "codex exec task"))
+        val enter = fixtureCall("send_keys", JSONObject().put("key", "enter"), sequence = 2)
+        val afterEnter = listOf(banner.single().copy(sequence = 3))
+        assertNotNull("An accepted separate Enter submits the accepted draft", verifiedLaunch(listOf(draft, enter), afterEnter))
+        val rejectedEnter = fixtureCall("send_keys", JSONObject().put("key", "enter"), JSONObject().put("error", "lease_lost").put("executed", false), 2)
+        assertNull(verifiedLaunch(listOf(draft, rejectedEnter), afterEnter))
+        val changedDraft = fixtureCall("input_text", JSONObject().put("text", " --version"), sequence = 2)
+        assertNull("Enter must submit the same unchanged draft", verifiedLaunch(listOf(draft, changedDraft, enter), afterEnter))
     }
 
     @Test fun terminalAgentWorkflowUsesConfiguredModelAndRealTools() {

@@ -425,7 +425,7 @@ class AgentSettingsPanel(private val activity: Activity, private val body: Linea
         fields.addView(label("安装 Desktop 中的完整 Skill 文件夹，包括 SKILL.md 和所引用的资源。", 12f, Palette.muted))
         push("安装 Codex Skill", fields, saveTitle = "安装", error = { reject(path, it) }, save = {
             if (validId(id, "skills")) {
-                if (!path.text.startsWith("/")) reject(path, "请输入 Desktop 上的绝对路径")
+                if (!SettingsValidation.desktopAbsolutePath(path.text.toString())) reject(path, "请输入 Desktop 上的绝对路径")
                 else run(JSONObject().put("action", "skill_install").put("id", id.text.toString()).put("path", path.text.toString()).put("expected_revision", view.getLong("revision")), true) { render() }
             }
         })
@@ -486,32 +486,44 @@ class AgentSettingsPanel(private val activity: Activity, private val body: Linea
             }
         })
     }
+    private fun extensionValue(kind: String, id: String, config: JSONObject = view.getJSONObject("config")): JSONObject? {
+        val value = config.getJSONObject(kind).optJSONObject(id)
+        if (value == null) status.text = "此扩展已删除，请返回列表重新检查"
+        return value
+    }
     private fun extension(kind: String, id: String) { with(activity) {
-        val value = copy().getJSONObject(kind).getJSONObject(id)
+        val value = extensionValue(kind, id) ?: return
         val fields = column(16)
         fields.addView(settingsRow(value.optString("name", id), "$id · ${if (value.optBoolean("enabled", true)) "已启用" else "已停用"}", if (kind == "mcp") R.drawable.ic_plug else R.drawable.ic_book_open))
         fields.gap(20)
         fields.addView(label(if (kind == "skills") value.optString("description") else value.optString("command").takeUnless { it == "null" }.orEmpty().ifEmpty { value.optString("url") }, 14f, Palette.muted))
-        fields.addView(actionButton("查看 / 编辑") {
+        fields.addView(actionButton("查看 / 编辑") readExtension@{
+            val item = extensionValue(kind, id) ?: return@readExtension
             if (kind == "skills") run(JSONObject().put("action", "skill_read").put("id", id)) { result -> editExtension(kind, id, result.optString("body")) }
-            else editExtension(kind, id, copy().getJSONObject(kind).getJSONObject(id).toString(2))
+            else editExtension(kind, id, item.toString(2))
         }); fields.gap()
-        fields.addView(actionButton(if (value.optBoolean("enabled", true)) "停用" else "启用") {
-            val candidate = copy(); candidate.getJSONObject(kind).getJSONObject(id).put("enabled", !value.optBoolean("enabled", true))
+        // Retained labels keep their original intent after a revision-conflict refresh.
+        val targetEnabled = !value.optBoolean("enabled", true)
+        fields.addView(actionButton(if (targetEnabled) "启用" else "停用") toggleExtension@{
+            val candidate = copy(); val item = extensionValue(kind, id, candidate) ?: return@toggleExtension
+            item.put("enabled", targetEnabled)
             save(candidate) { render(); extension(kind, id) }
         }); fields.gap(24)
-        fields.addView(actionButton("删除") {
+        fields.addView(actionButton("删除") deleteExtension@{
+            if (extensionValue(kind, id) == null) return@deleteExtension
             val origin = current
             AlertDialog.Builder(activity).setTitle("删除 $id？").setMessage("从配置中移除此扩展，下次任务将不再使用。")
-                .setNegativeButton("取消", null).setPositiveButton("删除") { _, _ -> if (!closed && current === origin) { val candidate = copy(); candidate.getJSONObject(kind).remove(id); save(candidate) } }.show()
+                .setNegativeButton("取消", null).setPositiveButton("删除") { _, _ -> if (!closed && current === origin) { val candidate = copy(); if (extensionValue(kind, id, candidate) != null) { candidate.getJSONObject(kind).remove(id); save(candidate) } } }.show()
         }.apply { setTextColor(Palette.danger) })
         push(if (kind == "mcp") "MCP 详情" else "Skill 详情", fields)
     } }
     private fun editExtension(kind: String, id: String, text: String) { with(activity) {
+        if (extensionValue(kind, id) == null) return
         val fields = column(16)
         val editor = field(if (kind == "skills") "SKILL.md" else "MCP JSON").apply { setText(text); isSingleLine = false; minLines = 12 }
         fields.labelled(editor.hint.toString(), editor)
         push(if (kind == "skills") "编辑用户 SKILL.md" else "编辑 MCP", fields, error = { reject(editor, it) }, save = editForm@{
+            if (extensionValue(kind, id) == null) return@editForm
             if (kind == "skills" && editor.text.toString().toByteArray().size > 512 * 1024) { reject(editor, "SKILL.md 不能超过 512 KiB"); return@editForm }
             if (kind == "skills") run(JSONObject().put("action", "skill_edit").put("id", id).put("path", "SKILL.md").put("body", editor.text.toString()).put("expected_revision", view.getLong("revision")), true) { render(); extension(kind, id) }
             else try { val item = JSONObject(editor.text.toString()); validateMcp(id, item); val candidate = copy(); candidate.getJSONObject(kind).put(id, item); save(candidate) { render(); extension(kind, id) } }

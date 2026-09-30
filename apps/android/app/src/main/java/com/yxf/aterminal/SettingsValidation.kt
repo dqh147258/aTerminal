@@ -5,6 +5,15 @@ import java.net.URI
 
 /** Preflight for the public Rust config contract. Desktop remains authoritative. */
 internal object SettingsValidation {
+    fun desktopAbsolutePath(value: String): Boolean {
+        if (value.isEmpty() || '\u0000' in value) return false
+        if (value.startsWith('/')) return true
+        if (value.length >= 3 && (value[0] in 'A'..'Z' || value[0] in 'a'..'z') && value[1] == ':' && value[2] in "\\/") return true
+        if (!value.startsWith("\\\\")) return false
+        val parts = value.drop(2).split('\\', '/')
+        return parts.size >= 2 && parts[0].isNotEmpty() && parts[1].isNotEmpty()
+    }
+
     fun endpoint(value: String): Boolean = runCatching {
         val uri = URI(value)
         uri.scheme in listOf("http", "https") && !uri.host.isNullOrEmpty() && uri.rawUserInfo == null
