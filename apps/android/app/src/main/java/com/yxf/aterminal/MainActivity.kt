@@ -78,6 +78,8 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private var terminal: TerminalView? = null
     private var overlay: FrameLayout? = null
     private var overlayPanel: View? = null
+    private var settingsEditor: AgentSettingsPanel? = null
+    private var accountFromSettings = false
     private var assistant: AssistantPanel? = null
     private var agentPanel: AgentPanel? = null
     private var globalPanel: GlobalConversationPanel? = null
@@ -844,32 +846,38 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             }
         }catch(_:Exception){post{archiveLoading=false}}}
     }
-    private fun accountPanel() {
+    private fun accountPanel() = accountPanel(overlay?.tag == "account" && accountFromSettings)
+    private fun accountPanel(fromSettings: Boolean) {
+        accountFromSettings = fromSettings
         val body = panel("账号与设备"); overlay?.tag = "account"
+        (body.getChildAt(0) as LinearLayout).addView(iconButton(R.drawable.ic_arrow_left, "返回上一页") { if (accountFromSettings) settingsPanel() else closeOverlay() }, 0)
         accountBar = column(16)
-        accountBar.addView(heading(accountName.ifEmpty { "旧版配对" })); accountBar.addView(label(serverUrl, 12f, Palette.muted))
+        accountBar.addView(settingsRow(accountName.ifEmpty { "旧版配对" }, serverUrl, R.drawable.ic_user_round)); accountBar.gap(24)
         accountBar.addView(row().apply {
-            fill(actionButton(if (deviceBusy) "刷新中…" else "刷新设备") {
+            fill(label("在线设备", 14f, Palette.muted))
+            addView(iconButton(R.drawable.ic_refresh_cw, if (deviceBusy) "刷新中…" else "刷新设备") {
                 if (!deviceBusy) { deviceBusy = true; accountPanel(); val epoch = accountEpoch; work { try { loadDevices(epoch) } finally { post { if (epoch == accountEpoch) { deviceBusy = false; if (this@MainActivity.overlay?.tag == "account") accountPanel() } } } } }
             }.apply { isEnabled = !deviceBusy && accountName.isNotEmpty() })
-            addView(actionButton("改密码") { passwordDialog() }.apply { isEnabled = accountName.isNotEmpty() })
+
         }); accountBar.gap(16)
         val onlineDevices = devices.filter { it.online && !it.current }
         if (onlineDevices.isEmpty()) accountBar.addView(label("暂无在线设备", 14f, Palette.muted))
         onlineDevices.forEach { device ->
-            accountBar.addView(label(device.name, 16f))
-            accountBar.addView(label("${device.platform} · " + if (device.current) "本机" else "在线", 12f, Palette.green))
             accountBar.addView(row().apply {
-                fill(actionButton("连接") { connectDevice(device.id) }.apply { contentDescription = "连接 ${device.name}"; isEnabled = device.platform == "desktop" })
-                addView(actionButton("移除") {
+                background = shape(Palette.surface); setPadding(dp(12), dp(12), dp(8), dp(12))
+                fill(column().apply { addView(label(device.name, 16f)); addView(label("${device.platform} · 在线", 12f, Palette.green)) })
+                addView(iconButton(R.drawable.ic_link, "连接 ${device.name}") { connectDevice(device.id) }.apply { background = null; isEnabled = device.platform == "desktop" })
+                addView(iconButton(R.drawable.ic_unlink, "移除 ${device.name}") {
                     AlertDialog.Builder(this@MainActivity).setTitle("移除 ${device.name}？").setMessage("该设备的登录和连接将失效，桌面 Shell 会保留。")
                         .setNegativeButton("取消", null).setPositiveButton("移除") { _, _ ->
                             disconnect(); val epoch = accountEpoch
                             work { try { account.revoke(device.id); if (account.username().isEmpty()) post { if (epoch == accountEpoch) signedOut() } else loadDevices(epoch) } finally { persist(epoch) } }
                         }.show()
-                })
-            }); accountBar.gap(16)
+                }.apply { background = null })
+            }); accountBar.gap(8)
         }
+        accountBar.gap(16)
+        accountBar.addView(settingsRow("修改密码", "更新当前账号密码", R.drawable.ic_key_round) { if (accountName.isNotEmpty()) passwordDialog() }); accountBar.gap()
         accountBar.addView(actionButton("退出登录") { logout() }.apply { setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_log_out, 0, 0, 0) })
         if (accountName.isEmpty()) accountBar.addView(actionButton("高级：旧版配对") { legacyPairing() })
         body.grow(scroll(accountBar))
@@ -918,33 +926,57 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private fun settingsPanel() {
         val body = panel("设置"); overlay?.tag = "settings"
         val settings = column(16)
-        settings.addView(label("显示", 14f, Palette.muted))
+        settings.addView(label("显示", 12f, Palette.muted)); settings.gap(8)
+        val displayCard = column(12).apply { background = shape(Palette.surface) }
+        settings.addView(displayCard)
         fun slider(title: String, min: Int, max: Int, current: Int, suffix: String, change: (Int) -> Unit) {
-            val value = label("$title  $current$suffix", 16f).apply { setBackgroundColor(Palette.surface); setPadding(dp(12), dp(8), dp(12), dp(8)) }
-            settings.addView(value)
-            settings.addView(SeekBar(this).apply {
+            val value = label("$current$suffix", 14f, Palette.accent)
+            displayCard.addView(row().apply { fill(label(title, 16f)); addView(value) })
+            displayCard.addView(SeekBar(this).apply {
                 this.max = max - min; progress = current - min; contentDescription = title
                 progressTintList = ColorStateList.valueOf(Palette.accent); thumbTintList = ColorStateList.valueOf(Palette.accent)
                 setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                    override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) { val number = progress + min; value.text = "$title  $number$suffix"; change(number) }
+                    override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) { val number = progress + min; value.text = "$number$suffix"; change(number) }
                     override fun onStartTrackingTouch(bar: SeekBar?) {}
                     override fun onStopTrackingTouch(bar: SeekBar?) {}
                 })
             }, LinearLayout.LayoutParams(-1, dp(48)))
-            settings.addView(row().apply { fill(label("$min$suffix", 12f, Palette.muted).apply { setBackgroundColor(Palette.surface) }); addView(label("$max$suffix", 12f, Palette.muted).apply { setBackgroundColor(Palette.surface) }) }); settings.gap(24)
+            displayCard.addView(row().apply { fill(label("$min$suffix", 12f, Palette.muted)); addView(label("$max$suffix", 12f, Palette.muted)) }); displayCard.gap(16)
         }
         slider("文字大小", 6, 24, display.fontSize, " sp") { display.fontSize = it; terminal?.zoom(it / 15f) }
         slider("浮层不透明度", 0, 100, display.opacity, "%") { display.opacity = it; (overlayPanel?.background as? android.graphics.drawable.GradientDrawable)?.setColor(panelColor()); toolRail.background = shape(panelColor(), true) }
-        settings.addView(actionButton("恢复显示默认值") { display.reset(); terminal?.zoom(16 / 15f); toolRail.background = shape(panelColor(), true); settingsPanel() }.apply { setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_rotate_ccw, 0, 0, 0) })
-        settings.gap(24); settings.addView(label("AI 与工具", 14f, Palette.muted))
-        listOf("llm" to "LLM 大模型", "reading" to "终端读取", "mcp" to "MCP", "skills" to "Skills").forEach { (page, title) ->
-            settings.addView(actionButton(title) { agentSettings(page) }.apply { gravity = Gravity.START }); settings.gap(8)
+        settings.gap(24); settings.addView(label("AI 与工具", 12f, Palette.muted)); settings.gap(8)
+        val llm = settingsRow("LLM 大模型", if (connected) "正在读取模型配置…" else "连接 Desktop 后配置", R.drawable.ic_cpu) { agentSettings("llm") }
+        settings.addView(llm); settings.settingsDivider()
+        settings.addView(settingsRow("终端读取", "首尾锚点与读取范围", R.drawable.ic_search) { agentSettings("reading") }); settings.settingsDivider()
+        settings.addView(settingsRow("MCP", "外部工具与服务", R.drawable.ic_plug) { agentSettings("mcp") }); settings.settingsDivider()
+        settings.addView(settingsRow("Skills", "可复用的 Agent 能力", R.drawable.ic_book_open) { agentSettings("skills") })
+        settings.gap(24); settings.addView(label("工作空间", 12f, Palette.muted)); settings.gap(8)
+        settings.addView(settingsRow("账号与设备", "管理账号与在线设备", R.drawable.ic_monitor_smartphone) { accountPanel(true) })
+        body.grow(scroll(settings)); body.addView(divider())
+        body.addView(row().apply {
+            setPadding(dp(12), dp(8), dp(16), dp(8)); setBackgroundColor(Palette.surface)
+            fill(actionButton("恢复显示默认值") { this@MainActivity.display.reset(); terminal?.zoom(16 / 15f); toolRail.background = shape(panelColor(), true); settingsPanel() }.apply {
+                background = null; gravity = Gravity.START; setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_rotate_ccw, 0, 0, 0)
+            }); addView(label("自动保存", 12f, Palette.muted))
+        })
+        if (connected) {
+            val device = deviceId; val owner = accountName; val version = generation; val session = selected
+            work {
+                val summary = runCatching {
+                    check(device == deviceId && owner == accountName && version == generation)
+                    val config = JSONObject(remote.configuration(JSONObject().put("action", "show").toString())).getJSONObject("config")
+                    val bindings = config.getJSONObject("bindings")
+                    val binding = if (session != null) bindings.optJSONObject("session/$session") ?: bindings.optJSONObject("session-default") else bindings.optJSONObject("global")
+                    val model = binding?.optString("model_id")?.let { config.getJSONObject("models").optJSONObject(it) }
+                    val provider = model?.optString("provider_id")?.let { config.getJSONObject("providers").optJSONObject(it) }
+                    (model?.optString("model") ?: "尚未绑定模型") + if (provider?.optBoolean("enabled", true) == false) " · 供应商已停用" else ""
+                }.getOrElse { "无法读取配置" }
+                post { if (body.isAttachedToWindow && device == deviceId && owner == accountName && version == generation) ((llm.getChildAt(1) as LinearLayout).getChildAt(1) as TextView).text = summary }
+            }
         }
-        settings.gap(16); settings.addView(label("工作空间", 14f, Palette.muted))
-        settings.addView(actionButton("账号与设备") { accountPanel() })
-        body.grow(scroll(settings))
     }
-    private fun panelColor() = Color.argb(display.opacity * 255 / 100, 26, 29, 32)
+    private fun panelColor() = Color.argb(display.opacity * 255 / 100, 16, 22, 35)
     private fun panel(title: String, drawer: Boolean = false): LinearLayout {
         val special = title == "特殊按键"
         closeOverlay(hideIme = !special)
@@ -974,6 +1006,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         return body
     }
     private fun closeOverlay(hideIme: Boolean = true) {
+        settingsEditor?.close(); settingsEditor = null
         historyClose?.invoke(); historyClose = null
         assistant?.close(); assistant = null
         agentPanel?.close(); agentPanel = null
@@ -1030,16 +1063,19 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private fun agentSettings(page: String = "llm") {
         val title = mapOf("llm" to "LLM 大模型", "reading" to "终端读取", "mcp" to "MCP", "skills" to "Skills")[page] ?: "LLM 大模型"
         val body = panel(title); overlay?.tag = "setting-detail"
-        (body.getChildAt(0) as LinearLayout).addView(iconButton(R.drawable.ic_arrow_left, "返回设置") { settingsPanel() }, 0)
+        val header = body.getChildAt(0) as LinearLayout
+        header.addView(iconButton(R.drawable.ic_arrow_left, "返回上一页") { if (settingsEditor?.back() != true) settingsPanel() }, 0)
         body.addView(label("$accountName · $deviceName",12f,Palette.muted))
         val device=deviceId; val account=accountName;val version=generation
-        AgentSettingsPanel(this, body, { json ->
+        settingsEditor = AgentSettingsPanel(this, body, { json ->
             check(connected && device==deviceId && account==accountName && version==generation) { "连接已变化" }
-            remote.configuration(json)
+            val result = remote.configuration(json)
+            check(connected && device==deviceId && account==accountName && version==generation) { "连接已变化" }
+            result
         }, selected.orEmpty(), { callback ->
             skillPicker=callback
             startActivityForResult(android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT_TREE),830)
-        }, page)
+        }, page, { heading -> (header.getChildAt(1) as TextView).text = heading })
     }
 
     private fun restoreLastSession() {
@@ -1148,7 +1184,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         }
         return super.dispatchKeyEvent(event)
     }
-    override fun onBackPressed() { if (agentPanel?.closeDetails() == true) return; if (overlay?.tag == "global-chat") openGlobalList() else if (overlay?.tag == "setting-detail") settingsPanel() else if (overlay != null) closeOverlay() else if (keyboardOpen) toggleInput(false) else super.onBackPressed() }
+    override fun onBackPressed() { if (settingsEditor?.back() == true) return; if (overlay?.tag == "account" && accountFromSettings) { settingsPanel(); return }; if (agentPanel?.closeDetails() == true) return; if (overlay?.tag == "global-chat") openGlobalList() else if (overlay?.tag == "setting-detail") settingsPanel() else if (overlay != null) closeOverlay() else if (keyboardOpen) toggleInput(false) else super.onBackPressed() }
     @Deprecated("Legacy activity result bridge")
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:android.content.Intent?) {
         super.onActivityResult(requestCode,resultCode,data)

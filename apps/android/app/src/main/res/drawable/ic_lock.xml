@@ -1,0 +1,5 @@
+<!-- Lucide outlines, ISC. See apps/android/NOTICE-LUCIDE.md. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="20dp" android:height="20dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M4.0,11.0h16.0v11.0h-16.0Z" android:strokeColor="#CBD5E1" android:strokeWidth="1.5" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="@android:color/transparent"/>
+    <path android:pathData="M8 11V7a4 4 0 0 1 8 0v4" android:strokeColor="#CBD5E1" android:strokeWidth="1.5" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="@android:color/transparent"/>
+</vector>

@@ -11,17 +11,17 @@ import android.view.View
 import android.widget.*
 
 object Palette {
-    val background = 0xff121416.toInt()
-    val surface = 0xff1a1d20.toInt()
-    val control = 0xff24292d.toInt()
-    val line = 0xff30363a.toInt()
-    val text = 0xffedf0f2.toInt()
-    val secondary = 0xffcbd0d4.toInt()
-    val warning = 0xffd8c18f.toInt()
-    val muted = 0xffa0a8ae.toInt()
-    val accent = 0xffa5c4d4.toInt()
-    val green = 0xffa2c6ae.toInt()
-    val danger = 0xffe4a3a3.toInt()
+    val background = 0xff090d16.toInt()
+    val surface = 0xff101623.toInt()
+    val control = 0xff141c2c.toInt()
+    val line = 0xff253044.toInt()
+    val text = 0xfff8fafc.toInt()
+    val secondary = 0xffcbd5e1.toInt()
+    val warning = 0xfffbbf24.toInt()
+    val muted = 0xff8391a7.toInt()
+    val accent = 0xff38bdf8.toInt()
+    val green = 0xff34d399.toInt()
+    val danger = 0xfffb7185.toInt()
 }
 fun Context.dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 fun Context.shape(color: Int, border: Boolean = false) = GradientDrawable().apply {
@@ -46,8 +46,11 @@ fun Context.field(hint: String, secret: Boolean = false) = EditText(this).apply 
 }
 fun Context.actionButton(value: String, primary: Boolean = false, action: () -> Unit) = Button(this).apply {
     text = value; isAllCaps = false; textSize = 14f; minHeight = dp(48); minimumWidth = 0
-    setPadding(dp(12), dp(6), dp(12), dp(6)); setTextColor(if (primary) Palette.background else Palette.text)
-    background = shape(if (primary) Palette.accent else Palette.control)
+    setPadding(dp(12), dp(6), dp(12), dp(6)); setTextColor(Palette.text)
+    compoundDrawableTintList = ColorStateList.valueOf(Palette.secondary); compoundDrawablePadding = dp(8)
+    background = if (primary) GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(Palette.accent, 0xff2563eb.toInt())).apply {
+        cornerRadius = dp(10).toFloat(); setStroke(dp(1), 0xff60a5fa.toInt())
+    } else shape(Palette.control, true)
     setOnClickListener { action() }
 }
 fun Context.iconButton(icon: Int, description: String, action: () -> Unit) = ImageButton(this).apply {
@@ -63,3 +66,18 @@ fun LinearLayout.gap(size: Int = 12) { addView(View(context), LinearLayout.Layou
 fun LinearLayout.fill(view: View) { addView(view, LinearLayout.LayoutParams(0, -2, 1f)) }
 fun LinearLayout.grow(view: View) { addView(view, LinearLayout.LayoutParams(-1, 0, 1f)) }
 fun Context.scroll(view: View) = ScrollView(this).apply { isFillViewport = true; addView(view) }
+
+/** Settings-specific rows; chat controls retain their compact touch targets. */
+fun Context.settingsRow(title: String, subtitle: String, icon: Int? = null, action: (() -> Unit)? = null) = row().apply {
+    minimumHeight = dp(80); setPadding(dp(12), dp(12), dp(12), dp(12)); background = shape(Palette.surface)
+    icon?.let { addView(ImageView(context).apply { setImageResource(it); imageTintList = ColorStateList.valueOf(Palette.accent) }, LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(14) }) }
+    fill(column().apply { addView(label(title, 16f)); addView(label(subtitle, 12f, Palette.muted)) })
+    if (action != null) {
+        addView(ImageView(context).apply { setImageResource(R.drawable.ic_chevron_right); imageTintList = ColorStateList.valueOf(Palette.muted) }, LinearLayout.LayoutParams(dp(18), dp(18)))
+        isFocusable = true; isClickable = true; contentDescription = title; setOnClickListener { action() }
+    }
+}
+fun LinearLayout.settingsDivider() { addView(View(context).apply { setBackgroundColor(Palette.line) }, LinearLayout.LayoutParams(-1, context.dp(1))) }
+fun LinearLayout.labelled(title: String, control: View): LinearLayout = context.column().also {
+    it.addView(context.label(title, 14f, Palette.secondary)); it.gap(6); it.addView(control); it.gap(20); addView(it)
+}

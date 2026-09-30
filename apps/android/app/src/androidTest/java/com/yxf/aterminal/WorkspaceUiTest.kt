@@ -90,12 +90,12 @@ class WorkspaceUiTest {
         launch().use { scenario ->
             screenshot("workspace-terminal")
             scenario.onActivity { activity ->
-                views(activity).first { it.contentDescription == "终端设置" }.performClick()
+                views(activity).first { it.contentDescription == "设置" }.performClick()
                 val sliders = views(activity).filterIsInstance<SeekBar>()
                 assertEquals(2, sliders.size)
                 sliders[0].progress = 18; sliders[1].progress = 100
                 assertEquals(24, DisplayPreferences(activity, "acceptance-display").fontSize); assertEquals(100, DisplayPreferences(activity, "acceptance-display").opacity)
-                views(activity).filterIsInstance<Button>().first { it.text == "恢复默认" }.performClick()
+                views(activity).filterIsInstance<Button>().first { it.text == "恢复显示默认值" }.performClick()
                 assertEquals(16, DisplayPreferences(activity, "acceptance-display").fontSize); assertEquals(88, DisplayPreferences(activity, "acceptance-display").opacity)
             }
             screenshot("workspace-settings")
@@ -103,7 +103,7 @@ class WorkspaceUiTest {
             waitFor { var landscape = false; scenario.onActivity { landscape = it.window.decorView.width > it.window.decorView.height }; landscape }
             screenshot("workspace-settings-landscape")
             scenario.onActivity { activity ->
-                views(activity).first { it.contentDescription == "关闭终端设置" }.performClick()
+                views(activity).first { it.contentDescription == "关闭设置" }.performClick()
                 views(activity).first { it.contentDescription == "打开工作空间" }.performClick()
             }
             screenshot("workspace-drawer-landscape")
@@ -215,7 +215,7 @@ class WorkspaceUiTest {
                 assertTrue(terminal.focusKeyboard())
                 val selected = MainActivity::class.java.getDeclaredField("selected").apply { isAccessible = true }
                 selected.set(activity, "fixture-session")
-                val history = views(activity).filterIsInstance<ImageButton>().first { it.contentDescription == "终端设置" }
+                val history = views(activity).filterIsInstance<ImageButton>().first { it.contentDescription == "设置" }
                 history.isFocusableInTouchMode = true
                 assertTrue(history.requestFocus())
                 assertTrue(history.hasFocus())
@@ -340,6 +340,11 @@ class WorkspaceUiTest {
             assertTrue(labels.contains("Online Desktop"))
             assertFalse(labels.contains("Old iPhone"))
             assertFalse(labels.contains("离线"))
+            MainActivity::class.java.getDeclaredMethod("settingsPanel").apply { isAccessible = true }.invoke(activity)
+            all(activity.window.decorView).first { it.isShown && it.contentDescription == "账号与设备" }.performClick()
+            activity.onBackPressed()
+            val overlay = MainActivity::class.java.getDeclaredField("overlay").apply { isAccessible = true }.get(activity) as View
+            assertEquals("settings", overlay.tag)
         } }
     }
 }

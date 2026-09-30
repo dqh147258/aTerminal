@@ -73,7 +73,7 @@ class AgentReadingUiTest {
             screenshot("defaults")
             val initial=JSONObject(remote.configuration("{\"action\":\"show\"}"))
             main{field("尾部保留行数（1–100）").setText("0")};click("保存读取设置")
-            main{assertTrue(views().filterIsInstance<TextView>().any{it.text.toString().contains("首尾行数须在")})}
+            main{assertEquals("尾部行数须在 1–100 之间",field("尾部保留行数（1–100）").error.toString())}
             assertEquals(initial.getLong("revision"),JSONObject(remote.configuration("{\"action\":\"show\"}")).getLong("revision"))
             main{field("首部保留行数（1–100）").setText("7");field("尾部保留行数（1–100）").setText("31")};click("保存读取设置")
             waitFor("Desktop configuration saved"){JSONObject(remote.configuration("{\"action\":\"show\"}")).getJSONObject("config").getJSONObject("terminal_reading").optInt("tail_lines")==31}
