@@ -231,7 +231,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 background = shape(Palette.accent); setPadding(dp(6), dp(6), dp(6), dp(6))
                 layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             })
-            addView(label("   AI TERMINAL", 14f))
+            addView(label("   aTerminal", 14f))
         }
         loginBox.addView(brand); loginBox.gap(24)
         loginBox.addView(label("YOUR WORKSPACE, CONNECTED.", 12f, Palette.muted))

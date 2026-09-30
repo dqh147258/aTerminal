@@ -1,0 +1,70 @@
+- region "aTerminal" [ref=f1e5]:
+  - main [ref=f1e6]:
+    - region "终端工作台" [ref=f1e7]:
+      - generic [ref=f1e8]:
+        - generic [ref=f1e9]:
+          - generic [ref=f1e10]:
+            - button "工作空间" [ref=f1e11] [cursor=pointer]
+            - generic [ref=f1e14]: aTerminal
+            - generic [ref=f1e15]: 演示
+          - generic [ref=f1e16]:
+            - generic [ref=f1e17]:
+              - heading "aTerminal" [level=1] [ref=f1e18]
+              - generic [ref=f1e19]: Mac Studio / zsh
+            - generic [ref=f1e20]: 在线
+        - generic [ref=f1e22]:
+          - generic "终端，可横向与纵向滚动" [ref=f1e23]:
+            - generic [ref=f1e28]:
+              - textbox "Terminal input" [ref=f1e29]
+              - generic [aria-hidden] [ref=f1e30]:
+                - generic [ref=f1e31]: "Last login: Sun Sep 27 09:41:00"
+                - generic [ref=f1e34]:
+                  - generic [ref=f1e98]: carl
+                  - generic [ref=f1e99]: "@mac-studio"
+                  - generic [ref=f1e100]: ~/aTerminal
+                - generic [ref=f1e38]: $ pwd
+                - generic [ref=f1e40]: /Volumes/Code/My/aTerminal
+                - generic [ref=f1e43]: $ git status --short
+                - generic [ref=f1e45]: M apps/android/app/src/main/java/com/yxf/aterminal/AgentPanel.kt
+                - generic [ref=f1e48]: $ ls
+                - generic [ref=f1e50]: apps/ crates/ deploy/
+                - generic [ref=f1e52]: doc/ scripts/ build/
+                - generic [ref=f1e54]: Cargo.toml Cargo.lock README.md
+                - generic [ref=f1e57]:
+                  - generic [ref=f1e109]: "#"
+                  - generic [ref=f1e110]: 演示终端
+                  - generic [ref=f1e111]: · 110
+                  - generic [ref=f1e112]: 列
+                  - generic [ref=f1e113]: · UTF-8
+                - generic [ref=f1e63]: ❯
+          - navigation "终端工具" [ref=f1e74]:
+            - button "设置" [ref=f1e75] [cursor=pointer]
+            - button "终端输入与按键" [ref=f1e77] [cursor=pointer]
+            - button "Session 对话" [ref=f1e80] [cursor=pointer]
+            - button "全局AI助手，1 条未读消息" [ref=f1e83] [cursor=pointer]:
+              - generic [aria-hidden] [ref=f1e87]: "1"
+        - generic [ref=f1e88]:
+          - status [ref=f1e92]: Agent 已就绪
+          - generic [ref=f1e93]:
+            - generic [ref=f1e94]: 本地演示
+            - generic [ref=f1e95]: 110 列 · UTF-8
+      - dialog [ref=f1e915]:
+        - generic [ref=f1e229]:
+          - button "返回" [active] [ref=f1e230] [cursor=pointer]
+          - generic [ref=f1e233]:
+            - heading "MCP" [level=2] [ref=f1e918]
+            - generic [ref=f1e235]: 管理 Agent 的外部工具
+          - button "关闭" [ref=f1e236] [cursor=pointer]
+        - generic [ref=f1e240]:
+          - generic [ref=f1e922]:
+            - heading "内置 · 只读" [level=3] [ref=f1e923]
+            - generic [ref=f1e925]:
+              - strong [ref=f1e926]: builtin/terminal
+              - generic [ref=f1e927]: 内置终端连接
+          - generic [ref=f1e932]:
+            - heading "已添加" [level=3] [ref=f1e933]
+            - paragraph [ref=f1e934]: 尚未添加扩展。
+          - button "导入 MCP JSON" [ref=f1e935] [cursor=pointer]
+    - status [ref=f1e96]
+  - generic [aria-hidden]:
+    - generic: 9:41

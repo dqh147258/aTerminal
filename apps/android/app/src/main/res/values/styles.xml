@@ -1,0 +1,12 @@
+<resources>
+    <style name="ATerminalTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#090D16</item>
+        <item name="android:colorBackground">#090D16</item>
+        <item name="android:colorAccent">#38BDF8</item>
+        <item name="android:colorControlActivated">#38BDF8</item>
+        <item name="android:colorControlNormal">#8391A7</item>
+        <item name="android:colorControlHighlight">#1F38BDF8</item>
+        <item name="android:textColorPrimary">#F8FAFC</item>
+        <item name="android:textColorSecondary">#CBD5E1</item>
+    </style>
+</resources>

@@ -1,0 +1,40 @@
+{
+  "captured": "2026-09-30",
+  "source": "/Volumes/Code/OpenDesignProjects/4c6b6741-85d2-4ded-b4c0-37377166a5c9",
+  "viewport": {
+    "width": 480,
+    "height": 1000
+  },
+  "source_sha256": {
+    "index.html": "d227a9969a0d02b064382b20efd073c2eb0e26a0a05bccb38a62860956933543",
+    "terminal.html": "48f2de3efb45fb38b0327e0fc0f2967eb46a5338450271ab569931c66f2a7fca",
+    "assets/app.css": "d99676d6dd49b0ea4ae41d8665086af4b742410a19bad2fa4eb9667d476c7a5a",
+    "assets/workspace.css": "ed8b4f90bb5e30b540c0bb8b4a8e7ac9ab21ff62ed24df49a241717963fa4aad",
+    "assets/workspace.js": "a518076d3a979285fd88d33ab92e9eeb59460ff4ba3403a4cb722db239583688",
+    "assets/settings.js": "83f9633334e87efa2cc2948e2d566d5f8e338524288e732a02279d9e23ee1137",
+    "assets/chat-images.js": "4e025a7cfa68a391ed95d9f389f3d6094d887ef6dfe2e5e41cdd5de6a879fce5",
+    "assets/chat-samples.js": "54d8b905599a3e57503f02948729f4ac06747f2a6586a03c5f05d5d1684a6982"
+  },
+  "screenshots": {
+    "01-terminal.png": "52e68c986992466e09b00e47613855661948c14e56ed1139941f6070d068ea8e",
+    "02-settings.png": "8ebe341fd364cac45fd7048d3052eacd4de8470d7018881d5fee636f2626c575",
+    "03-llm.png": "17e16fc251aaa3fcb0dffcb677428061d2573fab0519f01d460d7736934851ca",
+    "04-provider.png": "d4869c7efcbd1b0572b52bffdb3a2e24ba6ef70f9f982519f5ff085696597636",
+    "05-provider-azure.png": "27136ebf335bfa790776495d64b0afe8aa32ae3c46c5c38279efecb5d7a0863a",
+    "06-model.png": "c0a024198f8d1de3a88c425ac24b5b206fed8cfa7ac494e473b550f4aa6f16fb",
+    "07-model-advanced.png": "f9ccb80f4809ccf7101f5affc9ba3156104ee7e7be3e3cd52b02a305136d3c9c",
+    "08-model-catalog.png": "50d6236d673bdb096cf2e72384339fdcb923e3b2e6aa321bd864fcfe9a5c8048",
+    "09-model-catalog-page2.png": "06abd975dea9273b68bb8613b4ddb8eb415a4b40b4a17d72ab687a62e7573a0f",
+    "10-bindings.png": "b09b2092e70e95d76cc0a34e127cd45be5c8d2022fc1f80fd37a661db7baa634",
+    "11-terminal-reading.png": "6d4b35d82a23873b1c3250eb54a357e6438ab6fafff5ac371afe818904bd7b32",
+    "12-mcp.png": "78258d6b989e6dd5ba9d752ed7cc4a2309f780f44a1603a3ac134eaa9cf7541b",
+    "13-mcp-import.png": "cad93b586636f3319de32cdac0b8b97461e11c6b482a1d3eaf2df128bcdb7630",
+    "14-skills.png": "74ad7268bec7af23ac483c0aae6c5cab74e8075b3c1e6ade76033ae12d499574",
+    "15-skill-install.png": "482541fc0bba4374927a82a4266bd5b5fd9b40011c9082dbe5499ca2832b1cb4",
+    "16-account-devices.png": "8ecd8f69d37bee30d21ab7ad66c6f4bf0e1c57579f48c3b64c53800f658db62c",
+    "17-workspace.png": "561c809257aa5765b08521b8b25ffd42b2c4b34142d9dba674963edd39d93737",
+    "18-session-chat.png": "d7de6d2aa780a38067c989476d0af91f5213e61dd2bd9858bc70f09cfce16bf4",
+    "19-global-list.png": "08956e3f2fe561cefefaca2cefea324cbfac41422062a8127af99c09558bd332",
+    "20-global-chat.png": "2d84557a74abce62bf3d7160ff0dfa59b811d59c8dc42f1e783c73934061859b"
+  }
+}

@@ -1,0 +1,190 @@
+- region "aTerminal" [ref=f1e5]:
+  - main [ref=f1e6]:
+    - region "终端工作台" [ref=f1e7]:
+      - generic [ref=f1e8]:
+        - generic [ref=f1e9]:
+          - generic [ref=f1e10]:
+            - button "工作空间" [ref=f1e11] [cursor=pointer]
+            - generic [ref=f1e14]: aTerminal
+            - generic [ref=f1e15]: 演示
+          - generic [ref=f1e16]:
+            - generic [ref=f1e17]:
+              - heading "aTerminal" [level=1] [ref=f1e18]
+              - generic [ref=f1e19]: Mac Studio / zsh
+            - generic [ref=f1e20]: 在线
+        - generic [ref=f1e22]:
+          - generic "终端，可横向与纵向滚动" [ref=f1e23]:
+            - generic [ref=f1e28]:
+              - textbox "Terminal input" [ref=f1e29]
+              - generic [aria-hidden] [ref=f1e30]:
+                - generic [ref=f1e31]: "Last login: Sun Sep 27 09:41:00"
+                - generic [ref=f1e34]:
+                  - generic [ref=f1e98]: carl
+                  - generic [ref=f1e99]: "@mac-studio"
+                  - generic [ref=f1e100]: ~/aTerminal
+                - generic [ref=f1e38]: $ pwd
+                - generic [ref=f1e40]: /Volumes/Code/My/aTerminal
+                - generic [ref=f1e43]: $ git status --short
+                - generic [ref=f1e45]: M apps/android/app/src/main/java/com/yxf/aterminal/AgentPanel.kt
+                - generic [ref=f1e48]: $ ls
+                - generic [ref=f1e50]: apps/ crates/ deploy/
+                - generic [ref=f1e52]: doc/ scripts/ build/
+                - generic [ref=f1e54]: Cargo.toml Cargo.lock README.md
+                - generic [ref=f1e57]:
+                  - generic [ref=f1e109]: "#"
+                  - generic [ref=f1e110]: 演示终端
+                  - generic [ref=f1e111]: · 110
+                  - generic [ref=f1e112]: 列
+                  - generic [ref=f1e113]: · UTF-8
+                - generic [ref=f1e63]: ❯
+          - navigation "终端工具" [ref=f1e74]:
+            - button "设置" [ref=f1e75] [cursor=pointer]
+            - button "终端输入与按键" [ref=f1e77] [cursor=pointer]
+            - button "Session 对话" [ref=f1e80] [cursor=pointer]
+            - button "全局AI助手，1 条未读消息" [ref=f1e83] [cursor=pointer]:
+              - generic [aria-hidden] [ref=f1e87]: "1"
+        - generic [ref=f1e88]:
+          - status [ref=f1e92]: Agent 已就绪
+          - generic [ref=f1e93]:
+            - generic [ref=f1e94]: 本地演示
+            - generic [ref=f1e95]: 110 列 · UTF-8
+      - dialog "Session 对话" [ref=f1e1478]:
+        - generic [ref=f1e1480]:
+          - generic [ref=f1e1481]:
+            - generic [ref=f1e1482]: Session
+            - heading "aTerminal" [level=2] [ref=f1e1483]
+            - generic [ref=f1e1484]: /Volumes/Code/My/aTerminal
+          - button "关闭 Session 对话" [active] [ref=f1e1486] [cursor=pointer]
+        - generic "对话记录，向上滚动查看历史" [ref=f1e1491]:
+          - generic [ref=f1e1492]: 向上滚动加载更早记录
+          - article [ref=f1e1493]:
+            - generic [ref=f1e1494]:
+              - generic [ref=f1e1495]: 你
+              - time [ref=f1e1496]: 08:35
+            - generic [ref=f1e1497]: 聊天页主要需要改哪些地方？
+          - group [ref=f1e1498]:
+            - generic "读取页面结构" [ref=f1e1499] [cursor=pointer]
+          - article [ref=f1e1505]:
+            - generic [ref=f1e1506]:
+              - generic [ref=f1e1507]: aTerminal
+              - time [ref=f1e1508]: 08:37
+            - generic [ref=f1e1509]: 可以分成三块： 1. 标题栏：直接切换 Session / Global，并显示终端路径。 2. 消息区：连续浏览历史，工具记录折叠显示。 3. 输入区：去掉模型和权限提示，为输入文字留出更多宽度。 先处理布局，再接入原有状态与动作，比较容易保持功能完整。
+          - article [ref=f1e1510]:
+            - generic [ref=f1e1511]:
+              - generic [ref=f1e1512]: 你
+              - time [ref=f1e1513]: 08:40
+            - generic [ref=f1e1514]: 先看输入区，图片和语音都要保留。
+          - group [ref=f1e1515]:
+            - generic "定位输入组件" [ref=f1e1516] [cursor=pointer]
+          - article [ref=f1e1522]:
+            - generic [ref=f1e1523]:
+              - generic [ref=f1e1524]: aTerminal
+              - time [ref=f1e1525]: 08:42
+            - generic [ref=f1e1526]: 图片、语音和主操作可以保持在同一行。附件预览仅在选了图片后出现，录音提示也只在录音时出现。 这样默认状态更紧凑，输入多行文字时仍能自然增高。
+          - article [ref=f1e1527]:
+            - generic [ref=f1e1528]:
+              - generic [ref=f1e1529]: 你
+              - time [ref=f1e1530]: 08:45
+            - generic [ref=f1e1531]: 执行过程中输入新的内容，发送按钮应该怎么处理？
+          - group [ref=f1e1532]:
+            - generic "读取任务状态" [ref=f1e1533] [cursor=pointer]
+          - article [ref=f1e1539]:
+            - generic [ref=f1e1540]:
+              - generic [ref=f1e1541]: aTerminal
+              - time [ref=f1e1542]: 08:47
+            - generic [ref=f1e1543]: 有新草稿时，主按钮切换为“追加”；草稿为空时，同一位置显示“停止”。 追加消息应进入当前任务的上下文，不创建另一个不相关的任务。
+          - article [ref=f1e1544]:
+            - generic [ref=f1e1545]:
+              - generic [ref=f1e1546]: 你
+              - time [ref=f1e1547]: 08:50
+            - generic [ref=f1e1548]: 如果点了停止，但后台还没停止呢？
+          - group [ref=f1e1549]:
+            - generic "查看取消状态流" [ref=f1e1550] [cursor=pointer]
+          - article [ref=f1e1556]:
+            - generic [ref=f1e1557]:
+              - generic [ref=f1e1558]: aTerminal
+              - time [ref=f1e1559]: 08:52
+            - generic [ref=f1e1560]: 先显示“正在停止”，等待后台确认。在此期间禁用重复取消。 已经执行过的终端操作不会被撤销，不能把收到取消请求误报成执行已经停止。
+          - article [ref=f1e1561]:
+            - generic [ref=f1e1562]:
+              - generic [ref=f1e1563]: 你
+              - time [ref=f1e1564]: 08:55
+            - generic [ref=f1e1565]: 帮我运行一下测试。
+          - group [ref=f1e1566]:
+            - generic "测试任务示例" [ref=f1e1567] [cursor=pointer]
+          - article [ref=f1e1573]:
+            - generic [ref=f1e1574]:
+              - generic [ref=f1e1575]: aTerminal
+              - time [ref=f1e1576]: 08:57
+            - generic [ref=f1e1577]: 这次示例任务没有开始运行测试：包名不存在，退出码为 101。 需要先检查 workspace 中的实际包名，再重新提交命令；这不是测试用例失败。
+          - article [ref=f1e1578]:
+            - generic [ref=f1e1579]:
+              - generic [ref=f1e1580]: 你
+              - time [ref=f1e1581]: 09:00
+            - generic [ref=f1e1582]: 先停在这里，不要自动重试。
+          - group [ref=f1e1583]:
+            - generic "保留失败记录" [ref=f1e1584] [cursor=pointer]
+          - article [ref=f1e1590]:
+            - generic [ref=f1e1591]:
+              - generic [ref=f1e1592]: aTerminal
+              - time [ref=f1e1593]: 09:02
+            - generic [ref=f1e1594]: 已保留错误记录，没有安排重试。你可以展开上一条工具记录查看完整输出。
+          - article [ref=f1e1595]:
+            - generic [ref=f1e1596]:
+              - generic [ref=f1e1597]: 你
+              - time [ref=f1e1598]: 09:05
+            - generic [ref=f1e1599]: 向上看历史时，不要把我拉回底部。
+          - group [ref=f1e1600]:
+            - generic "消息视口状态" [ref=f1e1601] [cursor=pointer]
+          - article [ref=f1e1607]:
+            - generic [ref=f1e1608]:
+              - generic [ref=f1e1609]: aTerminal
+              - time [ref=f1e1610]: 09:07
+            - generic [ref=f1e1611]: 查看历史时保持当前位置；新回复到达后，只显示“最新消息”提示。 点击提示后再回到底部。加载更早记录时，也需要保持当前阅读的那条消息不跳动。
+          - article [ref=f1e1612]:
+            - generic [ref=f1e1613]:
+              - generic [ref=f1e1614]: 你
+              - time [ref=f1e1615]: 09:10
+            - generic [ref=f1e1616]: 总结一下现在确认的交互。
+          - group [ref=f1e1617]:
+            - generic "整理会话要点" [ref=f1e1618] [cursor=pointer]
+          - article [ref=f1e1624]:
+            - generic [ref=f1e1625]:
+              - generic [ref=f1e1626]: aTerminal
+              - time [ref=f1e1627]: 09:12
+            - generic [ref=f1e1628]: 已确认： • 标题栏直接切换作用域 • 路径替代“已就绪”小字 • 历史合并到连续消息流 • 图片支持预览、移除和随消息发送 • 发送、追加、停止共用一个位置 这些是本次示例对话的 UI 要点，并未修改真实工程。
+          - article [ref=f1e1629]:
+            - generic [ref=f1e1630]:
+              - generic [ref=f1e1631]: 你
+              - time [ref=f1e1632]: 09:15
+            - generic [ref=f1e1633]: 好，接下来我想再看一下工具记录的展开效果。
+          - group [ref=f1e1634]:
+            - generic "终端输出参考" [ref=f1e1635] [cursor=pointer]
+          - article [ref=f1e1641]:
+            - generic [ref=f1e1642]:
+              - generic [ref=f1e1643]: aTerminal
+              - time [ref=f1e1644]: 09:17
+            - generic [ref=f1e1645]: 可以展开上方记录查看命令、路径和退出码。普通回复保持简洁，把较长的原始输出留在折叠详情中。
+          - article [ref=f1e1646]:
+            - generic [ref=f1e1647]:
+              - generic [ref=f1e1648]: 你
+              - time [ref=f1e1649]: 09:40
+            - generic [ref=f1e1650]: 看看当前项目的状态
+          - group [ref=f1e1651]:
+            - generic "已读取工作目录与 Git 状态" [ref=f1e1652] [cursor=pointer]
+          - article [ref=f1e1658]:
+            - generic [ref=f1e1659]:
+              - generic [ref=f1e1660]: aTerminal
+              - time [ref=f1e1661]: 09:41
+            - generic [ref=f1e1662]: 当前位于 aTerminal 项目。Android Agent 页面有一处未提交修改，可以继续查看或安排下一步。
+        - generic [ref=f1e1663]:
+          - generic [ref=f1e1664]: 发送任务或追加消息
+          - generic [ref=f1e1665]:
+            - button "添加图片" [ref=f1e1666] [cursor=pointer]
+            - button "语音输入" [ref=f1e1671] [cursor=pointer]
+            - textbox "发送任务或追加消息" [ref=f1e1675]:
+              - /placeholder: 你想做什么？
+            - button "发送消息" [disabled] [ref=f1e1676]
+    - status [ref=f1e96]
+  - generic [aria-hidden]:
+    - generic: 9:41

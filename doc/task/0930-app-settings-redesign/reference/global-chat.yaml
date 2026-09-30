@@ -1,0 +1,48 @@
+- region "aTerminal" [ref=f1e5]:
+  - main [ref=f1e6]:
+    - region "终端工作台" [ref=f1e7]:
+      - region "全局AI助手 聊天" [ref=f1e1770]:
+        - generic [ref=f1e1479]:
+          - generic [ref=f1e1480]:
+            - button "返回 全局AI助手会话列表" [active] [ref=f1e1771] [cursor=pointer]
+            - generic [ref=f1e1481]:
+              - generic [ref=f1e1482]: 全局AI助手
+              - heading "工作空间巡检" [level=2] [ref=f1e1774]
+          - generic [ref=f1e1776]:
+            - generic [ref=f1e1777]: Mac Studio
+            - generic [ref=f1e1778]: 已完成
+        - generic "对话记录，向上滚动查看历史" [ref=f1e1491]:
+          - generic [ref=f1e1783]: 对话记录
+          - article [ref=f1e1784]:
+            - generic [ref=f1e1785]: 示例历史 · 未执行真实终端操作
+          - article [ref=f1e1786]:
+            - generic [ref=f1e1787]:
+              - generic [ref=f1e1788]: 你
+              - time [ref=f1e1789]: 22:42
+            - generic [ref=f1e1790]: 帮我整理一下工作空间巡检的顺序。
+          - article [ref=f1e1791]:
+            - generic [ref=f1e1792]:
+              - generic [ref=f1e1793]: aTerminal
+              - time [ref=f1e1794]: 22:43
+            - generic [ref=f1e1795]: 先确认 Desktop 连接，再查看在线终端，最后逐个确认是否有未完成任务。已经结束的会话保留记录即可。
+          - article [ref=f1e1796]:
+            - generic [ref=f1e1797]:
+              - generic [ref=f1e1798]: 你
+              - time [ref=f1e1799]: 22:44
+            - generic [ref=f1e1800]: 只做梳理，先不要执行任何命令。
+          - article [ref=f1e1801]:
+            - generic [ref=f1e1802]:
+              - generic [ref=f1e1803]: aTerminal
+              - time [ref=f1e1804]: 22:45
+            - generic [ref=f1e1805]: 可以，巡检顺序已整理好： 1. 确认设备连接 2. 查看终端状态 3. 汇总未完成任务 本轮没有执行终端命令。
+        - generic [ref=f1e1663]:
+          - generic [ref=f1e1664]: 发送任务或追加消息
+          - generic [ref=f1e1665]:
+            - button "添加图片" [ref=f1e1666] [cursor=pointer]
+            - button "语音输入" [ref=f1e1671] [cursor=pointer]
+            - textbox "发送任务或追加消息" [ref=f1e1675]:
+              - /placeholder: 你想做什么？
+            - button "发送消息" [disabled] [ref=f1e1676]
+    - status [ref=f1e96]
+  - generic [aria-hidden]:
+    - generic: 9:41

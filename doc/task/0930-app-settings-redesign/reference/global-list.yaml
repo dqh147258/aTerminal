@@ -1,0 +1,51 @@
+- region "aTerminal" [ref=f1e5]:
+  - main [ref=f1e6]:
+    - region "终端工作台" [ref=f1e7]:
+      - region [ref=f1e1679]:
+        - generic [ref=f1e1681]:
+          - button "返回终端首页" [active] [ref=f1e1682] [cursor=pointer]
+          - heading "全局AI助手" [level=1] [ref=f1e1685]
+          - button "新建全局AI助手会话" [ref=f1e1686] [cursor=pointer]
+        - generic [ref=f1e1688]:
+          - generic [ref=f1e1689]:
+            - generic [ref=f1e1690]: Mac Studio · 在线
+            - heading "独立对话，集中掌握" [level=2] [ref=f1e1694]
+            - paragraph [ref=f1e1695]: 跨终端的任务，在这里继续。
+            - generic [ref=f1e1696]:
+              - generic [ref=f1e1697]: 4 个会话 · 1 条未读
+              - generic [ref=f1e1698]: 最近更新
+          - generic [ref=f1e1699]:
+            - button "工作空间巡检，已完成，1 条未读" [ref=f1e1700] [cursor=pointer]:
+              - generic [ref=f1e1705]:
+                - generic [ref=f1e1706]:
+                  - strong [ref=f1e1707]: 工作空间巡检
+                  - time [ref=f1e1708]: 22:45
+                - generic [ref=f1e1709]: 可以，巡检顺序已整理好： 1. 确认设备连接 2. 查看终端状态 3. 汇总未完成任务 本轮没有执行终端命令。
+                - generic [ref=f1e1710]:
+                  - generic [ref=f1e1711]: 已完成
+                  - generic [ref=f1e1715]: 1 条未读
+            - button "项目改动梳理，已完成" [ref=f1e1718] [cursor=pointer]:
+              - generic [ref=f1e1723]:
+                - generic [ref=f1e1724]:
+                  - strong [ref=f1e1725]: 项目改动梳理
+                  - time [ref=f1e1726]: 21:28
+                - generic [ref=f1e1727]: 交接要点： Session 对话对应具体终端。 全局AI助手对话在独立列表中管理，可以围绕 Desktop 的整体任务持续讨论。 两类对话分别保留各自的消息记录。
+                - generic [ref=f1e1728]: 已完成
+            - button "构建结果整理，已完成" [ref=f1e1735] [cursor=pointer]:
+              - generic [ref=f1e1740]:
+                - generic [ref=f1e1741]:
+                  - strong [ref=f1e1742]: 构建结果整理
+                  - time [ref=f1e1743]: 19:03
+                - generic [ref=f1e1744]: 构建记录可以按这个顺序写： • 项目与分支 • 执行命令 • 退出码 • 关键输出 • 后续处理 这里只整理记录结构，没有发起构建。
+                - generic [ref=f1e1745]: 已完成
+            - button "下一步安排，已完成" [ref=f1e1752] [cursor=pointer]:
+              - generic [ref=f1e1757]:
+                - generic [ref=f1e1758]:
+                  - strong [ref=f1e1759]: 下一步安排
+                  - time [ref=f1e1760]: 09/29
+                - generic [ref=f1e1761]: 已整理为两项： 1. 完善会话列表的状态展示 2. 整理聊天记录与交接说明 这是一份文字安排，尚未启动任何任务。
+                - generic [ref=f1e1762]: 已完成
+        - generic [ref=f1e1769]: 全局AI助手会话独立于终端 Session · 本地演示
+    - status [ref=f1e96]
+  - generic [aria-hidden]:
+    - generic: 9:41

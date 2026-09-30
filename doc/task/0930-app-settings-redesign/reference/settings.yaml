@@ -1,0 +1,102 @@
+- region "aTerminal" [ref=f1e5]:
+  - main [ref=f1e6]:
+    - region "终端工作台" [ref=f1e7]:
+      - generic [ref=f1e8]:
+        - generic [ref=f1e9]:
+          - generic [ref=f1e10]:
+            - button "工作空间" [ref=f1e11] [cursor=pointer]
+            - generic [ref=f1e14]: aTerminal
+            - generic [ref=f1e15]: 演示
+          - generic [ref=f1e16]:
+            - generic [ref=f1e17]:
+              - heading "aTerminal" [level=1] [ref=f1e18]
+              - generic [ref=f1e19]: Mac Studio / zsh
+            - generic [ref=f1e20]: 在线
+        - generic [ref=f1e22]:
+          - generic "终端，可横向与纵向滚动" [ref=f1e23]:
+            - generic [ref=f1e28]:
+              - textbox "Terminal input" [ref=f1e29]
+              - generic [aria-hidden] [ref=f1e30]:
+                - generic [ref=f1e31]: "Last login: Sun Sep 27 09:41:00"
+                - generic [ref=f1e34]:
+                  - generic [ref=f1e98]: carl
+                  - generic [ref=f1e99]: "@mac-studio"
+                  - generic [ref=f1e100]: ~/aTerminal
+                - generic [ref=f1e38]: $ pwd
+                - generic [ref=f1e40]: /Volumes/Code/My/aTerminal
+                - generic [ref=f1e43]: $ git status --short
+                - generic [ref=f1e45]: M apps/android/app/src/main/java/com/yxf/aterminal/AgentPanel.kt
+                - generic [ref=f1e48]: $ ls
+                - generic [ref=f1e50]: apps/ crates/ deploy/
+                - generic [ref=f1e52]: doc/ scripts/ build/
+                - generic [ref=f1e54]: Cargo.toml Cargo.lock README.md
+                - generic [ref=f1e57]:
+                  - generic [ref=f1e109]: "#"
+                  - generic [ref=f1e110]: 演示终端
+                  - generic [ref=f1e111]: · 110
+                  - generic [ref=f1e112]: 列
+                  - generic [ref=f1e113]: · UTF-8
+                - generic [ref=f1e63]: ❯
+          - navigation "终端工具" [ref=f1e74]:
+            - button "设置" [ref=f1e75] [cursor=pointer]
+            - button "终端输入与按键" [ref=f1e77] [cursor=pointer]
+            - button "Session 对话" [ref=f1e80] [cursor=pointer]
+            - button "全局AI助手，1 条未读消息" [ref=f1e83] [cursor=pointer]:
+              - generic [aria-hidden] [ref=f1e87]: "1"
+        - generic [ref=f1e88]:
+          - status [ref=f1e92]: Agent 已就绪
+          - generic [ref=f1e93]:
+            - generic [ref=f1e94]: 本地演示
+            - generic [ref=f1e95]: 110 列 · UTF-8
+      - dialog [ref=f1e136]:
+        - generic [ref=f1e137]:
+          - heading "设置" [level=2] [ref=f1e139]
+          - button "关闭设置" [active] [ref=f1e140] [cursor=pointer]
+        - generic [ref=f1e144]:
+          - paragraph [ref=f1e145]: 显示
+          - generic [ref=f1e146]:
+            - generic [ref=f1e147]:
+              - generic [ref=f1e148]:
+                - generic [ref=f1e149]: 终端字号
+                - status [ref=f1e150]: 16 px
+              - slider "终端字号" [ref=f1e151] [cursor=pointer]: "16"
+              - generic [ref=f1e152]:
+                - generic [ref=f1e153]: 6 px
+                - generic [ref=f1e154]: 24 px
+            - generic [ref=f1e155]:
+              - generic [ref=f1e156]:
+                - generic [ref=f1e157]: 浮层不透明度
+                - status [ref=f1e158]: 88%
+              - slider "浮层不透明度" [ref=f1e159] [cursor=pointer]: "88"
+              - generic [ref=f1e160]:
+                - generic [ref=f1e161]: 通透
+                - generic [ref=f1e162]: 清晰
+          - paragraph [ref=f1e163]: AI 与工具
+          - generic [ref=f1e164]:
+            - button "LLM 大模型 gpt-4.1" [ref=f1e165] [cursor=pointer]:
+              - generic [ref=f1e169]:
+                - strong [ref=f1e170]: LLM 大模型
+                - generic [ref=f1e171]: gpt-4.1
+            - button "终端读取 首尾锚点与读取范围" [ref=f1e174] [cursor=pointer]:
+              - generic [ref=f1e178]:
+                - strong [ref=f1e179]: 终端读取
+                - generic [ref=f1e180]: 首尾锚点与读取范围
+            - button "MCP 外部工具与服务" [ref=f1e183] [cursor=pointer]:
+              - generic [ref=f1e186]:
+                - strong [ref=f1e187]: MCP
+                - generic [ref=f1e188]: 外部工具与服务
+            - button "Skills 可复用的 Agent 能力" [ref=f1e191] [cursor=pointer]:
+              - generic [ref=f1e194]:
+                - strong [ref=f1e195]: Skills
+                - generic [ref=f1e196]: 可复用的 Agent 能力
+          - paragraph [ref=f1e199]: 工作空间
+          - button "账号与设备 demo · 当前 Desktop" [ref=f1e201] [cursor=pointer]:
+            - generic [ref=f1e205]:
+              - strong [ref=f1e206]: 账号与设备
+              - generic [ref=f1e207]: demo · 当前 Desktop
+        - generic [ref=f1e210]:
+          - button "恢复显示默认值" [ref=f1e211] [cursor=pointer]
+          - generic [ref=f1e215]: 自动保存
+    - status [ref=f1e96]
+  - generic [aria-hidden]:
+    - generic: 9:41

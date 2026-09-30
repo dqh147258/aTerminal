@@ -1,0 +1,26 @@
+{
+  "svg": "/Users/carl/Downloads/Temp2026/Temp09/test-0930/pelican-bicycle.svg",
+  "sha256": "c73df1ebead16ace3678dbf9822e01b74119b7a5efbd4d9e6511c2c4221b0321",
+  "bytes": 23465,
+  "xml_valid": true,
+  "animation_count": 13,
+  "all_repeat_indefinite": true,
+  "browser": "Chrome / Playwright CLI",
+  "preview_url": "http://127.0.0.1:8930/index.html",
+  "frames": [
+    "pelican-frame1.png",
+    "pelican-frame2.png"
+  ],
+  "frame_size": [
+    1100,
+    750
+  ],
+  "changed_pixels": 16507,
+  "difference_bbox": [
+    117,
+    388,
+    983,
+    750
+  ],
+  "console": "Only missing optional favicon.ico (404); SVG image loaded complete, naturalWidth=1200"
+}

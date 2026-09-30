@@ -25,7 +25,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /** Opt-in live workflow; the coordinator supplies files/terminal-agent-workflow-fixture.json:
- * {session, message, expected_model, timeout_seconds}. Use an attached, idle test session.
+ * {session, message, expected_model, timeout_seconds, previous_root_user_message_id?}.
+ * Use an attached, idle test session; previous_root links a documented paused workflow recovery.
  * Starts the normal signed-in App, sends only through its Agent composer, and leaves it signed in.
  * The fixture contains no credentials. Reports/screenshots stay in the App's private files directory.
  */
@@ -134,7 +135,7 @@ class TerminalAgentWorkflowUiTest {
             val item = items.getJSONObject(index)
             var value = item.getJSONObject("value")
             if (value.optBoolean("partial")) value = JSONObject(record(value.getString("record_id")))
-            if (item.getString("kind") == "user") foundMessage = value.optString("message") == message
+            if (item.getString("kind") == "user") foundMessage = foundMessage || value.optString("message") == message
             if (item.getString("kind") != "interaction") continue
             val updates = value.optJSONArray("updates") ?: continue
             var waitCall: JSONObject? = null
@@ -181,6 +182,7 @@ class TerminalAgentWorkflowUiTest {
             session = fixture.getString("session")
             val message = fixture.getString("message").trim()
             val expectedModel = fixture.getString("expected_model")
+            val previousRoot = fixture.optString("previous_root_user_message_id").takeUnless { it.isBlank() || it == "null" }
             val seconds = fixture.optLong("timeout_seconds", 1800)
             assertTrue("Invalid fixture fields", session.isNotBlank() && message.isNotBlank() && expectedModel.isNotBlank() && seconds in 1L..3600L)
             deadline = started + seconds * 1000
@@ -262,7 +264,18 @@ class TerminalAgentWorkflowUiTest {
                     AgentPanel::class.java.getDeclaredField("loading").apply { isAccessible = true }.get(panel) == false
             } }
             screenshot("completed")
-            verifyCalls(history(root), message)
+            val currentHistory = history(root)
+            if (previousRoot != null) {
+                assertNotEquals("Recovery must reference an earlier user message", root, previousRoot)
+                val previousHistory = history(previousRoot)
+                assertTrue("Previous workflow must exist in this Session", (0 until previousHistory.length()).any {
+                    previousHistory.getJSONObject(it).getString("id") == previousRoot
+                })
+                report.put("previous_root_user_message_id", previousRoot).put("previous_history", previousHistory)
+                for (index in 0 until previousHistory.length()) currentHistory.put(previousHistory.getJSONObject(index))
+                report.put("history", currentHistory)
+            }
+            verifyCalls(currentHistory, message)
         } catch (error: Throwable) { failure = error; report.put("error", error.toString()) }
         finally {
             // A timeout does not cancel the Desktop Run or send any terminal input.

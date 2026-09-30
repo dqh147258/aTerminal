@@ -1,0 +1,21 @@
+{
+  "device": "emulator-5586",
+  "size": [
+    800,
+    1600
+  ],
+  "density_dpi": 440,
+  "font_scale": 1.3,
+  "scenario": "MCP JSON full-page editor with keyboard",
+  "buttons": [
+    {
+      "text": "取消",
+      "bounds": "[44,572][383,704]"
+    },
+    {
+      "text": "保存",
+      "bounds": "[416,572][756,704]"
+    }
+  ],
+  "source": "fresh uiautomator hierarchy"
+}
