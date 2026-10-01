@@ -1,4 +1,5 @@
 //! Desktop agent model boundary. Terminal authorization and durable state belong to Host.
+mod analysis;
 mod builtin;
 pub mod catalog;
 pub mod config;

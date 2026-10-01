@@ -10,3 +10,13 @@
 最终 fmt --check、clippy --all-targets -- -D warnings、git diff --check 通过。首次 clippy 的 sliced_string_as_bytes 建议已按安全字节切片修正，再跑完整 crate 测试通过。源码修改仅 `crates/agent-runtime/src/host.rs`。
 
 后续授权：协调者报告本轮两次实际空 TUI 分析暂停并审查诊断 diff，要求提交。已用真实 TUI 行加强恢复回归；针对性回归、完整测试与 lint 检查后，提交 Host 和本目录必要文档，subject 使用 `[未Review]`；不 merge，不操作业务服务。
+
+原文行引用修正阶段（已授权直接执行，先 review diff，不 commit/merge）：
+
+- [x] Host 提供有界可见原文完整行表，partial/binary 不能跨可见边界
+- [x] 展开 quote/fact/TUI 行引用后走原严格校验，旧 text/string 兼容，拒绝错误与冲突引用
+- [x] 更新 analysis/重试指令优先引用，保留失败诊断与严格屏障/取消/不重放
+- [x] 真实 U+200A/Unicode TUI 和错误引用关键回归、完整 runtime 测试/fmt/clippy 通过
+- [x] 交接具体 diff 与边界说明并上报 completed
+
+最终授权补充：协调者初步 review 后要求将四个必要源码（包括新 analysis.rs）与本目录文档提交，subject 使用 `[未Review]`；此前本阶段不提交的限制已替代。最终 44 unit + 5 model_boundary、fmt、clippy -D warnings、diff --check 通过，未操作真实服务/模拟器/Downloads。提交后由协调者 review 最终结果并集成。
