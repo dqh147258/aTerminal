@@ -61,3 +61,20 @@ adb -s emulator-5586 shell am instrument -w -r -e class com.yxf.aterminal.Recent
 自查/编译：本工作树 `:app:compileDebugKotlin` 与 `git diff --check` 通过。核对改动仅位于 createSession 的布局/解绑代码，创建 RPC、目录校验、身份保护及测试文件均不变。本轮未操作设备、模拟器、服务，也未宣称真实 UI 回归通过。
 
 协调者重测：使用你已修正的真实 harness，确认 IME 打开时两个按钮的完整 rect 都包含在 visible frame 内；长列表滚动到底仍有固定可达按钮；键盘收起后内容恢复；空/少项无大块底部空白。重复开关 IME/弹窗，检查高度稳定、没有持续重排。报告与截图仍由主 checkout 保存。
+
+## 本轮追加：隐藏 IME 后解除内容高度限制
+
+协调者真实证据位于主 checkout `evidence/ime-fixed-verified/`：普通 visible/dialog 高度 2138/1571，IME 时 1371/1349，两个标准按钮 bounds 已通过；IME 隐藏后 `imeVisible=false`，但恢复 visible height 的等待超时，截图中第二最近项仍被截断。上一版计算把浮动 dialog 自身的 display frame 和“decor 剩余空隙”带入下一次 cap，存在收缩状态反馈。该证据不能只靠检查 IME visibility 宣称恢复成功。
+
+本轮替换高度预算来源：API 30+ 从 **Activity** 的 `windowManager.currentWindowMetrics.bounds/windowInsets` 得到 task 可用高度，减 systemBars/displayCutout 与当前可见 IME 的联合 insets；IME 不可见时不再减 IME。API 25–29 使用完整 Activity 窗口的 visible frame，避免读取受限浮动 dialog 的 frame。通过 viewport 与标准按钮的共同父节点找到原生面板组，分别以固定宽度、UNSPECIFIED 高度测量固定标题/按钮兄弟面板；只加实际 padding/margins，不把已缩小 decor 的空隙当作页脚。自然内容能放下时将 viewport 的 `layoutParams.height` 明确恢复 `WRAP_CONTENT (-2)`；长内容仍按上限滚动。原窗口 WrapContent、Palette、标准按钮、仅变化时更新和 dismiss 解绑保持。
+
+仅修改 `MainActivity.createSession()` 与本 Handoff，不触碰主 checkout 已独立修正的 UItest。`:app:compileDebugKotlin`、`git diff --check` 已通过；未操作模拟器/服务，本轮不宣称真机恢复通过。按本条明确授权提交 `[未Review]` 用于协调者 Git 同步，不 merge。
+
+建议协调者在 normal / IME / hideKeyboard 已确认 false 后立即 / 恢复或超时前，补以下确切读取项（仅测试报告，本轮生产代码不增加日志）：
+
+- Activity `windowManager.currentWindowMetrics.bounds`；其 `windowInsets.getInsets(systemBars | displayCutout)`、`getInsets(ime)`、`isVisible(ime)`。
+- dialog decor `rootWindowInsets.isVisible(ime)` / `getInsets(ime)`，及 dialog decor、Activity decor 两者的 `getWindowVisibleDisplayFrame` 完整 Rect。
+- dialog decor `height`；nearest content ScrollView 的 `layoutParams.height`、`height`、`measuredHeight`、`scrollY`，及其 `getChildAt(0).height/measuredHeight`。
+- 原生 `topPanel` / `buttonPanel` / `customPanel` 的 `height`、`measuredHeight`、`paddingTop/paddingBottom`，可用 `resources.getIdentifier(name, "id", "android")` 读取；两个标准按钮完整 screen rect。
+
+预期隐藏后 viewport 不再停留在 IME cap；相同宽度与内容下，本次两条目录应回到原自然 dialog 高度。长列表可以仍受真实 task 可用高度约束；可见 frame 若仍与 before 不同，上述 metrics 可区分窗口报告与内容尺寸，不应仅凭截图标签或 IME false 判断成功。
