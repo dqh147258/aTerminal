@@ -12,7 +12,8 @@ final class TerminalModel: ObservableObject {
     @Published var screen: RenderFrame?
     @Published var sessions: [RemoteSession] = []
     @Published var devices: [AccountDevice] = []
-    @Published private(set) var sessionSnapshots: [String: [RemoteSession]] = [:]
+    @Published private var sessionSnapshotStore = OwnedSessionSnapshots<RemoteSession>()
+    var sessionSnapshots: [String: [RemoteSession]] { sessionSnapshotStore.snapshots(for: identity) }
     @Published var username = ""
     @Published var server = ""
     @Published var busy = false
@@ -152,14 +153,22 @@ final class TerminalModel: ObservableObject {
         let exported = try account.export()
         let object = (try? JSONSerialization.jsonObject(with: Data(exported.utf8))) as? [String: Any]
         let server = object?["server"] as? String ?? ""
+        let owner = name.isEmpty || server.isEmpty ? nil : ChatIdentity(server: server, account: name)
         DispatchQueue.main.async {
             guard self.accountPersistence.epoch == epoch else { return }
+            // Clear old-owner presentation before publishing a different account/server.
+            self.sessionSnapshotStore.bind(to: owner)
+            if self.identity != owner {
+                self.generation += 1; self.sessions = []; self.devices = []; self.selected = nil; self.deviceID = ""
+                self.screen = nil; self.history = ""; self.connected = false; self.hasControl = false; self.desktopAttached = false; self.sessionExited = false
+                self.sessionsRefreshInFlight = false
+            }
             if self.username.isEmpty { self.preparingWorkspace = true }
             self.username = name; self.server = server
         }
         let devices = try account.devices()
         DispatchQueue.main.async {
-            guard self.accountPersistence.epoch == epoch else { return }
+            guard self.accountPersistence.epoch == epoch, self.identity == owner else { return }
             self.devices = devices; self.username = name; self.accountBusy = false; self.busy = false
             guard self.foreground else { return }
             if !self.connected {
@@ -250,6 +259,7 @@ final class TerminalModel: ObservableObject {
         guard !WorkspacePreferences.fixture else { return }
         guard !busy else { return }; busy = true; preparingWorkspace = true; error = nil; connected = false; deviceID = id; sessions = []
         generation += 1; let version = generation; selected = nil; screen = nil; hasControl = false; desktopAttached = false; sessionExited = false; status = "连接中…"
+        let owner = identity
         let epoch = accountPersistence.epoch
         worker.async { [weak self] in
             guard let self else { return }
@@ -258,8 +268,8 @@ final class TerminalModel: ObservableObject {
                 self.channelState.device = ""; try self.core.disconnect(); try self.account.connect(deviceId: id, terminal: self.core); self.channelState.device = id
                 let sessions = try self.core.sessions()
                 DispatchQueue.main.async {
-                    guard self.generation == version else { return }
-                    self.sessions = sessions; self.sessionSnapshots[id] = sessions; self.busy = false; self.connected = true; self.status = "已连接 · 选择会话"
+                    guard self.generation == version, self.identity == owner else { return }
+                    self.sessions = sessions; self.sessionSnapshotStore.record(sessions, device: id, owner: owner); self.busy = false; self.connected = true; self.status = "已连接 · 选择会话"
                     if let sessionID, sessions.contains(where: { $0.id == sessionID && !$0.exited }) {
                         self.select(sessionID, control: true)
                     } else if let first = sessions.first(where: { !$0.exited }) {
@@ -277,14 +287,14 @@ final class TerminalModel: ObservableObject {
     func revoke(_ id: String) {
         guard !WorkspacePreferences.fixture else { return }
         guard !busy else { return }; pause(); busy = true; accountBusy = true
-        let epoch = accountPersistence.epoch
-        worker.async { [weak self] in guard let self else { return }; defer { do { try self.persist(epoch) } catch { self.failed(error) } }; do { try self.account.revoke(deviceId: id); if self.account.username().isEmpty { DispatchQueue.main.async { self.username = ""; self.server = ""; self.devices = []; self.sessions = []; self.deviceID = ""; self.accountBusy = false; self.busy = false } } else { try self.loadDevices(epoch) } } catch { self.failed(error) } }
+        let epoch = accountPersistence.epoch; let owner = identity
+        worker.async { [weak self] in guard let self else { return }; defer { do { try self.persist(epoch) } catch { self.failed(error) } }; do { try self.account.revoke(deviceId: id); if self.account.username().isEmpty { DispatchQueue.main.async { guard self.accountPersistence.epoch == epoch, self.identity == owner else { return }; self.sessionSnapshotStore.bind(to: nil); self.username = ""; self.server = ""; self.devices = []; self.sessions = []; self.deviceID = ""; self.accountBusy = false; self.busy = false } } else { try self.loadDevices(epoch) } } catch { self.failed(error) } }
     }
     func logout() {
         guard !WorkspacePreferences.fixture else { return }
         guard !busy else { return }
         do { try accountPersistence.clear() } catch { failed(error); return }
-        pause(); preparingWorkspace = false; busy = true; accountBusy = true; username = ""; server = ""; devices = []; sessions = []; sessionSnapshots = [:]; deviceID = ""
+        pause(); preparingWorkspace = false; busy = true; accountBusy = true; username = ""; server = ""; devices = []; sessions = []; sessionSnapshotStore.bind(to: nil); deviceID = ""
         worker.async { [weak self] in guard let self else { return }
             do { try self.account.logout() } catch { self.failed(error) }
             DispatchQueue.main.async { self.username = ""; self.devices = []; self.sessions = []; self.screen = nil; self.accountBusy = false; self.busy = false }
@@ -293,8 +303,8 @@ final class TerminalModel: ObservableObject {
     func changePassword(current: String, next: String) {
         guard !WorkspacePreferences.fixture else { return }
         guard !busy else { return }; pause(); busy = true; accountBusy = true
-        let epoch = accountPersistence.epoch
-        worker.async { [weak self] in guard let self else { return }; defer { do { try self.persist(epoch) } catch { self.failed(error) } }; do { try self.account.changePassword(current: current, newPassword: next); DispatchQueue.main.async { self.username = ""; self.server = ""; self.devices = []; self.sessions = []; self.accountBusy = false; self.busy = false; self.status = "密码已更新，请重新登录" } } catch { self.failed(error) } }
+        let epoch = accountPersistence.epoch; let owner = identity
+        worker.async { [weak self] in guard let self else { return }; defer { do { try self.persist(epoch) } catch { self.failed(error) } }; do { try self.account.changePassword(current: current, newPassword: next); DispatchQueue.main.async { guard self.accountPersistence.epoch == epoch, self.identity == owner else { return }; self.sessionSnapshotStore.bind(to: nil); self.deviceID = ""; self.username = ""; self.server = ""; self.devices = []; self.sessions = []; self.accountBusy = false; self.busy = false; self.status = "密码已更新，请重新登录" } } catch { self.failed(error) } }
     }
     func legacyConnect(_ invitation: String) {
         guard !WorkspacePreferences.fixture else { return }
@@ -384,47 +394,47 @@ final class TerminalModel: ObservableObject {
     }
     func create(_ path: String, completion: @escaping (String?) -> Void) {
         guard connected, !busy else { completion("Desktop 当前不可用，请稍后重试"); return }
-        busy = true; let version = generation; let device = deviceID
+        busy = true; let version = generation; let device = deviceID; let owner = identity
         worker.async { [weak self] in guard let self else { return }; do {
             guard self.channelState.device == device else { return }
             let created = try self.core.createSession(cwd: path)
             // Refresh failure must not prompt the user to create the same session twice.
             let sessions = try? self.core.sessions()
             DispatchQueue.main.async {
-                guard self.generation == version, self.deviceID == device else { return }
+                guard self.generation == version, self.identity == owner, self.deviceID == device else { return }
                 self.sessions = sessions ?? ([created] + self.sessions)
-                self.sessionSnapshots[self.deviceID] = self.sessions; self.busy = false
+                self.sessionSnapshotStore.record(self.sessions, device: device, owner: owner); self.busy = false
                 completion(nil); self.select(created.id, control: true)
             }
         } catch {
             DispatchQueue.main.async {
-                guard self.generation == version, self.deviceID == device else { return }
+                guard self.generation == version, self.identity == owner, self.deviceID == device else { return }
                 self.busy = false; completion(terminalError(error))
             }
         } }
     }
     func closeSelected() {
-        guard selected != nil, connected, !busy else { return }; busy = true; let version = generation
+        guard selected != nil, connected, !busy else { return }; busy = true; let version = generation; let owner = identity
         worker.async { [weak self] in guard let self else { return }; do {
             try self.core.closeSelected(); let sessions = try self.core.sessions()
             DispatchQueue.main.async {
-                guard self.generation == version else { return }
+                guard self.generation == version, self.identity == owner else { return }
                 if let identity = self.identity, RecentTerminal.load(identity)?.session == self.selected { RecentTerminal.remove(identity) }
-                self.generation += 1; self.selected = nil; self.screen = nil; self.hasControl = false; self.desktopAttached = false; self.sessionExited = false; self.sessions = sessions; self.sessionSnapshots[self.deviceID] = sessions; self.busy = false; self.status = "会话已关闭"
+                self.generation += 1; self.selected = nil; self.screen = nil; self.hasControl = false; self.desktopAttached = false; self.sessionExited = false; self.sessions = sessions; self.sessionSnapshotStore.record(sessions, device: self.deviceID, owner: owner); self.busy = false; self.status = "会话已关闭"
             }
         } catch { self.failed(error, version: version) } }
     }
     func refreshSessions() {
         guard connected, !busy, !sessionsRefreshInFlight else { return }
         sessionsRefreshInFlight = true
-        let version = generation; let device = deviceID
+        let version = generation; let device = deviceID; let owner = identity
         worker.async { [weak self] in guard let self else { return }
             do {
                 let sessions = try self.core.sessions()
                 DispatchQueue.main.async {
                     self.sessionsRefreshInFlight = false
-                    guard self.generation == version, self.connected, self.deviceID == device else { return }
-                    self.sessions = sessions; self.sessionSnapshots[device] = sessions
+                    guard self.generation == version, self.identity == owner, self.connected, self.deviceID == device else { return }
+                    self.sessions = sessions; self.sessionSnapshotStore.record(sessions, device: device, owner: owner)
                     if self.foreground, self.selected == nil, let first = sessions.first(where: { !$0.exited }) { self.select(first.id, control: true) }
                     if let selected = self.selected, sessions.first(where: { $0.id == selected })?.exited == true { self.status = "当前会话已关闭" }
                 }

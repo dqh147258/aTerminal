@@ -58,6 +58,25 @@ struct ChatIdentity: Codable, Hashable {
     var key: String { storageKey([server, account]) }
 }
 
+/// Volatile Desktop/session snapshots belong to one server/account identity only.
+/// Binding or clearing an owner never reads, migrates or deletes persistent chat history.
+struct OwnedSessionSnapshots<Session> {
+    private(set) var owner: ChatIdentity?
+    private var devices: [String: [Session]] = [:]
+    mutating func bind(to identity: ChatIdentity?) {
+        guard owner != identity else { return }
+        devices.removeAll(); owner = identity
+    }
+    @discardableResult mutating func record(_ sessions: [Session], device: String, owner expected: ChatIdentity?) -> Bool {
+        guard let expected, owner == expected else { return false }
+        devices[device] = sessions; return true
+    }
+    func snapshots(for identity: ChatIdentity?) -> [String: [Session]] {
+        guard let identity, owner == identity else { return [:] }
+        return devices
+    }
+}
+
 struct ChatScope: Codable, Hashable {
     let identity: ChatIdentity
     let device: String

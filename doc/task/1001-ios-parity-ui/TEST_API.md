@@ -38,3 +38,9 @@
 ## 首轮sim AX标识小修
 
 已移除`@ViewBuilder content`上的`settings.<section>.page/settings.form`中间标识，保留实际顶级容器`settings.page`与所有leaf IDs。设置顶级、设置首页、聊天和Global列表实际VStack均显式`accessibilityElement(children: .contain)`，不合并子控件；`provider.add/model.select.<id>/bindings.open/global.create/chat.draft/settings.reset`仍直接标在控件上。`chat.draft`仍为普通单行TextField，无axis改变。x86_64 App构建通过；运行时AX由协调者重跑确认，未在本子任务操作sim。
+
+## R12：volatile sessionSnapshots owner
+
+- 生产 `ChatStore.swift` 新增 Foundation-only `OwnedSessionSnapshots<Session>`：`bind(to: ChatIdentity?)`、`record(_:device:owner:) -> Bool`、`snapshots(for:)`。owner包括server/account；不同owner读取为空，解绑/换owner清内存，旧owner回调写入被拒绝。
+- `TerminalModel.sessionSnapshots`仅提供当前identity的filtered getter。`loadDevices`发布新username/server前先bind新owner并清旧当前展示、推进generation；connect/create/close/refresh回调同时捕获并检查owner。密码变更成功/self revoke成功/logout绑定nil，仅清内存，不删除持久历史。
+- 直接生产检查：链接`apps/ios/aTerminal/ChatStore.swift`与本任务`SessionSnapshotOwnerChecks.swift`。覆盖同owner刷新保留、A→B、同名不同server、nil解绑、迟到旧owner写入、重登录不复活volatile snapshot，并验证临时持久ChatStore历史不变。既有ChatStoreChecks也通过。

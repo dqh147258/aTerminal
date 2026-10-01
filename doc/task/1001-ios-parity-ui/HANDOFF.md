@@ -75,3 +75,9 @@ build/binding-reasoning-checks
 ## 首轮sim AX标识小修
 
 只读main `build/ios-parity-fixture-first.log`确认LLM root leaf IDs缺失，以及global.list存在但global.create缺失。移除ViewBuilder内容层identifier，设置/设置首页/聊天/Global实际根容器显式contain；保留顶级settings.page和所有leaf IDs。源代码仅3个Swift文件5行插入/4行替换，未改变表单/聊天输入类型或业务。x86_64 Debug构建及diff检查通过，无Swift警告。AX实际验证由协调者重跑，补丁按授权未Review提交。
+
+## R12 内存快照身份泄露修复
+
+生产仅修改ChatStore.swift与aTerminalApp.swift：快照显式绑定server/account owner，getter不能把旧owner数据重新标成当前identity；loadDevices发布不同identity前清理旧快照和当前会话展示并推进generation；密码变更成功、自撤销成功、logout解绑owner。所有快照写入回调带请求owner屏障。持久Agent历史、缓存、草稿及最近目录不清理。
+
+可审查路径：OwnedSessionSnapshots类型；TerminalModel.sessionSnapshots getter；loadDevices、revoke、changePassword/logout；connectDevice/create/closeSelected/refreshSessions快照写入。新增SessionSnapshotOwnerChecks.swift直接链接生产ChatStore.swift，验证身份转换/旧回调/持久历史保留；既有ChatStoreChecks通过；x86_64 Debug App BUILD SUCCEEDED，无Swift警告。未执行真实密码更改/自撤销或sim。
