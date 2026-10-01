@@ -1,5 +1,35 @@
 import XCTest
 
+// Tapping an existing URL/JSON does not put the caret at its end. Select the
+// complete value before replacing it, and keep failure assertions value-free.
+private enum UITestInput {
+    static func replace(_ field: XCUIElement, with value: String, app: XCUIApplication = XCUIApplication(), file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(field.waitForExistence(timeout: 20), "Expected input is unavailable", file: file, line: line)
+        field.tap()
+        let existing = field.value as? String ?? ""
+        let hasExistingText = !existing.isEmpty && existing != field.placeholderValue
+        if hasExistingText {
+            field.press(forDuration: 1.1)
+            func selectAll() -> XCUIElement? {
+                for label in ["Select All", "全选"] {
+                    for element in [app.menuItems[label], app.buttons[label]] where element.exists && element.isHittable { return element }
+                }
+                return nil
+            }
+            if selectAll() == nil { field.doubleTap() }
+            guard let selection = selectAll() else {
+                XCTFail("Select All is unavailable for the focused input", file: file, line: line); return
+            }
+            selection.tap()
+        }
+        if !value.isEmpty { field.typeText(value) }
+        else if hasExistingText { field.typeText(XCUIKeyboardKey.delete.rawValue) }
+        let actual = field.value as? String ?? ""
+        XCTAssertTrue(value.isEmpty ? actual.isEmpty || actual == field.placeholderValue : actual == value,
+                      "Input replacement did not preserve the requested value", file: file, line: line)
+    }
+}
+
 final class WorkspaceUITests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
     override func tearDown() { XCUIDevice.shared.orientation = .portrait }
@@ -14,14 +44,11 @@ final class WorkspaceUITests: XCTestCase {
         let app = launch(["--login-fixture"])
         XCTAssertFalse(app.textFields["login.server"].exists)
         app.buttons["login.server.edit"].tap()
-        let server = app.textFields["login.server"]; server.tap()
-        server.press(forDuration: 1.2)
-        if app.menuItems["Select All"].exists { app.menuItems["Select All"].tap() }
-        else if app.menuItems["全选"].exists { app.menuItems["全选"].tap() }
-        server.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: (server.value as? String ?? "").count) + "invalid")
+        let server = app.textFields["login.server"]
+        UITestInput.replace(server, with: "invalid", app: app)
         app.buttons["login.server.edit"].tap()
         XCTAssertTrue(app.staticTexts["请输入有效的服务地址"].waitForExistence(timeout: 3))
-        server.tap(); server.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 7) + "https://example.invalid")
+        UITestInput.replace(server, with: "https://example.invalid", app: app)
         app.buttons["login.server.edit"].tap()
         XCTAssertFalse(app.textFields["login.server"].exists)
         app.textFields["login.username"].tap(); app.textFields["login.username"].typeText("layout-check")
@@ -66,9 +93,7 @@ final class WorkspaceUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: id).firstMatch
     }
     private func replaceText(_ field: XCUIElement, with value: String) {
-        XCTAssertTrue(field.waitForExistence(timeout: 5)); field.tap()
-        let count = (field.value as? String ?? "").count
-        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: count) + value)
+        UITestInput.replace(field, with: value)
     }
     private func settingsFixture(_ scenario: String? = nil) -> XCUIApplication {
         var arguments = ["--workspace-fixture", "--settings-fixture", "--show-settings"]
@@ -137,6 +162,9 @@ final class WorkspaceUITests: XCTestCase {
         }
         replaceText(app.textFields["workspace.search"], with: "fixture-closed")
         XCTAssertTrue(app.buttons["session.history.fixture-closed"].exists)
+        XCTAssertFalse(app.buttons["session.history.fixture-offline"].exists)
+        replaceText(app.textFields["workspace.search"], with: "cedar-body-only-731")
+        XCTAssertTrue(app.buttons["session.history.fixture-closed"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["session.history.fixture-offline"].exists)
         replaceText(app.textFields["workspace.search"], with: "")
         for session in ["fixture-closed", "fixture-offline"] {
@@ -364,14 +392,17 @@ final class WorkspaceUITests: XCTestCase {
 }
 
 // Real Desktop RPC/PTY tests. These never authenticate, log out, clear an identity,
-// create/close a session, or change configuration. The coordinator must attach an
-// isolated service-test account to a disposable PTY before supplying this fixture.
+// create/close a session. Extension mutations additionally require the two
+// disposable UUID IDs; the coordinator owns host verification and failure cleanup.
 final class LiveServiceUITests: XCTestCase {
     private struct Fixture: Decodable {
         let session: String
         let typingMarker: String?
         let caPem: String?
         let caPemPath: String?
+        let mcpId: String?
+        let skillId: String?
+        let skillPath: String?
     }
     override func setUp() { continueAfterFailure = false }
     private func wait(_ timeout: TimeInterval = 20, _ predicate: @escaping () -> Bool, file: StaticString = #filePath, line: UInt = #line) {
@@ -386,12 +417,22 @@ final class LiveServiceUITests: XCTestCase {
     private func hasLine(_ app: XCUIApplication, _ line: String) -> Bool {
         text(app).components(separatedBy: .newlines).contains { $0.trimmingCharacters(in: .whitespaces) == line }
     }
-    private func fixtureApp() throws -> (XCUIApplication, Fixture) {
+    private func disposableID(_ id: String) -> Bool {
+        id.range(of: "^[A-Za-z0-9_-]{36,128}$", options: .regularExpression) != nil
+            && !id.hasPrefix("builtin") && UUID(uuidString: String(id.suffix(36))) != nil
+    }
+    private func fixtureApp(requiredExtensions: Bool = false) throws -> (XCUIApplication, Fixture) {
         guard let path = ProcessInfo.processInfo.environment["AI_TERMINAL_IOS_FIXTURE"],
               path.hasPrefix("/"), let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let fixture = try? JSONDecoder().decode(Fixture.self, from: data),
               !fixture.session.isEmpty, let marker = fixture.typingMarker, marker.utf8.count >= 16 else {
             throw XCTSkip("Pre-attached disposable integration fixture with a unique marker not supplied")
+        }
+        if requiredExtensions {
+            guard let mcp = fixture.mcpId, let skill = fixture.skillId, let path = fixture.skillPath,
+                  disposableID(mcp), disposableID(skill), mcp != skill, path.hasPrefix("/"), !path.contains("\0") else {
+                throw XCTSkip("Disposable UUID MCP/Skill IDs and absolute Desktop Skill path not supplied")
+            }
         }
         let app = XCUIApplication(); app.launchArguments = ["--service-test"]
         if let path = fixture.caPemPath {
@@ -414,6 +455,33 @@ final class LiveServiceUITests: XCTestCase {
     private func specialKey(_ key: String, app: XCUIApplication) {
         app.buttons["workspace.keys"].tap()
         app.buttons["terminal.key." + key].tap()
+    }
+    private func tap(_ id: String, app: XCUIApplication) {
+        let button = app.buttons[id]
+        XCTAssertTrue(button.waitForExistence(timeout: 20), "Expected fixture action is unavailable")
+        if !button.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(button.isHittable, "Expected fixture action is not reachable")
+        button.tap()
+    }
+    private func replaceText(_ field: XCUIElement, with value: String) {
+        UITestInput.replace(field, with: value)
+    }
+    private func json(_ value: [String: Any]) throws -> String {
+        String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
+    }
+    private func toggleTwice(_ app: XCUIApplication, first: String, second: String) {
+        let toggle = app.buttons["extension.toggle"]
+        wait { toggle.isEnabled && toggle.label == first }
+        toggle.tap()
+        wait { toggle.isEnabled && toggle.label == second }
+        toggle.tap()
+        wait { toggle.isEnabled && toggle.label == first }
+    }
+    private func deleteExtension(_ app: XCUIApplication, row: XCUIElement, listAction: String) {
+        tap("extension.delete", app: app)
+        let confirm = app.alerts.buttons["extension.delete.confirm"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5)); confirm.tap()
+        wait { app.buttons[listAction].exists && !row.exists }
     }
     func testKeyboardInAttachedFixture() throws {
         let (app, _) = try fixtureApp()
@@ -447,5 +515,53 @@ final class LiveServiceUITests: XCTestCase {
         XCTAssertFalse(app.segmentedControls.buttons["全局"].exists)
         XCTAssertFalse(app.buttons["旧归档"].exists)
         // No Agent send/cancel: live configuration and history remain read-only here.
+    }
+    func testDisposableMcpAndSkillProductionFormsRoundTrip() throws {
+        let (app, fixture) = try fixtureApp(requiredExtensions: true)
+        let mcpID = fixture.mcpId!, skillID = fixture.skillId!, skillPath = fixture.skillPath!
+        tap("workspace.settings", app: app); tap("settings.mcp", app: app)
+        XCTAssertTrue(app.buttons["mcp.import"].waitForExistence(timeout: 20))
+        let mcpRow = app.buttons["mcp.select." + mcpID]
+        XCTAssertFalse(mcpRow.exists, "Disposable MCP already exists; host cleanup is required")
+        var mcp: [String: Any] = ["transport": "streamable_http", "url": "http://localhost:9/mcp", "enabled": false,
+                                 "startup_timeout_ms": 10000, "call_timeout_ms": 30000]
+        tap("mcp.import", app: app)
+        replaceText(app.textViews["mcp.json"], with: try json(["mcpServers": [mcpID: mcp]]))
+        tap("settings.save", app: app)
+        XCTAssertTrue(mcpRow.waitForExistence(timeout: 20)); mcpRow.tap()
+        tap("extension.edit", app: app)
+        mcp["call_timeout_ms"] = 12345
+        replaceText(app.textViews["mcp.json"], with: try json(mcp))
+        tap("settings.save", app: app); tap("extension.edit", app: app)
+        let editor = app.textViews["mcp.json"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 20))
+        let saved = (editor.value as? String).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+        XCTAssertTrue(saved?["call_timeout_ms"] as? Int == 12345, "Disposable MCP timeout did not round-trip")
+        tap("settings.cancel", app: app)
+        toggleTwice(app, first: "启用", second: "停用")
+        deleteExtension(app, row: mcpRow, listAction: "mcp.import")
+
+        tap("settings.back", app: app); tap("settings.skills", app: app)
+        XCTAssertTrue(app.buttons["skill.install"].waitForExistence(timeout: 20))
+        let skillRow = app.buttons["skill.select." + skillID]
+        XCTAssertFalse(skillRow.exists, "Disposable Skill already exists; host cleanup is required")
+        tap("skill.install", app: app)
+        replaceText(app.textFields["skill.id"], with: skillID)
+        replaceText(app.textFields["skill.path"], with: skillPath)
+        tap("settings.save", app: app)
+        XCTAssertTrue(skillRow.waitForExistence(timeout: 30)); skillRow.tap()
+        tap("extension.edit", app: app)
+        let body = "---\nname: ios-ui-extension-fixture\ndescription: Dedicated disposable iOS UI regression package.\n---\n# UI round-trip edited\n\nOther package resources must remain intact.\n"
+        replaceText(app.textViews["skill.body"], with: body)
+        tap("settings.save", app: app); tap("extension.edit", app: app)
+        XCTAssertTrue(app.textViews["skill.body"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.textViews["skill.body"].value as? String == body, "Disposable SKILL.md did not round-trip")
+        tap("settings.cancel", app: app)
+        toggleTwice(app, first: "停用", second: "启用")
+        deleteExtension(app, row: skillRow, listAction: "skill.install")
+        tap("settings.back", app: app); tap("settings.close", app: app)
+        // UI completion proves these UUID operations, not package/config integrity.
+        // The coordinator observes actual revisions/hashes and cleans up on failure.
+        // No Agent send, terminal command, authentication, or credential/config dump.
     }
 }

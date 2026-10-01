@@ -8,6 +8,9 @@
 - [x] 完成本地允许检查，记录 fixture/真实 RPC/模拟器边界并 Executor checkpoint上报；未运行sim/服务。
 
 - [x] 逐页查看20张永久参考，复用现有测试补fixture-01至20 capture，修正最终Global返回/Skill详情合同。
-- [ ] 按协调者授权先提交fixture测试、脚本、文档并报告哈希，不merge。
-- [ ] 单独增加UUID opt-in MCP/Skill生产表单round-trip、离线typecheck并提交。
-- [ ] 复核R9/R10生产后续修复并报告最终结论。
+- [x] 首轮fixture测试/脚本/文档提交7e55a62并报告，不merge。
+- [x] 新增UUID opt-in MCP/Skill生产表单round-trip，完整UI离线typecheck通过。
+- [x] 复核1035586的R9/R10修复；R10direct回归/R9正文fixture检查已补。
+- [x] 根据协调者smoke证据修正共用Select All输入helper，无生产draft改动。
+- [ ] 第二提交并报告hash，协调者重跑输入helper与live测试。
+- [ ] 独立复核R12身份快照修复并更新最终结论。

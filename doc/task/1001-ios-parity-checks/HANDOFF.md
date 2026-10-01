@@ -24,4 +24,6 @@
 
 20页永久参考已逐页查看，fixture-01至20截图路由见SCREENSHOTS.md；关闭/离线history只读新测试与Global列表global.back、Skill编辑返回详情合同已同步。没有merge；未触碰设备/服务/用户身份。
 
-下一提交：opt-in LiveServiceUITests MCP/Skill production表单round-trip，fixture新增mcpId/skillId/skillPath，缺失skip；只操作协调者预生成的两个UUID，host负责配置/资源哈希、失败cleanup。现有真实登录由协调者在专用设备完成，测试不读凭据/登录/退出。
+首轮提交：`7e55a62`。第二提交包含共用Select All输入helper修正、R9正文搜索/R10推理override回归、opt-in live extension UI；helper修复main smoke Azure字段中间caret留下/v1问题，TextField/TextEditor共用，空文本删除全选区。R12身份快照修复另行复查，不阻塞协调者运行已交付测试。
+
+opt-in `LiveServiceUITests/testDisposableMcpAndSkillProductionFormsRoundTrip` 需要fixture可选 `mcpId`、`skillId`、`skillPath`。ID为纯UUID或合法字母/数字/-/_前缀+带连字符36位UUID，二者不同；Skill path为本轮Desktop完整临时包POSIX绝对路径。字段缺失/无效在launch前skip。安装前assert两个UUID都不存在，避免覆盖；MCP先disabled HTTP http://localhost:9/mcp，编辑call_timeout_ms=12345并读回，enable/disable/确认delete；Skill安装完整目录，只edit SKILL.md为固定有效frontmatter，读回、disable/enable/确认delete。只操作这两个UUID；不读credentials或配置dump、不send Agent、不运行terminal command、不登录/退出。host由协调者观察revision、非Markdown资源哈希与原配置完整性，失败兜底cleanup。真实测试由协调者执行，本任务只离线typecheck。

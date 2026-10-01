@@ -110,6 +110,12 @@ private func same(_ left: Any, _ right: Any) -> Bool {
         try check(object(object(changed["bindings"])["global"])["reasoning"] == nil, "Identity change retained obsolete binding reasoning")
         try check(object(object(changed["bindings"])["global"])["future_binding"] as? String == "keep", "Identity change lost unrelated binding fields")
         try check(draft.caps.isEmpty && draft.strength.isEmpty && draft.temperature.isEmpty && draft.mode == "provider_default", "Manual identity reset retained stale capabilities")
+        var sameID = ModelDraft(id: "m", item: original)
+        sameID.select(["id": "same-model", "capabilities": ["tools": true, "streaming": true, "reasoning_levels": ["high"]]])
+        let scopeBindings = object(try sameID.candidate(baseline, editing: true)["bindings"])
+        try check(object(scopeBindings["global"])["reasoning"] == nil, "Same-ID capability change retained an incompatible override")
+        try check(object(scopeBindings["global"])["future_binding"] as? String == "keep", "Override repair removed unknown binding fields")
+        try check(object(object(scopeBindings["session/current"])["reasoning"])["level"] as? String == "high", "Compatible override was unnecessarily cleared")
     }
     static func modelValidation() throws {
         let baseline = config(), item = object(object(config()["models"])["m"])
