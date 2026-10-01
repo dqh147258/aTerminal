@@ -305,7 +305,10 @@ class TerminalAgentWorkflowUiTest {
     }
     private fun verifiedLaunch(calls: List<JSONObject>, observations: List<TerminalEvidence>, mode: CodexMode = CodexMode.EXEC): JSONObject? {
         val ordered = calls.sortedWith(compareBy({ it.getLong("sequence") }, { it.getInt("position") }))
-        if (mode == CodexMode.INTERACTIVE) return verifiedInteractiveLaunch(ordered, observations)
+        // History archives arrive newest first; a repeated later banner must not hide an earlier
+        // launch followed by the actual prompt submission and its readback.
+        val chronological = observations.sortedWith(compareBy({ it.sequence }, { it.position }))
+        if (mode == CodexMode.INTERACTIVE) return verifiedInteractiveLaunch(ordered, chronological)
         for ((index, evidence) in ordered.withIndex()) {
             val call = evidence.getJSONObject("call")
             val submission = submission(ordered, index) ?: continue
@@ -314,7 +317,7 @@ class TerminalAgentWorkflowUiTest {
             val launches = commands.indices.filter { codexExec.containsMatchIn(commands[it]) }
             if (launches.isEmpty()) continue
             val markers = launches.mapNotNull { commands.getOrNull(it + 1)?.let { command -> exitPrint.matchEntire(command)?.groupValues?.get(1) } }
-            val observed = observations.firstOrNull { observation ->
+            val observed = chronological.firstOrNull { observation ->
                 after(observation, submission) &&
                     (codexBanner.containsMatchIn(observation.body) || observation.body.lineSequence().any { line -> markers.any { line.trimEnd('\r') == "$it=0" } })
             } ?: continue
@@ -510,6 +513,44 @@ class TerminalAgentWorkflowUiTest {
             listOf(banner.copy(sequence = 1, position = 3), echo.copy(sequence = 2, position = 1)), CodexMode.INTERACTIVE))
         assertNotNull("Same-unit output after both receipts must qualify", verifiedLaunch(listOf(launch, task),
             listOf(banner.copy(sequence = 1, position = 3), echo.copy(sequence = 2, position = 3)), CodexMode.INTERACTIVE))
+    }
+
+    @Test fun interactiveCodexEvidenceUsesEarliestBannerWhenArchivesAreNewestFirst() {
+        val prompt = "Create and run a pelican character animation"
+        val launch = fixtureCall("input_text", JSONObject().put("text", "codex"), sequence = 621)
+        val launchEnter = fixtureCall("send_keys", JSONObject().put("key", "enter"), sequence = 630)
+        val task = fixtureCall("input_text", JSONObject().put("text", prompt), sequence = 659)
+        val taskEnter = fixtureCall("send_keys", JSONObject().put("key", "enter"), sequence = 668)
+        val banner = TerminalEvidence("banner-653", 653, ">_ OpenAI Codex (v0.159.2)\n", 1)
+        val draftEcho = TerminalEvidence("draft-663", 663, banner.body + "› $prompt\n", 1)
+        val submittedEcho = TerminalEvidence("echo-676", 676, banner.body + "› $prompt\n• Working\n", 1)
+        val repeatedBanner = TerminalEvidence("banner-686", 686, submittedEcho.body, 1)
+        val calls = listOf(launch, launchEnter, task, taskEnter)
+        val archives = listOf(banner, draftEcho, submittedEcho, repeatedBanner)
+        for (order in listOf(archives, archives.reversed())) {
+            val verified = verifiedLaunch(calls.reversed(), order, CodexMode.INTERACTIVE)
+            assertNotNull("A later repeated banner must not exclude an earlier submitted prompt", verified)
+            assertEquals("call-621", verified!!.getString("call_record_id"))
+            assertEquals("call-630", verified.getString("submission_record_id"))
+            assertEquals("banner-653", verified.getString("terminal_record_id"))
+            assertEquals("call-659", verified.getString("prompt_call_record_id"))
+            assertEquals("call-668", verified.getString("prompt_submission_record_id"))
+            assertEquals("echo-676", verified.getString("prompt_terminal_record_id"))
+        }
+    }
+
+    @Test fun interactiveCodexEvidenceOrdersSameSequenceArchivesByPosition() {
+        val prompt = "Create the animation"
+        val launch = fixtureCall("input_text", JSONObject().put("text", "codex").put("submit", true))
+        val task = fixtureCall("input_text", JSONObject().put("text", prompt).put("submit", true), sequence = 2)
+            .put("position", 3).put("result_position", 4)
+        val banner = TerminalEvidence("early-banner", 2, ">_ OpenAI Codex (v0.159.2)\n", 1)
+        val echo = TerminalEvidence("submitted-echo", 2, "› $prompt\n", 5)
+        val laterBanner = banner.copy(recordId = "later-banner", position = 7)
+        val verified = verifiedLaunch(listOf(task, launch), listOf(laterBanner, echo, banner), CodexMode.INTERACTIVE)
+        assertNotNull("Within one history unit, archive position determines the actual order", verified)
+        assertEquals("early-banner", verified!!.getString("terminal_record_id"))
+        assertEquals("submitted-echo", verified.getString("prompt_terminal_record_id"))
     }
 
     private fun JSONObject.copyJsonSequence(sequence: Long) = JSONObject(toString()).put("sequence", sequence)
