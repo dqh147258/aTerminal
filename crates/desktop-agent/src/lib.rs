@@ -8,6 +8,7 @@ pub mod extensions;
 mod keys;
 mod private_acl;
 mod process;
+mod recent_directories;
 pub mod pty;
 pub mod raster;
 mod remote_bridge;

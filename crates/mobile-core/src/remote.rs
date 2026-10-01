@@ -304,6 +304,10 @@ impl RemoteTerminal {
             .map(session)
             .collect())
     }
+    /// Older Desktops omit this optional List field and return an empty list.
+    pub fn recent_directories(&self) -> Result<Vec<String>, CoreError> {
+        Ok(self.call(Request::default())?.recent_directories)
+    }
     /// Agent requests remain independent of the selected terminal input lease.
     pub fn agent(&self, session_id: String, request_json: String) -> Result<String, CoreError> {
         self.management(Operation::Agent, session_id, request_json, 65536)

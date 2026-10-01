@@ -295,6 +295,7 @@ struct Host {
     assistant: crate::assistant::Assistant,
     sessions: Mutex<HashMap<String, Actor>>,
     session_order: Mutex<Vec<String>>,
+    recent_directories: Mutex<crate::recent_directories::RecentDirectories>,
     owners: Mutex<HashMap<String, String>>,
     stop: Arc<AtomicBool>,
     workers: AtomicUsize,
@@ -348,6 +349,7 @@ pub fn run_agent(dir: &Path) -> Result<()> {
     let host = Arc::new(Host {
         agents,
         state_dir: dir.into(),
+        recent_directories: Mutex::new(crate::recent_directories::RecentDirectories::new(dir)),
         account: account.clone(),
         config: crate::config::ConfigService::open(dir)?,
         assistant: crate::assistant::Assistant::default(),
@@ -360,6 +362,7 @@ pub fn run_agent(dir: &Path) -> Result<()> {
     crate::remote_bridge::spawn(dir.to_owned(), host.stop.clone());
     account.spawn(host.stop.clone());
     runtime::spawn_recorder(Arc::downgrade(&host));
+    spawn_directory_recorder(Arc::downgrade(&host));
     while !host.stop.load(Ordering::Acquire) {
         match listener.accept() {
             Ok((mut stream, _)) => {
@@ -614,6 +617,17 @@ fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
                     reply.sessions.push(info);
                 }
             }
+            let owner = if request.account_scope.is_empty() {
+                host.account.owner()
+            } else {
+                request.account_scope.clone()
+            };
+            reply.recent_directories = host
+                .recent_directories
+                .lock()
+                .unwrap()
+                .list(&owner)
+                .unwrap_or_default();
             Ok(reply)
         }
         Operation::Create => {
@@ -632,6 +646,14 @@ fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
             } else {
                 PathBuf::from(&request.cwd)
             };
+            let cwd = crate::recent_directories::validate(&cwd)?;
+            // A create accepted before an account switch stays with its authenticated caller.
+            let owner = if request.account_scope.is_empty() {
+                host.account.owner()
+            } else {
+                request.account_scope.clone()
+            };
+            let recorded_cwd = cwd.clone();
             let pty = Session::spawn_integrated(
                 &command,
                 Some(&cwd),
@@ -647,16 +669,18 @@ fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
             thread::Builder::new()
                 .name(format!("session-{id}"))
                 .spawn(move || session_loop(actor_id, cwd, engine, pty, client, rx))?;
-            host.owners.lock().unwrap().insert(
-                id.clone(),
-                if request.account_scope.is_empty() {
-                    host.account.owner()
-                } else {
-                    // A remote create accepted before an account switch still belongs to its
-                    // authenticated caller, never to the account active after PTY startup.
-                    request.account_scope.clone()
-                },
-            );
+            host.owners
+                .lock()
+                .unwrap()
+                .insert(id.clone(), owner.clone());
+            if let Err(error) = host
+                .recent_directories
+                .lock()
+                .unwrap()
+                .record(&owner, &recorded_cwd)
+            {
+                eprintln!("Unable to save recent working directory: {error}");
+            }
             host.session_order.lock().unwrap().push(id.clone());
             sessions.insert(id, tx.clone());
             drop(sessions);
@@ -707,6 +731,61 @@ fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
             Ok(reply)
         }
     }
+}
+
+/// Observe outside session actors so OS queries and disk writes cannot stall terminal input.
+fn spawn_directory_recorder(host: std::sync::Weak<Host>) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let mut previous: HashMap<String, (String, PathBuf)> = HashMap::new();
+        loop {
+            thread::sleep(Duration::from_secs(2));
+            let Some(host) = host.upgrade() else { break };
+            if host.stop.load(Ordering::Acquire) {
+                break;
+            }
+            let ids = host.session_order.lock().unwrap().clone();
+            previous.retain(|id, _| ids.contains(id));
+            for id in ids {
+                let actor = host.sessions.lock().unwrap().get(&id).cloned();
+                let owner = host.owners.lock().unwrap().get(&id).cloned();
+                let (Some(actor), Some(owner)) = (actor, owner) else {
+                    continue;
+                };
+                let Ok(reply) = request_actor(
+                    &actor,
+                    Request {
+                        operation: Operation::Poll as i32,
+                        revision: u64::MAX,
+                        ..Request::default()
+                    },
+                ) else {
+                    continue;
+                };
+                let Some(info) = reply.info else { continue };
+                let Some(cwd) = crate::process::cwd(&info)
+                    .and_then(|p| crate::recent_directories::validate(&p).ok())
+                else {
+                    continue;
+                };
+                // Creation already recorded the initial path. Idle sessions must not reorder MRU.
+                let last = previous
+                    .entry(id)
+                    .or_insert_with(|| (owner.clone(), PathBuf::from(&info.cwd)));
+                if last == &(owner.clone(), cwd.clone()) {
+                    continue;
+                }
+                if host
+                    .recent_directories
+                    .lock()
+                    .unwrap()
+                    .record(&owner, &cwd)
+                    .is_ok()
+                {
+                    *last = (owner, cwd);
+                }
+            }
+        }
+    })
 }
 
 fn session_loop(
@@ -1145,12 +1224,9 @@ fn encode_input(request: &Request, engine: &Engine) -> Result<Vec<u8>> {
 mod service_tests {
     use super::*;
 
-    #[test]
-    fn session_list_returns_newest_first_and_removes_closed_sessions() {
-        let dir = tempfile::tempdir().unwrap();
-        let state = dir.path().join("state");
+    fn test_host(dir: &Path, async_runtime: &tokio::runtime::Runtime) -> Arc<Host> {
+        let state = dir.join("state");
         crate::service::secure_dir(&state).unwrap();
-        let async_runtime = tokio::runtime::Runtime::new().unwrap();
         let agents = ai_terminal_agent_runtime::host::AgentHost::new(
             Arc::new(
                 ai_terminal_agent_runtime::store::Store::open(&state.join("data/agent.sqlite3"))
@@ -1158,9 +1234,12 @@ mod service_tests {
             ),
             async_runtime.handle().clone(),
         );
-        let host = Arc::new(Host {
+        Arc::new(Host {
             agents,
             state_dir: state.clone(),
+            recent_directories: Mutex::new(crate::recent_directories::RecentDirectories::new(
+                &state,
+            )),
             account: crate::account::AccountManager::new(&state).unwrap(),
             config: crate::config::ConfigService::open(&state).unwrap(),
             assistant: crate::assistant::Assistant::default(),
@@ -1169,7 +1248,173 @@ mod service_tests {
             owners: Mutex::new(HashMap::new()),
             stop: Arc::new(AtomicBool::new(false)),
             workers: AtomicUsize::new(0),
-        });
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recent_directory_create_validates_paths_and_observes_real_cwd() {
+        let dir = tempfile::tempdir().unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let host = test_host(dir.path(), &runtime);
+        let initial = dir.path().join("literal ; $(touch should-not-exist)");
+        let next = dir.path().join("next");
+        fs::create_dir(&initial).unwrap();
+        fs::create_dir(&next).unwrap();
+        let create = |cwd: String| {
+            dispatch(
+                &host,
+                Request {
+                    operation: Operation::Create as i32,
+                    client: 1,
+                    cwd,
+                    command: vec![
+                        "/bin/sh".into(),
+                        "-c".into(),
+                        "read -r ignored; cd -- \"$1\"; read -r ignored".into(),
+                        "cwd-test".into(),
+                        next.to_str().unwrap().into(),
+                    ],
+                    rows: 24,
+                    cols: 80,
+                    ..Default::default()
+                },
+            )
+        };
+        let info = create(initial.to_str().unwrap().into())
+            .unwrap()
+            .info
+            .unwrap();
+        let initial = initial.canonicalize().unwrap();
+        assert_eq!(info.cwd, initial.to_str().unwrap());
+        assert_eq!(
+            crate::process::cwd(&info).unwrap().canonicalize().unwrap(),
+            initial
+        );
+        let mut wrong = info.clone();
+        wrong.process_identity = "wrong-process".into();
+        assert!(crate::process::cwd(&wrong).is_none());
+        wrong = info.clone();
+        wrong.exited = true;
+        assert!(crate::process::cwd(&wrong).is_none());
+        let recorder = spawn_directory_recorder(Arc::downgrade(&host));
+        // Release the shell's read: the next directory was passed as argv, never interpolated.
+        let actor = host.sessions.lock().unwrap().get(&info.id).unwrap().clone();
+        let attached = request_actor(
+            &actor,
+            Request {
+                operation: Operation::AttachDesktop as i32,
+                client: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(attached.error.is_empty(), "{}", attached.error);
+        let input = request_actor(
+            &actor,
+            Request {
+                operation: Operation::Input as i32,
+                client: 1,
+                control_epoch: info.control_epoch,
+                input_seq: info.next_input_seq,
+                input: b"\n".to_vec(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(input.error.is_empty(), "{}", input.error);
+        let next = next.canonicalize().unwrap().to_str().unwrap().to_string();
+        let until = Instant::now() + Duration::from_secs(8);
+        loop {
+            let list = dispatch(
+                &host,
+                Request {
+                    client: 1,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            if list.recent_directories.first() == Some(&next) {
+                break;
+            }
+            assert!(Instant::now() < until, "OS cwd change was not recorded");
+            thread::sleep(Duration::from_millis(100));
+        }
+        let list = host.recent_directories.lock().unwrap().list("").unwrap();
+        assert_eq!(list, [next.clone(), initial.to_str().unwrap().to_string()]);
+        let file = dir.path().join("file");
+        fs::write(&file, "x").unwrap();
+        assert!(create(file.to_str().unwrap().into()).is_err());
+        assert!(create(dir.path().join("missing").to_str().unwrap().into()).is_err());
+        assert_eq!(host.sessions.lock().unwrap().len(), 1);
+        assert_eq!(
+            host.recent_directories.lock().unwrap().list("").unwrap(),
+            list
+        );
+        // Another creation uses the initial directory again. Polling the idle first shell
+        // must not promote its unchanged cwd above that newer use.
+        let second = create(initial.to_str().unwrap().into())
+            .unwrap()
+            .info
+            .unwrap();
+        thread::sleep(Duration::from_millis(2200));
+        assert_eq!(
+            host.recent_directories.lock().unwrap().list("").unwrap(),
+            [initial.to_str().unwrap().to_string(), next.clone()]
+        );
+        host.stop.store(true, Ordering::Release);
+        recorder.join().unwrap();
+        dispatch(
+            &host,
+            Request {
+                operation: Operation::Close as i32,
+                client: 1,
+                session: second.id,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        dispatch(
+            &host,
+            Request {
+                operation: Operation::Close as i32,
+                client: 1,
+                session: info.id,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        fs::remove_dir(&next).unwrap();
+        assert!(create(next).is_err());
+        // The actual working tree and history survive rejection; no second session was started.
+        assert!(host.sessions.lock().unwrap().is_empty());
+        let default = create(String::new()).unwrap().info.unwrap();
+        assert_eq!(
+            default.cwd,
+            std::env::current_dir()
+                .unwrap()
+                .canonicalize()
+                .unwrap()
+                .to_str()
+                .unwrap()
+        );
+        dispatch(
+            &host,
+            Request {
+                operation: Operation::Close as i32,
+                client: 1,
+                session: default.id,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn session_list_returns_newest_first_and_removes_closed_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let async_runtime = tokio::runtime::Runtime::new().unwrap();
+        let host = test_host(dir.path(), &async_runtime);
         // Deliberately different from ID order; the latest session has exited.
         let mut workers = Vec::new();
         for (id, exited) in [("z-old", false), ("a-new", false), ("m-exited", true)] {

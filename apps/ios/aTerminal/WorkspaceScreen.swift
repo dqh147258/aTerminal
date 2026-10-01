@@ -18,7 +18,6 @@ struct WorkspaceScreen: View {
     @State private var keysVisible = false
     @State private var landscape = false
     @State private var creating = false
-    @State private var directory = ""
     @State private var closing = false
     @State private var selectedHistory: ChatArchive?
     @State private var revokeDevice: AccountDevice?
@@ -71,10 +70,8 @@ struct WorkspaceScreen: View {
         }
         .statusBarHidden(landscape)
         .foregroundColor(WorkspaceStyle.foreground).tint(WorkspaceStyle.accent)
-        .alert("新建会话", isPresented: $creating) {
-            TextField("Desktop 工作目录（留空使用默认）", text: $directory)
-            Button("创建") { model.create(directory); directory = ""; drawer = false }
-            Button("取消", role: .cancel) { directory = "" }
+        .sheet(isPresented: $creating) {
+            CreateTerminalSheet(model: model) { creating = false; drawer = false }
         }
         .alert("关闭当前会话？", isPresented: $closing) {
             Button("关闭会话", role: .destructive) { model.closeSelected() }
@@ -88,7 +85,10 @@ struct WorkspaceScreen: View {
             Button("退出登录", role: .destructive) { panel = nil; drawer = false; assistant.stop(); model.logout(); syncChat() }
             Button("取消", role: .cancel) {}
         }
+        .onChange(of: model.generation) { _ in creating = false }
+        .onChange(of: model.deviceID) { _ in creating = false }
         .onChange(of: model.identity) { _ in
+            creating = false
             syncChat()
             if model.username.isEmpty { keysVisible = false; panel = nil; drawer = false; selectedHistory = nil; inputVisible = false; continueScope = nil }
 
@@ -98,7 +98,7 @@ struct WorkspaceScreen: View {
             syncChat(); inputVisible = false; keysVisible = false
             if let scope, scope == continueScope { continueScope = nil; panel = .chat }
         }
-        .onChange(of: model.connected) { connected in syncChat(); if connected && panel == .devices { panel = nil } }
+        .onChange(of: model.connected) { connected in if !connected { creating = false }; syncChat(); if connected && panel == .devices { panel = nil } }
         .onChange(of: drawer) { value in if value { keysVisible = false; if !historyTab { model.refreshSessions() } } }
         .onChange(of: historyTab) { value in if !value && drawer { model.refreshSessions() } }
         .onChange(of: panel) { value in if value != .terminalHistory { model.closeHistory() }; assistant.setVisible(value == .chat, core: model.core); if value != nil { inputVisible = false; keysVisible = false } }
@@ -436,5 +436,80 @@ private struct AccountPanel: View {
                 Button(role: .destructive, action: logout) { Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right").frame(minHeight: 44) }.disabled(model.busy)
             }.padding(20)
         }
+    }
+}
+
+/// Uses the same field, row and footer hierarchy as the workspace settings.
+private struct CreateTerminalSheet: View {
+    @ObservedObject var model: TerminalModel
+    let created: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var directory = ""
+    @State private var paths: [String] = []
+    @State private var loading = true
+    @State private var loadError: String?
+    @State private var createError: String?
+    @State private var submitting = false
+    @State private var active = false
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("新建会话").font(.headline)
+                Spacer()
+                ToolButton(symbol: "xmark", label: "取消") { dismiss() }.disabled(submitting)
+            }.padding(.horizontal, 16).padding(.top, 12)
+            Divider().background(WorkspaceStyle.line)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    FieldShell(title: "工作目录", symbol: "folder") {
+                        TextField("留空使用 Desktop 默认目录", text: $directory)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .accessibilityLabel("Desktop 工作目录")
+                    }
+                    directoryRow(title: "默认目录", path: "使用 Desktop 的默认工作目录") { directory = ""; createError = nil }
+                    Text("最近使用").font(.caption).foregroundColor(WorkspaceStyle.muted)
+                    if loading { ProgressView() }
+                    else if let loadError { Text(loadError).font(.subheadline).foregroundColor(WorkspaceStyle.muted) }
+                    else if paths.isEmpty { Text("暂无最近目录，可输入目录或使用默认目录").font(.subheadline).foregroundColor(WorkspaceStyle.muted) }
+                    ForEach(paths, id: \.self) { path in
+                        directoryRow(title: (path as NSString).lastPathComponent.isEmpty ? path : (path as NSString).lastPathComponent, path: path) {
+                            directory = path; createError = nil
+                        }
+                    }
+                    if let createError { Text(createError).font(.subheadline).foregroundColor(WorkspaceStyle.danger).accessibilityIdentifier("terminal.createError") }
+                }.padding(16).disabled(submitting)
+            }
+            PrimaryButton(title: "创建", symbol: "plus", busy: submitting) {
+                submitting = true; createError = nil
+                model.create(directory) { error in
+                    guard active else { return }
+                    submitting = false
+                    if let error { createError = error } else { created() }
+                }
+            }.disabled(submitting || !model.connected).padding(16)
+        }
+        .background(WorkspaceStyle.background).foregroundColor(WorkspaceStyle.foreground).tint(WorkspaceStyle.accent)
+        .interactiveDismissDisabled(submitting)
+        .onAppear {
+            active = true
+            model.loadRecentDirectories { values, error in
+                guard active else { return }
+                paths = values; loadError = error; loading = false
+            }
+        }
+        .onDisappear { active = false }
+    }
+    private func directoryRow(title: String, path: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: "folder").foregroundColor(WorkspaceStyle.accent)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title).font(.body).foregroundColor(WorkspaceStyle.foreground)
+                    Text(path).font(.caption).foregroundColor(WorkspaceStyle.muted).multilineTextAlignment(.leading)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right").foregroundColor(WorkspaceStyle.muted)
+            }.padding(12).frame(minHeight: 64).background(WorkspaceStyle.surface)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(WorkspaceStyle.line)).cornerRadius(8)
+        }.buttonStyle(.plain).accessibilityLabel(title + ", " + path)
     }
 }

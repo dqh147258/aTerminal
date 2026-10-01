@@ -327,12 +327,45 @@ final class TerminalModel: ObservableObject {
         generation += 1; busy = accountBusy; selected = nil; hasControl = false; desktopAttached = false; sessionExited = false; connected = false; screen = nil; history = ""; historyLoading = false; status = "已断开，选择设备恢复连接"
         worker.async { [weak self] in self?.channelState.device = ""; try? self?.core.disconnect() }
     }
-    func create(_ path: String) {
-        guard connected, !busy else { return }; busy = true; let version = generation
+    func loadRecentDirectories(completion: @escaping ([String], String?) -> Void) {
+        guard connected else { completion([], "Desktop 已断开"); return }
+        let version = generation; let device = deviceID
+        worker.async { [weak self] in guard let self else { return }
+            do {
+                guard self.channelState.device == device else { return }
+                let paths = try self.core.recentDirectories()
+                DispatchQueue.main.async {
+                    guard self.generation == version, self.deviceID == device, self.connected else { return }
+                    completion(paths, nil)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    guard self.generation == version, self.deviceID == device, self.connected else { return }
+                    completion([], "最近目录读取失败，可输入目录或使用默认目录")
+                }
+            }
+        }
+    }
+    func create(_ path: String, completion: @escaping (String?) -> Void) {
+        guard connected, !busy else { completion("Desktop 当前不可用，请稍后重试"); return }
+        busy = true; let version = generation; let device = deviceID
         worker.async { [weak self] in guard let self else { return }; do {
-            let created = try self.core.createSession(cwd: path); let sessions = try self.core.sessions()
-            DispatchQueue.main.async { guard self.generation == version else { return }; self.sessions = sessions; self.sessionSnapshots[self.deviceID] = sessions; self.busy = false; self.select(created.id, control: true) }
-        } catch { self.failed(error, version: version) } }
+            guard self.channelState.device == device else { return }
+            let created = try self.core.createSession(cwd: path)
+            // Refresh failure must not prompt the user to create the same session twice.
+            let sessions = try? self.core.sessions()
+            DispatchQueue.main.async {
+                guard self.generation == version, self.deviceID == device else { return }
+                self.sessions = sessions ?? ([created] + self.sessions)
+                self.sessionSnapshots[self.deviceID] = self.sessions; self.busy = false
+                completion(nil); self.select(created.id, control: true)
+            }
+        } catch {
+            DispatchQueue.main.async {
+                guard self.generation == version, self.deviceID == device else { return }
+                self.busy = false; completion(terminalError(error))
+            }
+        } }
     }
     func closeSelected() {
         guard selected != nil, connected, !busy else { return }; busy = true; let version = generation

@@ -1,0 +1,15 @@
+{
+  "phase": "commit_authorized",
+  "plan": "doc/task/1001-recent-terminal-cwd/PLAN.md",
+  "results": "doc/task/1001-recent-terminal-cwd/RESULTS.md",
+  "handoff": "doc/task/1001-recent-terminal-cwd/HANDOFF.md",
+  "completed": [
+    "Desktop 持久化与可靠 cwd 采样",
+    "兼容 List Reply 与 mobile-core FFI",
+    "Android/iOS 最近目录创建界面",
+    "定向测试和移动端编译/类型检查"
+  ],
+  "verification": "Desktop 27 + protocol 5 + mobile-core 12 tests passed; final real cwd/default/idle-MRU test passed; local UniFFI generation, Android compileDebugKotlin and full iOS Swift typecheck passed",
+  "next": "协调者已review；按明确授权提交9个源码与必要任务文档，协调者负责Git合并及正式测试",
+  "constraints": "仅任务文件提交，subject按要求使用[未Review]，不merge；未操作现有服务/模拟器/Downloads，未改TerminalAgentWorkflowUiTest.kt"
+}

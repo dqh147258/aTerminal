@@ -606,22 +606,74 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         applyWorkspaceLayout()
     }
 
+    private var createDialog: AlertDialog? = null
+
     private fun createSession() {
+        if (createDialog?.isShowing == true) return
         if (!connected) { accountPanel(); return }
-        val cwd = field("桌面工作目录")
-        val dialog = AlertDialog.Builder(this).setTitle("新建会话").setView(column(16).apply { addView(cwd) })
+        val version = generation; val desktop = deviceId
+        val cwd = field("Desktop 工作目录（留空使用默认）")
+        val recent = column()
+        val loading = label("正在读取最近目录…", 12f, Palette.muted)
+        var submitting = false
+        val content = column(16).apply {
+            addView(label("工作目录", 14f, Palette.secondary)); gap(6); addView(cwd); gap()
+            addView(settingsRow("默认目录", "使用 Desktop 的默认工作目录", R.drawable.ic_terminal) {
+                if (!submitting) { cwd.setText(""); cwd.error = null }
+            }); gap(16)
+            addView(label("最近使用", 12f, Palette.muted)); addView(loading); addView(recent)
+        }
+        val dialog = AlertDialog.Builder(this).setTitle("新建会话").setView(scroll(content))
             .setNegativeButton("取消", null).setPositiveButton("创建", null).create()
-        dialog.setOnShowListener { dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            val path = cwd.text.toString().trim()
-            if (path.isEmpty()) { cwd.error = "请输入工作目录"; return@setOnClickListener }
-            val version = generation; dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
-            worker.execute {
-                try { if (generation == version) {
-                    val created = remote.createSession(path); val list = remote.sessions()
-                    post { if (generation == version) { dialog.dismiss(); sessions = list; select(created.id, true) } }
-                } } catch (e: Exception) { post { cwd.error = e.message; dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true } }
+        fun current() = active && dialog.isShowing && generation == version && deviceId == desktop && connected
+        createDialog = dialog
+        dialog.setOnDismissListener { if (createDialog === dialog) createDialog = null }
+        dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawable(shape(Palette.surface, true))
+            dialog.window?.setLayout(-1, (resources.displayMetrics.heightPixels * 0.8).toInt())
+            dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                if (!current() || submitting) return@setOnClickListener
+                // Keep the exact path: spaces and shell metacharacters are valid directory names.
+                val path = cwd.text.toString()
+                submitting = true; cwd.isEnabled = false; dialog.setCancelable(false)
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
+                dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isEnabled = false
+                worker.execute {
+                    try {
+                        if (generation != version || deviceId != desktop) { post { dialog.dismiss() }; return@execute }
+                        val created = remote.createSession(path)
+                        // A failed refresh must never turn successful creation into a retryable failure.
+                        val list = runCatching { remote.sessions() }.getOrNull()
+                        post { if (current()) {
+                            dialog.dismiss(); sessions = list ?: (listOf(created) + sessions); select(created.id, true)
+                        } else { dialog.dismiss() } }
+                    } catch (e: Exception) { post {
+                        if (current()) {
+                            submitting = false; cwd.isEnabled = true; cwd.error = e.message
+                            dialog.setCancelable(true)
+                            dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true
+                            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isEnabled = true
+                        } else { dialog.dismiss() }
+                    } }
+                }
             }
-        } }; dialog.show()
+            worker.execute {
+                try {
+                    if (generation != version || deviceId != desktop) return@execute
+                    val paths = remote.recentDirectories()
+                    post { if (current()) {
+                        loading.text = if (paths.isEmpty()) "暂无最近目录，可输入目录或使用默认目录" else "选择后可编辑，再点击创建"
+                        paths.forEach { path ->
+                            recent.addView(settingsRow(path.substringAfterLast('/').ifEmpty { path }, path, R.drawable.ic_terminal) {
+                                if (!submitting) { cwd.setText(path); cwd.setSelection(path.length); cwd.error = null }
+                            }); recent.settingsDivider()
+                        }
+                    } }
+                } catch (e: Exception) { post { if (current()) { loading.text = "最近目录读取失败，可输入目录或使用默认目录" } } }
+            }
+        }
+        dialog.show()
     }
     private fun closeSession(session: RemoteSession) {
         AlertDialog.Builder(this).setTitle("关闭会话？").setMessage(session.cwd + "\n终端进程将结束，AI 历史保留。")
@@ -1150,6 +1202,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         Choreographer.getInstance().postFrameCallback(this)
     }
     private fun disconnect() {
+        createDialog?.dismiss()
         terminalScrollback?.live(); terminalScrollback = null
         generation++; selected = null; currentTerminalPath = null; controlled = false; desktopAttached = false; sessionExited = false; connected = false; connecting = false; sessions = emptyList()
         sessionRefreshBusy = false

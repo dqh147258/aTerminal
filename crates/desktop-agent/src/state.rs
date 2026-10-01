@@ -193,7 +193,7 @@ fn copy_private(source: &Path, target: &Path, require_private: bool) -> Result<(
     file.sync_all()?;
     Ok(())
 }
-fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
+pub(crate) fn write_json(path: &Path, value: &impl Serialize) -> Result<()> {
     let temp = path.with_extension("tmp");
     let mut file = crate::service::open_private(&temp, false)?;
     file.set_len(0)?;

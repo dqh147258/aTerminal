@@ -179,6 +179,10 @@ pub struct Reply {
     pub history_next: u32,
     #[prost(bool, tag = "15")]
     pub history_has_more: bool,
+    /// Desktop-owned, account-scoped MRU of verified working directories.
+    /// Absent on older Desktops; only populated by List.
+    #[prost(string, repeated, tag = "16")]
+    pub recent_directories: Vec<String>,
 }
 pub fn write_message<W: Write, M: Message>(out: &mut W, message: &M) -> io::Result<()> {
     let bytes = message.encode_to_vec();
@@ -199,4 +203,37 @@ pub fn read_message<R: Read, M: Message + Default>(input: &mut R) -> io::Result<
     let mut bytes = vec![0; len];
     input.read_exact(&mut bytes)?;
     M::decode(bytes.as_slice()).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+    #[derive(Clone, PartialEq, Message)]
+    struct LegacyListReply {
+        #[prost(string, tag = "1")]
+        error: String,
+        #[prost(message, repeated, tag = "2")]
+        sessions: Vec<SessionInfo>,
+    }
+    #[test]
+    fn recent_directories_are_an_optional_list_extension() {
+        let old = LegacyListReply {
+            error: String::new(),
+            sessions: vec![SessionInfo {
+                id: "terminal".into(),
+                ..Default::default()
+            }],
+        };
+        let new = Reply::decode(old.encode_to_vec().as_slice()).unwrap();
+        assert!(new.recent_directories.is_empty());
+        assert_eq!(new.sessions, old.sessions);
+        let new = Reply {
+            recent_directories: vec!["/project space".into()],
+            ..new
+        };
+        assert_eq!(
+            LegacyListReply::decode(new.encode_to_vec().as_slice()).unwrap(),
+            old
+        );
+    }
 }
