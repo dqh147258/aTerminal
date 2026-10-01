@@ -1,0 +1,52 @@
+{
+  "result_bundle": "/Volumes/Code/My/aTerminal/build/ios-parity-fixture-retest.xcresult",
+  "metrics": {
+    "testsCount": 3
+  },
+  "tests": [
+    {
+      "name": "WorkspaceUITests/testCatalogPaginationQueryResetAndSelectionReturnsToModel()",
+      "status": "Success"
+    },
+    {
+      "name": "WorkspaceUITests/testClosedAndOfflineHistoryRemainReachableAndReadOnly()",
+      "status": "Success"
+    },
+    {
+      "name": "WorkspaceUITests/testLoginValidationAndPasswordVisibility()",
+      "status": "Success"
+    }
+  ],
+  "screenshots": [
+    {
+      "name": "fixture-06-model.png",
+      "sha256": "f612d935ce7e474c96d3188fe74d342d58e9709ddf07d381b938016523a02033",
+      "test": "WorkspaceUITests/testCatalogPaginationQueryResetAndSelectionReturnsToModel()"
+    },
+    {
+      "name": "fixture-07-model-advanced.png",
+      "sha256": "3bd12bf7ad8aca2036dc55c11f337fdc3948459958f4eac4e1eacfc358d4ca3d",
+      "test": "WorkspaceUITests/testCatalogPaginationQueryResetAndSelectionReturnsToModel()"
+    },
+    {
+      "name": "fixture-08-model-catalog.png",
+      "sha256": "6917215e2680e3bbb92bea1494018874dc56dba564724ad2210cdf96115071a3",
+      "test": "WorkspaceUITests/testCatalogPaginationQueryResetAndSelectionReturnsToModel()"
+    },
+    {
+      "name": "fixture-09-model-catalog-page-two.png",
+      "sha256": "468903f1c335943e41fab4fdbc88459d5a97a27aa1ccd43a5848599654bbc572",
+      "test": "WorkspaceUITests/testCatalogPaginationQueryResetAndSelectionReturnsToModel()"
+    },
+    {
+      "name": "fixture-17-fixture-closed-read-only.png",
+      "sha256": "94096e28da88bbfb726fdf4d55916ed07d279db02da04a5015bf83533ed8ec0a",
+      "test": "WorkspaceUITests/testClosedAndOfflineHistoryRemainReachableAndReadOnly()"
+    },
+    {
+      "name": "fixture-17-fixture-offline-read-only.png",
+      "sha256": "cb752aaaabb31585fff7c485a85c7ef5c169cb6b0a4c5a8a971c4cdb66d027d0",
+      "test": "WorkspaceUITests/testClosedAndOfflineHistoryRemainReachableAndReadOnly()"
+    }
+  ]
+}

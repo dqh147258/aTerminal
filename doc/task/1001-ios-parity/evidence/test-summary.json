@@ -1,0 +1,30 @@
+{
+  "distinct_tests": 20,
+  "all_final_results_pass": true,
+  "fixture": 17,
+  "real_rpc": 3,
+  "small_screen_passed_runs": 3,
+  "tests": {
+    "WorkspaceUITests/testAgentBodySearchFindsClosedHistory()": "Success",
+    "WorkspaceUITests/testAzureConditionAndValidationPreserveDraft()": "Success",
+    "WorkspaceUITests/testBackgroundClearsConnectionBusyAndIgnoresOldFailure()": "Success",
+    "WorkspaceUITests/testCatalogPaginationQueryResetAndSelectionReturnsToModel()": "Success",
+    "WorkspaceUITests/testClosedAndOfflineHistoryRemainReachableAndReadOnly()": "Success",
+    "WorkspaceUITests/testCurrentBindingCanReturnToInheritanceAndReadingSaveReturnsHome()": "Success",
+    "WorkspaceUITests/testDevicePanelHidesOfflineDevices()": "Success",
+    "WorkspaceUITests/testFailedSaveKeepsNonSensitiveDraftAndReleasesBusy()": "Success",
+    "WorkspaceUITests/testFixtureMcpImportDeleteConfirmationAndSkillEdit()": "Success",
+    "WorkspaceUITests/testLoginValidationAndPasswordVisibility()": "Success",
+    "WorkspaceUITests/testProviderActionsWithLargeTextKeyboardAndLandscape()": "Success",
+    "WorkspaceUITests/testReadingValidationAndExtensionCancelRoutes()": "Success",
+    "WorkspaceUITests/testSaveBusyPreventsDuplicateSubmissionAndActionsStayVisible()": "Success",
+    "WorkspaceUITests/testSessionAndGlobalDraftsStaySeparateAndReturnToList()": "Success",
+    "WorkspaceUITests/testSettingsPersistenceAndReset()": "Success",
+    "WorkspaceUITests/testSettingsSectionsReturnAndCancel()": "Success",
+    "WorkspaceUITests/testUnifiedDrawerAndIndependentGlobalEntrypoint()": "Success",
+    "LiveServiceUITests/testAttachedFixtureUnifiedWorkspaceAndSettingsRoutes()": "Success",
+    "LiveServiceUITests/testDisposableMcpAndSkillProductionFormsRoundTrip()": "Success",
+    "LiveServiceUITests/testKeyboardInAttachedFixture()": "Success"
+  },
+  "note": "Final result per scenario; initial failures and retest bundles remain separately recorded."
+}

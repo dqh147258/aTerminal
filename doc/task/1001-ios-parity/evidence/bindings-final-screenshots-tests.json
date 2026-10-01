@@ -1,0 +1,24 @@
+{
+  "result_bundle": "/Volumes/Code/My/aTerminal/build/ios-parity-bindings-final.xcresult",
+  "metrics": {
+    "testsCount": 1
+  },
+  "tests": [
+    {
+      "name": "WorkspaceUITests/testCurrentBindingCanReturnToInheritanceAndReadingSaveReturnsHome()",
+      "status": "Success"
+    }
+  ],
+  "screenshots": [
+    {
+      "name": "fixture-03-llm.png",
+      "sha256": "773cdc8f36a128f6be628fc391225c769c387410283d30928a23bdcdc381854d",
+      "test": "WorkspaceUITests/testCurrentBindingCanReturnToInheritanceAndReadingSaveReturnsHome()"
+    },
+    {
+      "name": "fixture-10-default-bindings.png",
+      "sha256": "7e938c1e5366e75f27db9b2eb33244ec330ef9ed107ac39f6f4546f6cfaf9697",
+      "test": "WorkspaceUITests/testCurrentBindingCanReturnToInheritanceAndReadingSaveReturnsHome()"
+    }
+  ]
+}

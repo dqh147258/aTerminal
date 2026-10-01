@@ -1,0 +1,17 @@
+{
+  "source_commit": "10ecef6",
+  "files": {
+    "apps/ios/aTerminal.xcodeproj/project.pbxproj": "18383bd0074fc87d5ec8a37fc0ae4d6d4a64b704b52237ce21de61f15f41df12",
+    "apps/ios/aTerminal/AgentCacheSearch.swift": "249505bcb5bacbffbd4c65aa88874ecc977fd5e6b37784aadac919423bf130b6",
+    "apps/ios/aTerminal/AgentSettingsView.swift": "5de46c2c93dd411321bd85151d6c35ecffb2d12a4c9cf817d3a2622b4f6e1d4c",
+    "apps/ios/aTerminal/AssistantModel.swift": "ff56b60ed4158a6881026862fe7b0a8f0c0489c0092b1cc3b79308d72f730be3",
+    "apps/ios/aTerminal/ChatPanel.swift": "3962f7de1eb403c994b114063a157529d454fc27202421b74c5a22a6505e6df1",
+    "apps/ios/aTerminal/ChatStore.swift": "909dc1ae5845236a8fce59448112e29323cbeaceb964b58bc492f95c0418a021",
+    "apps/ios/aTerminal/LoginScreen.swift": "c6b52d89deb15be7bcde3e9be69048f8860587d5c947043b0b9e276950f7da63",
+    "apps/ios/aTerminal/PairingStore.swift": "463e311d2e50f589f56ce9fe9a8f49162160b5b76c188c980e09ddf148007ea7",
+    "apps/ios/aTerminal/SettingsDraft.swift": "a9be1787095aedfff3cd5f8fc9a46a4adc4e519e87c4a090d3ccd0d640a2a012",
+    "apps/ios/aTerminal/WorkspaceScreen.swift": "180667ddae21c92ae2af23df56c7be783aa56125ae5410a740d745f8e1bb9e01",
+    "apps/ios/aTerminal/WorkspaceStyle.swift": "3b38bdace1fe087e19e37fa0281692095bf5065a9788fa78dac45580819b05b1",
+    "apps/ios/aTerminal/aTerminalApp.swift": "edfcba718342f955895f0cd0b9fd14aeda5300e0ed8c1148c41a4e229bbae676"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "result_bundle": "/Volumes/Code/My/aTerminal/build/ios-parity-small-final.xcresult",
+  "metrics": {
+    "testsCount": 2
+  },
+  "tests": [
+    {
+      "name": "WorkspaceUITests/testProviderActionsWithLargeTextKeyboardAndLandscape()",
+      "status": "Success"
+    },
+    {
+      "name": "WorkspaceUITests/testSaveBusyPreventsDuplicateSubmissionAndActionsStayVisible()",
+      "status": "Success"
+    }
+  ],
+  "screenshots": [
+    {
+      "name": "fixture-04-provider-large-text-keyboard.png",
+      "sha256": "eaf9414e6dfab3924dbf21d249831e11790ac7bb82b66889d92ce0acf15660e3",
+      "test": "WorkspaceUITests/testProviderActionsWithLargeTextKeyboardAndLandscape()"
+    },
+    {
+      "name": "fixture-04-provider-landscape-keyboard.png",
+      "sha256": "d9f1a88f1227e243142769c7af9763bd29bae60008f7f52c3da1ac6098d48075",
+      "test": "WorkspaceUITests/testProviderActionsWithLargeTextKeyboardAndLandscape()"
+    },
+    {
+      "name": "fixture-04-provider-saved.png",
+      "sha256": "ce9dbecfbdb2180643cf7d56e8e89af0957816416499493bf2259832b2414d32",
+      "test": "WorkspaceUITests/testSaveBusyPreventsDuplicateSubmissionAndActionsStayVisible()"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "result_bundle": "/Volumes/Code/My/aTerminal/build/ios-parity-small-labels.xcresult",
+  "metrics": {
+    "testsCount": 1
+  },
+  "tests": [
+    {
+      "name": "WorkspaceUITests/testProviderActionsWithLargeTextKeyboardAndLandscape()",
+      "status": "Success"
+    }
+  ],
+  "screenshots": [
+    {
+      "name": "fixture-04-provider-large-text-keyboard.png",
+      "sha256": "f2b2f58435100f09212cdc9e6dafe31c2f570e2fd812cedb11c28bcde9e6823c",
+      "test": "WorkspaceUITests/testProviderActionsWithLargeTextKeyboardAndLandscape()"
+    },
+    {
+      "name": "fixture-04-provider-landscape-keyboard.png",
+      "sha256": "f3a6ba712ce6c68975f431aa22072145b30260dbf01b8f41999a003388f239cb",
+      "test": "WorkspaceUITests/testProviderActionsWithLargeTextKeyboardAndLandscape()"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "result_bundle": "/Volumes/Code/My/aTerminal/build/ios-parity-live-final.xcresult",
+  "metrics": {
+    "testsCount": 3,
+    "testsFailedCount": 1
+  },
+  "tests": [
+    {
+      "name": "LiveServiceUITests/testAttachedFixtureUnifiedWorkspaceAndSettingsRoutes()",
+      "status": "Success"
+    },
+    {
+      "name": "LiveServiceUITests/testDisposableMcpAndSkillProductionFormsRoundTrip()",
+      "status": "Success"
+    },
+    {
+      "name": "LiveServiceUITests/testKeyboardInAttachedFixture()",
+      "status": "Failure"
+    }
+  ],
+  "screenshots": []
+}

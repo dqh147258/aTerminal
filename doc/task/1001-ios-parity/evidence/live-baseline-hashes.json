@@ -1,0 +1,9 @@
+{
+  "unrelated_config_sha256": "fa17cbccf532269474e4cff0b697236359b438302c9b4b95cfc13e5034676edc",
+  "resources": {
+    "assets/binary.dat": "f3a25aa93aa2fbba28d79260535bbd6a5eb0fc1c24a8b0f04e12b484c1dfe363",
+    "assets/probe.txt": "99f3861d3c49ec1eb0eab49e6c6e79ebab9a1822445a2e1d6af28f69f8c75611"
+  },
+  "ui_commit": "89fc011",
+  "simulator": "12E9EB2C-B331-4B83-9451-25797C989E2B"
+}

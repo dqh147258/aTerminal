@@ -1,0 +1,13 @@
+{
+  "result_bundle": "/Volumes/Code/My/aTerminal/build/ios-parity-keyboard-final.xcresult",
+  "metrics": {
+    "testsCount": 1
+  },
+  "tests": [
+    {
+      "name": "LiveServiceUITests/testKeyboardInAttachedFixture()",
+      "status": "Success"
+    }
+  ],
+  "screenshots": []
+}

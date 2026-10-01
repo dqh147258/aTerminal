@@ -1,0 +1,137 @@
+{
+  "data": "isolated fixture UI; real RPC results recorded separately",
+  "simulator": "iPhone 15 / iOS 17.5 / x86_64",
+  "udid": "12E9EB2C-B331-4B83-9451-25797C989E2B",
+  "source_commit": "10ecef6",
+  "pages": [
+    {
+      "file": "01-terminal.png",
+      "source_attachment": "fixture-01-terminal",
+      "run": "full",
+      "sha256": "aa74251fb68985e1f8798cf4f130e1e4f6097442dd9a1ce3f67e3f0af4f08a61"
+    },
+    {
+      "file": "02-settings.png",
+      "source_attachment": "fixture-02-settings-home",
+      "run": "full",
+      "sha256": "eac1d2456cecaba6b67440e8b5603a28d3509062de46f9c464ceaed609f0c1dd"
+    },
+    {
+      "file": "03-llm.png",
+      "source_attachment": "fixture-03-llm",
+      "run": "bindings-final-screenshots",
+      "sha256": "773cdc8f36a128f6be628fc391225c769c387410283d30928a23bdcdc381854d",
+      "source_commit": "10ecef6"
+    },
+    {
+      "file": "04-provider.png",
+      "source_attachment": "fixture-04-provider-edit",
+      "run": "labels-final-screenshots",
+      "sha256": "5a3b36248362b7eb33dd985b914465197b2398a82280529fae9c9534fe70ca07",
+      "source_commit": "3557353"
+    },
+    {
+      "file": "05-provider-azure.png",
+      "source_attachment": "fixture-05-provider-azure",
+      "run": "labels-final-screenshots",
+      "sha256": "d78a77f5104beff0f6fe46cb500557c00a9818225eba1d4a37b835ca0f6bee22",
+      "source_commit": "3557353"
+    },
+    {
+      "file": "06-model.png",
+      "source_attachment": "fixture-06-model",
+      "run": "labels-final-screenshots",
+      "sha256": "9b86df2c860d8860cbbc272e3bebebfa917bd86c7bf9386d1d6f2481573bf09d",
+      "source_commit": "3557353"
+    },
+    {
+      "file": "07-model-advanced.png",
+      "source_attachment": "fixture-07-model-advanced",
+      "run": "labels-final-screenshots",
+      "sha256": "17136ef6e5461393d7819278efffb5070a8431f513188919bd2027fc67783393",
+      "source_commit": "3557353"
+    },
+    {
+      "file": "08-model-catalog.png",
+      "source_attachment": "fixture-08-model-catalog",
+      "run": "labels-final-screenshots",
+      "sha256": "39602b55c37f2889c42858be1690120d6a0f3acbf6323eab1a642f8ff24cc14e",
+      "source_commit": "3557353"
+    },
+    {
+      "file": "09-model-catalog-page2.png",
+      "source_attachment": "fixture-09-model-catalog-page-two",
+      "run": "labels-final-screenshots",
+      "sha256": "0ecf7ed2975fa6bad9ecafcd2cdc14cae4b9e304f138d052a49ef3311a68c4f2",
+      "source_commit": "3557353"
+    },
+    {
+      "file": "10-bindings.png",
+      "source_attachment": "fixture-10-default-bindings",
+      "run": "bindings-final-screenshots",
+      "sha256": "7e938c1e5366e75f27db9b2eb33244ec330ef9ed107ac39f6f4546f6cfaf9697",
+      "source_commit": "10ecef6"
+    },
+    {
+      "file": "11-terminal-reading.png",
+      "source_attachment": "fixture-11-terminal-reading",
+      "run": "full",
+      "sha256": "aea2994e0daaa14981729f7da55dd5f928e4d5a5b0976195143697c14cbc704a"
+    },
+    {
+      "file": "12-mcp.png",
+      "source_attachment": "fixture-12-mcp-list",
+      "run": "full",
+      "sha256": "8eac867916816454ba5da3e722af8e6891110c2cfece475f3f7c2cf868d1fc94"
+    },
+    {
+      "file": "13-mcp-import.png",
+      "source_attachment": "fixture-13-mcp-import",
+      "run": "full",
+      "sha256": "f8fef3a28f9f82c38b87b510ba93b35587ba3a5d4aff90fc224d49d95bcef64c"
+    },
+    {
+      "file": "14-skills.png",
+      "source_attachment": "fixture-14-skills-list",
+      "run": "full",
+      "sha256": "e405099f5f93fcec48c70fb2e2b4e9250a15ecf59fb2ae00d4b9efaf513742be"
+    },
+    {
+      "file": "15-skill-install.png",
+      "source_attachment": "fixture-15-skill-install",
+      "run": "full",
+      "sha256": "5708cdd1dfa11a8c91ffff2fc16edcf96be0056870d21b80418b2997cfb151be"
+    },
+    {
+      "file": "16-account-devices.png",
+      "source_attachment": "fixture-16-account-devices",
+      "run": "full",
+      "sha256": "61dd0afe350c7643b9496226cc2f48bd7145a1631dfd4d57b37c0ec8605f0cd5"
+    },
+    {
+      "file": "17-workspace.png",
+      "source_attachment": "fixture-17-unified-workspace",
+      "run": "full",
+      "sha256": "355868a371a1cc26d9a03d2a986ed47442ee6d3c3426d6d8ff40e915e1cf78d7"
+    },
+    {
+      "file": "18-session-chat.png",
+      "source_attachment": "fixture-18-session-chat",
+      "run": "full",
+      "sha256": "ea8930924f91bd9ea683f58e034e906ff62aa72a54b5ecaa747194503930f46c"
+    },
+    {
+      "file": "19-global-list.png",
+      "source_attachment": "fixture-19-independent-global-list",
+      "run": "full",
+      "sha256": "e233eafe6b177d52733abe122922de6f81b08663b19f198e4a98518be0b9a98c"
+    },
+    {
+      "file": "20-global-chat.png",
+      "source_attachment": "fixture-20-global-draft-isolation",
+      "run": "full",
+      "sha256": "c1b78184ef5505ec6d775ba9aac8677ff2e34a5c42e78294cd2714999bbc8f7a"
+    }
+  ],
+  "note": "Unchanged pages retain earlier passing runs; final protocol/model/binding pages were refreshed after visible labels were added."
+}

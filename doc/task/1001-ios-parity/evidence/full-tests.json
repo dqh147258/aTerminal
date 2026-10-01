@@ -1,0 +1,224 @@
+{
+  "result_bundle": "/Volumes/Code/My/aTerminal/build/ios-parity-fixture-final.xcresult",
+  "metrics": {
+    "testsCount": 17,
+    "testsFailedCount": 3
+  },
+  "tests": [
+    {
+      "name": "WorkspaceUITests/testAgentBodySearchFindsClosedHistory()",
+      "status": "Success"
+    },
+    {
+      "name": "WorkspaceUITests/testAzureConditionAndValidationPreserveDraft()",
+      "status": "Success"
+    },
+    {
+      "name": "WorkspaceUITests/testBackgroundClearsConnectionBusyAndIgnoresOldFailure()",
+      "status": "Success"
+    },
+    {
+      "name": "WorkspaceUITests/testCatalogPaginationQueryResetAndSelectionReturnsToModel()",
+      "status": "Failure"
+    },
+    {
+      "name": "WorkspaceUITests/testClosedAndOfflineHistoryRemainReachableAndReadOnly()",
+      "status": "Failure"
+    },
+    {
+      "name": "WorkspaceUITests/testCurrentBindingCanReturnToInheritanceAndReadingSaveReturnsHome()",
+      "status": "Success"
+    },
+    {
+      "name": "WorkspaceUITests/testDevicePanelHidesOfflineDevices()",
+      "status": "Success"
+    },
+    {
+      "name": "WorkspaceUITests/testFailedSaveKeepsNonSensitiveDraftAndReleasesBusy()",
+      "status": "Success"
+    },
+    {
+      "name": "WorkspaceUITests/testFixtureMcpImportDeleteConfirmationAndSkillEdit()",
+      "status": "Success"
+    },
+    {
+      "name": "WorkspaceUITests/testLoginValidationAndPasswordVisibility()",
+      "status": "Failure"
+    },
+    {
+      "name": "WorkspaceUITests/testProviderActionsWithLargeTextKeyboardAndLandscape()",
+      "status": "Success"
+    },
+    {
+      "name": "WorkspaceUITests/testReadingValidationAndExtensionCancelRoutes()",
+      "status": "Success"
+    },
+    {
+      "name": "WorkspaceUITests/testSaveBusyPreventsDuplicateSubmissionAndActionsStayVisible()",
+      "status": "Success"
+    },
+    {
+      "name": "WorkspaceUITests/testSessionAndGlobalDraftsStaySeparateAndReturnToList()",
+      "status": "Success"
+    },
+    {
+      "name": "WorkspaceUITests/testSettingsPersistenceAndReset()",
+      "status": "Success"
+    },
+    {
+      "name": "WorkspaceUITests/testSettingsSectionsReturnAndCancel()",
+      "status": "Success"
+    },
+    {
+      "name": "WorkspaceUITests/testUnifiedDrawerAndIndependentGlobalEntrypoint()",
+      "status": "Success"
+    }
+  ],
+  "screenshots": [
+    {
+      "name": "fixture-17-agent-body-search.png",
+      "sha256": "8756ca2f190951abfef75621dd0fd0f88ecd4db840278b8d1e37693eef44b83d",
+      "test": "WorkspaceUITests/testAgentBodySearchFindsClosedHistory()"
+    },
+    {
+      "name": "fixture-04-provider-new.png",
+      "sha256": "570fb1f57f09ed245c825abcfd9e6f64dfc1b94387b8d2f68ba49041d700550e",
+      "test": "WorkspaceUITests/testAzureConditionAndValidationPreserveDraft()"
+    },
+    {
+      "name": "fixture-05-provider-azure.png",
+      "sha256": "8e97bec84112440e9cf6e2cdfdba7a94f0fd30616b63fcb56709282f60cab9be",
+      "test": "WorkspaceUITests/testAzureConditionAndValidationPreserveDraft()"
+    },
+    {
+      "name": "fixture-04-provider-edit.png",
+      "sha256": "04fb920c79045e1d0d3f7a863870c987f14f5fc16fe6d5f6ac008b5c993d84e8",
+      "test": "WorkspaceUITests/testAzureConditionAndValidationPreserveDraft()"
+    },
+    {
+      "name": "fixture-06-model.png",
+      "sha256": "f36fb6441d5d42d45851a5494e0df6be5898e7353a081d8406abceaf7a02a7e1",
+      "test": "WorkspaceUITests/testCatalogPaginationQueryResetAndSelectionReturnsToModel()"
+    },
+    {
+      "name": "fixture-input-clear-failure.png",
+      "sha256": "b00049cf96686daabf0ecb704f7444ee3c09361d297b1d9c0d1eff0a0aa83754",
+      "test": "WorkspaceUITests/testClosedAndOfflineHistoryRemainReachableAndReadOnly()"
+    },
+    {
+      "name": "fixture-03-llm.png",
+      "sha256": "94cdfe37da5def354951ea5d8057608eb242f777c1ff74af9c8445c8787ecb1a",
+      "test": "WorkspaceUITests/testCurrentBindingCanReturnToInheritanceAndReadingSaveReturnsHome()"
+    },
+    {
+      "name": "fixture-10-default-bindings.png",
+      "sha256": "3bbc5b54afc0da6a797a941b53c4bcedbc3e87babb309b082fc982e6a508bb4b",
+      "test": "WorkspaceUITests/testCurrentBindingCanReturnToInheritanceAndReadingSaveReturnsHome()"
+    },
+    {
+      "name": "fixture-04-provider-failed-draft.png",
+      "sha256": "b68a20c439a4826620ad1e99cc64ca243d71ae0736ea61f742be4d33f7b64998",
+      "test": "WorkspaceUITests/testFailedSaveKeepsNonSensitiveDraftAndReleasesBusy()"
+    },
+    {
+      "name": "fixture-12-mcp-list.png",
+      "sha256": "8eac867916816454ba5da3e722af8e6891110c2cfece475f3f7c2cf868d1fc94",
+      "test": "WorkspaceUITests/testFixtureMcpImportDeleteConfirmationAndSkillEdit()"
+    },
+    {
+      "name": "fixture-13-mcp-import.png",
+      "sha256": "f8fef3a28f9f82c38b87b510ba93b35587ba3a5d4aff90fc224d49d95bcef64c",
+      "test": "WorkspaceUITests/testFixtureMcpImportDeleteConfirmationAndSkillEdit()"
+    },
+    {
+      "name": "fixture-12-mcp-detail.png",
+      "sha256": "77585a732078834d13da19c2097931a6796d179d3cd562167349bae6d92a491a",
+      "test": "WorkspaceUITests/testFixtureMcpImportDeleteConfirmationAndSkillEdit()"
+    },
+    {
+      "name": "fixture-14-skills-list.png",
+      "sha256": "e405099f5f93fcec48c70fb2e2b4e9250a15ecf59fb2ae00d4b9efaf513742be",
+      "test": "WorkspaceUITests/testFixtureMcpImportDeleteConfirmationAndSkillEdit()"
+    },
+    {
+      "name": "fixture-14-skill-detail.png",
+      "sha256": "b4120c5c671f53ecd3997e8fb50aef80dd566cbe1a3d59d6cf60f77ca437a17e",
+      "test": "WorkspaceUITests/testFixtureMcpImportDeleteConfirmationAndSkillEdit()"
+    },
+    {
+      "name": "fixture-15-skill-editor.png",
+      "sha256": "25ab0fef5d732f3972641ccb730af6ca1ec99700200163a3b591d6651c2727e5",
+      "test": "WorkspaceUITests/testFixtureMcpImportDeleteConfirmationAndSkillEdit()"
+    },
+    {
+      "name": "fixture-input-clear-failure.png",
+      "sha256": "03d1db48c3189e8a4d5e0b644a661ece7ff42e295dda5156334aaf2c3dfadc51",
+      "test": "WorkspaceUITests/testLoginValidationAndPasswordVisibility()"
+    },
+    {
+      "name": "fixture-04-provider-large-text-keyboard.png",
+      "sha256": "6b879f7516f426c1874555394ed0faed888f9fa336dbfa6a03fd94d0b6791a19",
+      "test": "WorkspaceUITests/testProviderActionsWithLargeTextKeyboardAndLandscape()"
+    },
+    {
+      "name": "fixture-04-provider-landscape-keyboard.png",
+      "sha256": "24c4a295c132e3249519ee2dfeba3a92b609e558785bd9e46747d0da94fcf67e",
+      "test": "WorkspaceUITests/testProviderActionsWithLargeTextKeyboardAndLandscape()"
+    },
+    {
+      "name": "fixture-11-terminal-reading.png",
+      "sha256": "aea2994e0daaa14981729f7da55dd5f928e4d5a5b0976195143697c14cbc704a",
+      "test": "WorkspaceUITests/testReadingValidationAndExtensionCancelRoutes()"
+    },
+    {
+      "name": "fixture-15-skill-install.png",
+      "sha256": "5708cdd1dfa11a8c91ffff2fc16edcf96be0056870d21b80418b2997cfb151be",
+      "test": "WorkspaceUITests/testReadingValidationAndExtensionCancelRoutes()"
+    },
+    {
+      "name": "fixture-04-provider-saved.png",
+      "sha256": "39019b5adfe5cecc88cb75a2d5d75c1d4b04e409b79003c2d8d36ad9ce0ccb84",
+      "test": "WorkspaceUITests/testSaveBusyPreventsDuplicateSubmissionAndActionsStayVisible()"
+    },
+    {
+      "name": "fixture-18-session-chat.png",
+      "sha256": "ea8930924f91bd9ea683f58e034e906ff62aa72a54b5ecaa747194503930f46c",
+      "test": "WorkspaceUITests/testSessionAndGlobalDraftsStaySeparateAndReturnToList()"
+    },
+    {
+      "name": "fixture-20-global-draft-isolation.png",
+      "sha256": "c1b78184ef5505ec6d775ba9aac8677ff2e34a5c42e78294cd2714999bbc8f7a",
+      "test": "WorkspaceUITests/testSessionAndGlobalDraftsStaySeparateAndReturnToList()"
+    },
+    {
+      "name": "fixture-02-settings-restored.png",
+      "sha256": "16d9090b74e27c38a2590f598d22a0a7b8c236a337a01ae6a22a11cf3085bcef",
+      "test": "WorkspaceUITests/testSettingsPersistenceAndReset()"
+    },
+    {
+      "name": "fixture-02-settings-home.png",
+      "sha256": "eac1d2456cecaba6b67440e8b5603a28d3509062de46f9c464ceaed609f0c1dd",
+      "test": "WorkspaceUITests/testSettingsSectionsReturnAndCancel()"
+    },
+    {
+      "name": "fixture-16-account-devices.png",
+      "sha256": "61dd0afe350c7643b9496226cc2f48bd7145a1631dfd4d57b37c0ec8605f0cd5",
+      "test": "WorkspaceUITests/testSettingsSectionsReturnAndCancel()"
+    },
+    {
+      "name": "fixture-01-terminal.png",
+      "sha256": "aa74251fb68985e1f8798cf4f130e1e4f6097442dd9a1ce3f67e3f0af4f08a61",
+      "test": "WorkspaceUITests/testUnifiedDrawerAndIndependentGlobalEntrypoint()"
+    },
+    {
+      "name": "fixture-17-unified-workspace.png",
+      "sha256": "355868a371a1cc26d9a03d2a986ed47442ee6d3c3426d6d8ff40e915e1cf78d7",
+      "test": "WorkspaceUITests/testUnifiedDrawerAndIndependentGlobalEntrypoint()"
+    },
+    {
+      "name": "fixture-19-independent-global-list.png",
+      "sha256": "e233eafe6b177d52733abe122922de6f81b08663b19f198e4a98518be0b9a98c",
+      "test": "WorkspaceUITests/testUnifiedDrawerAndIndependentGlobalEntrypoint()"
+    }
+  ]
+}

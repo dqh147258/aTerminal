@@ -1,0 +1,68 @@
+{
+  "result_bundle": "/Volumes/Code/My/aTerminal/build/ios-parity-labels-final.xcresult",
+  "metrics": {
+    "testsCount": 3,
+    "testsFailedCount": 1
+  },
+  "tests": [
+    {
+      "name": "WorkspaceUITests/testAzureConditionAndValidationPreserveDraft()",
+      "status": "Success"
+    },
+    {
+      "name": "WorkspaceUITests/testCatalogPaginationQueryResetAndSelectionReturnsToModel()",
+      "status": "Success"
+    },
+    {
+      "name": "WorkspaceUITests/testCurrentBindingCanReturnToInheritanceAndReadingSaveReturnsHome()",
+      "status": "Failure"
+    }
+  ],
+  "screenshots": [
+    {
+      "name": "fixture-04-provider-new.png",
+      "sha256": "ef02f42434d94437ac023a741e0e5007bd372051637c6613dc22c2ace889ad59",
+      "test": "WorkspaceUITests/testAzureConditionAndValidationPreserveDraft()"
+    },
+    {
+      "name": "fixture-05-provider-azure.png",
+      "sha256": "d78a77f5104beff0f6fe46cb500557c00a9818225eba1d4a37b835ca0f6bee22",
+      "test": "WorkspaceUITests/testAzureConditionAndValidationPreserveDraft()"
+    },
+    {
+      "name": "fixture-04-provider-edit.png",
+      "sha256": "5a3b36248362b7eb33dd985b914465197b2398a82280529fae9c9534fe70ca07",
+      "test": "WorkspaceUITests/testAzureConditionAndValidationPreserveDraft()"
+    },
+    {
+      "name": "fixture-06-model.png",
+      "sha256": "9b86df2c860d8860cbbc272e3bebebfa917bd86c7bf9386d1d6f2481573bf09d",
+      "test": "WorkspaceUITests/testCatalogPaginationQueryResetAndSelectionReturnsToModel()"
+    },
+    {
+      "name": "fixture-07-model-advanced.png",
+      "sha256": "17136ef6e5461393d7819278efffb5070a8431f513188919bd2027fc67783393",
+      "test": "WorkspaceUITests/testCatalogPaginationQueryResetAndSelectionReturnsToModel()"
+    },
+    {
+      "name": "fixture-08-model-catalog.png",
+      "sha256": "39602b55c37f2889c42858be1690120d6a0f3acbf6323eab1a642f8ff24cc14e",
+      "test": "WorkspaceUITests/testCatalogPaginationQueryResetAndSelectionReturnsToModel()"
+    },
+    {
+      "name": "fixture-09-model-catalog-page-two.png",
+      "sha256": "0ecf7ed2975fa6bad9ecafcd2cdc14cae4b9e304f138d052a49ef3311a68c4f2",
+      "test": "WorkspaceUITests/testCatalogPaginationQueryResetAndSelectionReturnsToModel()"
+    },
+    {
+      "name": "fixture-03-llm.png",
+      "sha256": "031e41d4a48d6d2850971a1a8aec45fa920a759021f3aa124a74c2b09bbc2e78",
+      "test": "WorkspaceUITests/testCurrentBindingCanReturnToInheritanceAndReadingSaveReturnsHome()"
+    },
+    {
+      "name": "fixture-10-default-bindings.png",
+      "sha256": "d211c85b1797eaa03a6865ab7d59cd092fee56631753d5c8407826c519391182",
+      "test": "WorkspaceUITests/testCurrentBindingCanReturnToInheritanceAndReadingSaveReturnsHome()"
+    }
+  ]
+}
