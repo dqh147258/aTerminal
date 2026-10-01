@@ -1,0 +1,101 @@
+[
+  {
+    "interaction_id": "01a0f55c-b33e-773d-bd65-cb9ef240d789",
+    "update": {
+      "analysis_attempt": 1,
+      "error": "invalid_analysis_quote",
+      "record_id": "01a0f55c-b354-75bf-bfe6-e609c71e78b9",
+      "rejected_reply_record_id": "01a0f55c-cdc4-7050-9407-e13529f6822e",
+      "run_id": "01a0f55c-6337-76df-98ba-f1d86d920f45"
+    },
+    "record": {
+      "body": "{\"summary\":\"Codex reached its main interactive TUI prompt (v0.159.2) in ~/Downloads/Temp2026/Temp10/test-1001; the update banner is now informational only and the input box \\\"› Ask Codex to do anything\\\" is ready.\",\"key_quotes\":[{\"record_id\":\"01a0f55c-b354-75bf-bfe6-e609c71e78b9\",\"text\":\"  >_ OpenAI Codex (v0.159.2)\\n     ~/Downloads/Temp2026/Temp10/test-1001\"},{\"record_id\":\"01a0f55c-b354-75bf-bfe6-e609c71e78b9\",\"text\":\"› Ask Codex to do anything\"},{\"record_id\":\"01a0f55c-b354-75bf-bfe6-e609c71e78b9\",\"text\":\"│ ✨ Update available! 0.159.2 -> 0.159.3                                                             │\"}],\"facts\":[{\"claim\":\"Codex is now in its main interactive prompt, showing version v0.159.2 and the working directory ~/Downloads/Temp2026/Temp10/test-1001.\",\"evidence\":{\"record_id\":\"01a0f55c-b354-75bf-bfe6-e609c71e78b9\",\"text\":\"  >_ OpenAI Codex (v0.159.2)\\n     ~/Downloads/Temp2026/Temp10/test-1001\"},\"certainty\":\"high\"},{\"claim\":\"The interactive input box is present and empty, ready to accept a prompt.\",\"evidence\":{\"record_id\":\"01a0f55c-b354-75bf-bfe6-e609c71e78b9\",\"text\":\"› Ask Codex to do anything\"},\"certainty\":\"high\"},{\"claim\":\"The update notice is now a static banner with an optional command line, indicating the blocking update menu was dismissed without updating.\",\"evidence\":{\"record_id\":\"01a0f55c-b354-75bf-bfe6-e609c71e78b9\",\"text\":\"│ ✨ Update available! 0.159.2 -> 0.159.3                                                             │\\n│ Run sh -c 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh' to update. │\"},\"certainty\":\"high\"},{\"claim\":\"A status line shows the model, context usage and a keyboard hint including \\\"? for shortcuts\\\", confirming a live TUI session.\",\"evidence\":{\"record_id\":\"01a0f55c-b354-75bf-bfe6-e609c71e78b9\",\"text\":\"  GPT-6-Astra high · Context 100% left · 0 in · 0 out · Fast off\\n  ← for agents · ? for shortcuts                                                       ⚠ 1 warning · f2 to view\"},\"certainty\":\"high\"}],\"open_questions\":[\"Whether the \\\"1 warning\\\" indicator concerns trust or approvals is not yet known.\",\"Whether Codex will ask any approval or sandbox prompts for the requested work remains unknown until a task is submitted.\"],\"tui_lines\":[\"  Shall we turn “huh?” into “aha!”?\",\"› Ask Codex to do anything\",\"  GPT-6-Astra high · Context 100% left · 0 in · 0 out · Fast off\",\"  ← for agents · ? for shortcuts                                                       ⚠ 1 warning · f2 to view\"]}",
+      "body_hash": "c72934071db311b79b91a1b8061ac75de580e926f6aacce4157a032927f5605b",
+      "chunk_hash": "c72934071db311b79b91a1b8061ac75de580e926f6aacce4157a032927f5605b",
+      "cursor": null,
+      "encoding": "utf8",
+      "kind": "associated_text",
+      "metadata": {
+        "analysis_attempt": 1,
+        "error": "invalid_analysis_quote",
+        "history_unit_id": "01a0f55c-b33e-773d-bd65-cb9ef240d789",
+        "record_id": "01a0f55c-b354-75bf-bfe6-e609c71e78b9",
+        "reply_bytes": 2547,
+        "reply_truncated": false,
+        "run_id": "01a0f55c-6337-76df-98ba-f1d86d920f45",
+        "source": "analysis_attempt",
+        "tools": null
+      },
+      "offset": 0,
+      "partial": false,
+      "record_id": "01a0f55c-cdc4-7050-9407-e13529f6822e",
+      "total_bytes": 2547
+    }
+  },
+  {
+    "interaction_id": "01a0f55c-b33e-773d-bd65-cb9ef240d789",
+    "update": {
+      "analysis_attempt": 2,
+      "error": "unverified_analysis_evidence",
+      "record_id": "01a0f55c-b354-75bf-bfe6-e609c71e78b9",
+      "rejected_reply_record_id": "01a0f55c-dfbc-76c6-8a9f-557ac778d3e9",
+      "run_id": "01a0f55c-6337-76df-98ba-f1d86d920f45"
+    },
+    "record": {
+      "body": "{\"summary\":\"Codex reached its main interactive TUI prompt (v0.159.2) in ~/Downloads/Temp2026/Temp10/test-1001; the update banner is now informational only and the empty input box \\\"› Ask Codex to do anything\\\" is ready.\",\"key_quotes\":[{\"record_id\":\"01a0f55c-b354-75bf-bfe6-e609c71e78b9\",\"text\":\"  >_ OpenAI Codex (v0.159.2)\\n     ~/Downloads/Temp2026/Temp10/test-1001\"},{\"record_id\":\"01a0f55c-b354-75bf-bfe6-e609c71e78b9\",\"text\":\"› Ask Codex to do anything\"},{\"record_id\":\"01a0f55c-b354-75bf-bfe6-e609c71e78b9\",\"text\":\" Shall we turn “huh?” into “aha!”?\"}],\"facts\":[{\"claim\":\"Codex is in its main interactive prompt, showing version v0.159.2 and the working directory ~/Downloads/Temp2026/Temp10/test-1001.\",\"evidence\":{\"record_id\":\"01a0f55c-b354-75bf-bfe6-e609c71e78b9\",\"text\":\"  >_ OpenAI Codex (v0.159.2)\\n     ~/Downloads/Temp2026/Temp10/test-1001\"},\"certainty\":\"high\"},{\"claim\":\"The interactive input box is present and empty, ready to accept a prompt.\",\"evidence\":{\"record_id\":\"01a0f55c-b354-75bf-bfe6-e609c71e78b9\",\"text\":\"› Ask Codex to do anything\"},\"certainty\":\"high\"},{\"claim\":\"An informational update banner is still displayed at the top of the Codex screen, showing that the blocking update menu was dismissed.\",\"evidence\":{\"record_id\":\"01a0f55c-b354-75bf-bfe6-e609c71e78b9\",\"text\":\"╭─────────────────────────────────────────────────────────────────────────────────────────────────────╮\\n│ ✨ Update available! 0.159.2 -> 0.159.3                                                             │\\n│ Run sh -c 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh' to update. │\"},\"certainty\":\"high\"},{\"claim\":\"Codex shows its marketing tagline line above the prompt area, part of its startup splash.\",\"evidence\":{\"record_id\":\"01a0f55c-b354-75bf-bfe6-e609c71e78b9\",\"text\":\"  Shall we turn “huh?” into “aha!”?\"},\"certainty\":\"high\"}],\"open_questions\":[\"Whether the \\\"1 warning\\\" indicator concerns trust or approvals is not yet known.\",\"Whether Codex will raise any approval or directory-trust prompt for the requested work remains unknown until a task is submitted.\"],\"tui_lines\":[\"› Ask Codex to do anything\",\"  Shall we turn “huh?” into “aha!”?\"]}",
+      "body_hash": "1414e51d309e2eb32c108c22a48cb2f9260b04eecfc02df742531e7cc2c8fa1a",
+      "chunk_hash": "1414e51d309e2eb32c108c22a48cb2f9260b04eecfc02df742531e7cc2c8fa1a",
+      "cursor": null,
+      "encoding": "utf8",
+      "kind": "associated_text",
+      "metadata": {
+        "analysis_attempt": 2,
+        "error": "unverified_analysis_evidence",
+        "history_unit_id": "01a0f55c-b33e-773d-bd65-cb9ef240d789",
+        "record_id": "01a0f55c-b354-75bf-bfe6-e609c71e78b9",
+        "reply_bytes": 2426,
+        "reply_truncated": false,
+        "run_id": "01a0f55c-6337-76df-98ba-f1d86d920f45",
+        "source": "analysis_attempt",
+        "tools": null
+      },
+      "offset": 0,
+      "partial": false,
+      "record_id": "01a0f55c-dfbc-76c6-8a9f-557ac778d3e9",
+      "total_bytes": 2426
+    }
+  },
+  {
+    "interaction_id": "01a0f557-743a-779a-ab50-5ec95c853d01",
+    "update": {
+      "analysis_attempt": 1,
+      "error": "unverified_analysis_evidence",
+      "record_id": "01a0f557-7450-72c5-998a-04ea432c1078",
+      "rejected_reply_record_id": "01a0f557-852d-7715-9bdb-a342fe974321",
+      "run_id": "01a0f557-5fb1-748a-8081-c2bf891560dd"
+    },
+    "record": {
+      "body": "{\"summary\":\"Terminal screen shows a single zsh prompt line \\\"carl@Carls-Mac-Pro test-1001 %\\\" at the top, followed by 37 blank lines; no command output, no TUI application visible yet.\",\"key_quotes\":[{\"record_id\":\"01a0f557-7450-72c5-998a-04ea432c1078\",\"text\":\"carl@Carls-Mac-Pro test-1001 %\"}],\"facts\":[{\"claim\":\"The terminal currently displays an idle zsh shell prompt for host/directory test-1001.\",\"evidence\":{\"record_id\":\"01a0f557-7450-72c5-998a-04ea432c1078\",\"text\":\"carl@Carls-Mac-Pro test-1001 %\"},\"certainty\":\"high\"},{\"claim\":\"No command output or application interface is visible; the rest of the 38-line screen is blank.\",\"evidence\":{\"record_id\":\"01a0f557-7450-72c5-998a-04ea432c1078\",\"text\":\"carl@Carls-Mac-Pro test-1001 %\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\"},\"certainty\":\"medium\"}],\"open_questions\":[\"Whether Codex is installed and on PATH is not yet known from this screen.\",\"Whether any prior command was run earlier in this session cannot be determined from the visible screen, since the empty prompt shows no scrollback history here.\"],\"tui_lines\":[]}",
+      "body_hash": "8ac6757ae4cc20e09c521a9960d050d2da7d7ed8de27ff252702220054047c17",
+      "chunk_hash": "8ac6757ae4cc20e09c521a9960d050d2da7d7ed8de27ff252702220054047c17",
+      "cursor": null,
+      "encoding": "utf8",
+      "kind": "associated_text",
+      "metadata": {
+        "analysis_attempt": 1,
+        "error": "unverified_analysis_evidence",
+        "history_unit_id": "01a0f557-743a-779a-ab50-5ec95c853d01",
+        "record_id": "01a0f557-7450-72c5-998a-04ea432c1078",
+        "reply_bytes": 1112,
+        "reply_truncated": false,
+        "run_id": "01a0f557-5fb1-748a-8081-c2bf891560dd",
+        "source": "analysis_attempt",
+        "tools": null
+      },
+      "offset": 0,
+      "partial": false,
+      "record_id": "01a0f557-852d-7715-9bdb-a342fe974321",
+      "total_bytes": 1112
+    }
+  }
+]

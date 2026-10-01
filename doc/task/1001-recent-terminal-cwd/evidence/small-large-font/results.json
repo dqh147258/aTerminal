@@ -1,0 +1,78 @@
+{
+  "passed": true,
+  "real_encrypted_rpc": true,
+  "valid_directory": "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+  "invalid_directory": "\/Volumes\/Code\/My\/aTerminal\/.local\/interactive-pelican\/expired directory",
+  "timeout_seconds": 180,
+  "sessions_before": [
+    "bb62538b3469573d"
+  ],
+  "layout_normal": {
+    "visible_height": 1158,
+    "dialog_height": 1158,
+    "create_bounds": "[568,1128][696,1224]",
+    "cancel_bounds": "[440,1128][568,1224]"
+  },
+  "layout_ime": {
+    "visible_height": 608,
+    "dialog_height": 592,
+    "create_bounds": "[568,570][696,666]",
+    "cancel_bounds": "[440,570][568,666]"
+  },
+  "layout_after_ime": {
+    "visible_height": 1158,
+    "expected_visible_height": 1158,
+    "dialog_height": 1142,
+    "ime_visible": false,
+    "content_height": 1075
+  },
+  "directory_error": "reason=working directory is unavailable",
+  "invalid_rejected_without_session": true,
+  "layout_rejected": {
+    "visible_height": 1158,
+    "dialog_height": 1142,
+    "create_bounds": "[568,1120][696,1216]",
+    "cancel_bounds": "[440,1120][568,1216]"
+  },
+  "creation_1": {
+    "session": "c7caab3e16b7604d",
+    "cwd": "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+    "observed_cwd": "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+    "mru": [
+      "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+      "\/Volumes\/Code\/My\/aTerminal\/.local\/interactive-pelican\/expired directory"
+    ]
+  },
+  "creation_2": {
+    "session": "03e5e99f67b4fa5b",
+    "cwd": "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+    "observed_cwd": "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+    "mru": [
+      "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+      "\/Volumes\/Code\/My\/aTerminal\/.local\/interactive-pelican\/expired directory"
+    ]
+  },
+  "cancel_without_session": true,
+  "unclaimed_new_session_ids": [],
+  "account_identity_preserved": true,
+  "existing_sessions_preserved": true,
+  "closed_test_sessions": [
+    "c7caab3e16b7604d",
+    "03e5e99f67b4fa5b"
+  ],
+  "sessions_after": [
+    "bb62538b3469573d"
+  ],
+  "elapsed_ms": 13363,
+  "screenshots": [
+    "recent-directory-normal.png",
+    "recent-directory-ime.png",
+    "recent-directory-invalid-selected.png",
+    "recent-directory-rejected.png",
+    "recent-directory-selected-1.png",
+    "recent-directory-success-1.png",
+    "recent-directory-selected-2.png",
+    "recent-directory-success-2.png",
+    "recent-directory-cancel-prepared.png"
+  ]
+}

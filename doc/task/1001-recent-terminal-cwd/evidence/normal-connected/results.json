@@ -1,0 +1,22 @@
+{
+  "passed": false,
+  "real_encrypted_rpc": true,
+  "valid_directory": "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+  "invalid_directory": "\/Volumes\/Code\/My\/aTerminal\/.local\/interactive-pelican\/expired directory",
+  "timeout_seconds": 180,
+  "sessions_before": [
+    "48bba8d122c75dca"
+  ],
+  "unclaimed_new_session_ids": [],
+  "account_identity_preserved": true,
+  "existing_sessions_preserved": true,
+  "closed_test_sessions": [],
+  "sessions_after": [
+    "48bba8d122c75dca"
+  ],
+  "error": "java.lang.IllegalArgumentException: List has more than one element.",
+  "elapsed_ms": 8401,
+  "screenshots": [
+    "recent-directory-failed.png"
+  ]
+}

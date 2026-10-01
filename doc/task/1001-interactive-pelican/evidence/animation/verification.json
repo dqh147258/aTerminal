@@ -1,0 +1,14 @@
+{
+  "passed": true,
+  "changed_pixels": 4190,
+  "size": [
+    896,
+    836
+  ],
+  "frames": [
+    "frame-1.png",
+    "frame-2.png"
+  ],
+  "character_program": "/Users/carl/Downloads/Temp2026/Temp10/test-1001/pelican_bike.py",
+  "sha256": "b812a83a12be7a25457f8f31066830df25caea0def003810bfc1a86e3ae57826"
+}

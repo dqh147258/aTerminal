@@ -1,0 +1,65 @@
+{
+  "passed": false,
+  "session": "18f339c083bd6a0e",
+  "expected_model": "stealth\/space-bunny-alpha",
+  "timeout_seconds": 1800,
+  "codex_mode": "interactive",
+  "diagnostic_grace_seconds": 30,
+  "configuration_revision": 20,
+  "model_profile_id": "openrouter-space-bunny",
+  "actual_model": "stealth\/space-bunny-alpha",
+  "state_before": {
+    "agent_id": "01a0f53a-7f93-75f1-9f7c-c4ec538db89d",
+    "available": true,
+    "config_revision": 20,
+    "error": "observation_analysis_pending",
+    "history_generation": 0,
+    "last_event_sequence": 530,
+    "live_text": "",
+    "queued_messages": 0,
+    "root_user_message_id": "01a0f543-6e92-708c-93bc-3aafd94ba0b4",
+    "run_id": "01a0f543-6e92-708c-93bc-3ab0a16ae8dd",
+    "state": "paused"
+  },
+  "state": {
+    "agent_id": "01a0f53a-7f93-75f1-9f7c-c4ec538db89d",
+    "available": true,
+    "config_revision": 20,
+    "error": "observation_analysis_pending",
+    "history_generation": 0,
+    "last_event_sequence": 531,
+    "live_text": "",
+    "queued_messages": 0,
+    "root_user_message_id": "01a0f547-3940-70c9-89d3-6dc744b6bdd5",
+    "run_id": "01a0f547-3940-70c9-89d3-6dc8c840a9a4",
+    "state": "paused"
+  },
+  "run_id": "01a0f547-3940-70c9-89d3-6dc8c840a9a4",
+  "root_user_message_id": "01a0f547-3940-70c9-89d3-6dc744b6bdd5",
+  "error": "java.lang.AssertionError: Run paused: observation_analysis_pending",
+  "history": [
+    {
+      "created_at": 1790821480768,
+      "id": "01a0f547-3940-70c9-89d3-6dc744b6bdd5",
+      "kind": "user",
+      "root_user_message_id": "01a0f547-3940-70c9-89d3-6dc744b6bdd5",
+      "sequence": 531,
+      "value": {
+        "message": "继续上一条任务。当前Codex交互界面已经启动，目录信任已完成；不要重复启动Codex。先恢复失败的终端观察分析：只返回可由原始正文逐字支持的JSON，允许key_quotes和facts为空，tui_lines只列原文完整行或空数组，不能杜撰或引用元数据。恢复后向当前Codex输入并提交制作字符鹈鹕骑自行车动画的任务，等待文件完成，退出Codex并在这个Terminal运行动画，保持播放。不得使用codex exec。"
+      }
+    }
+  ],
+  "evidence_collection_complete": true,
+  "tool_calls": [],
+  "terminal_observations": [],
+  "submitted_message_found": true,
+  "pure_wait_verified": false,
+  "verified_codex_launch": null,
+  "account_identity_preserved": true,
+  "elapsed_ms": 15362,
+  "screenshots": [
+    "terminal-agent-workflow-prepared.png",
+    "terminal-agent-workflow-submitted.png",
+    "terminal-agent-workflow-failed.png"
+  ]
+}

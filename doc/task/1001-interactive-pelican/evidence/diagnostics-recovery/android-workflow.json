@@ -1,0 +1,412 @@
+{
+  "passed": false,
+  "session": "48bba8d122c75dca",
+  "expected_model": "stealth\/space-bunny-alpha",
+  "timeout_seconds": 1800,
+  "codex_mode": "interactive",
+  "diagnostic_grace_seconds": 30,
+  "configuration_revision": 20,
+  "model_profile_id": "openrouter-space-bunny",
+  "actual_model": "stealth\/space-bunny-alpha",
+  "state_before": {
+    "agent_id": "01a0f556-c269-7324-ba85-8f8aa880f3b7",
+    "available": true,
+    "config_revision": 20,
+    "error": "manual_input_preempted_agent",
+    "history_generation": 0,
+    "last_event_sequence": 569,
+    "live_text": "",
+    "queued_messages": 0,
+    "root_user_message_id": "01a0f557-5fb1-748a-8081-c2bedd18e0b5",
+    "run_id": "01a0f557-5fb1-748a-8081-c2bf891560dd",
+    "state": "cancelled"
+  },
+  "state": {
+    "agent_id": "01a0f556-c269-7324-ba85-8f8aa880f3b7",
+    "available": true,
+    "config_revision": 20,
+    "error": "observation_analysis_pending",
+    "history_generation": 0,
+    "last_event_sequence": 592,
+    "live_text": "",
+    "queued_messages": 0,
+    "root_user_message_id": "01a0f55c-6337-76df-98ba-f1d746016651",
+    "run_id": "01a0f55c-6337-76df-98ba-f1d86d920f45",
+    "state": "paused"
+  },
+  "run_id": "01a0f55c-6337-76df-98ba-f1d86d920f45",
+  "root_user_message_id": "01a0f55c-6337-76df-98ba-f1d746016651",
+  "error": "java.lang.AssertionError: Run paused: observation_analysis_pending",
+  "history": [
+    {
+      "created_at": 1790822899644,
+      "id": "01a0f55c-b33e-773d-bd65-cb9ef240d789",
+      "kind": "interaction",
+      "root_user_message_id": "01a0f55c-6337-76df-98ba-f1d746016651",
+      "sequence": 588,
+      "value": {
+        "records": [
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f55c-b349-707c-815d-21053e9fc347",
+            "source": "tool_call"
+          },
+          {
+            "kind": "text",
+            "record_id": "01a0f55c-b354-75bf-bfe6-e609c71e78b9",
+            "source": null
+          },
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f55c-cdc4-7050-9407-e13529f6822e",
+            "source": "analysis_attempt"
+          },
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f55c-dfbc-76c6-8a9f-557ac778d3e9",
+            "source": "analysis_attempt"
+          }
+        ],
+        "text": "",
+        "tools": [
+          {
+            "action_id": "01a0f55c-b33e-773d-bd65-cb9ffbe10078",
+            "name": "read_terminal"
+          }
+        ],
+        "updates": [
+          {
+            "call_record_id": "01a0f55c-b349-707c-815d-21053e9fc347",
+            "name": "read_terminal"
+          },
+          {
+            "record_id": "01a0f55c-b354-75bf-bfe6-e609c71e78b9",
+            "state": "analyzing",
+            "tool_count": 1
+          },
+          {
+            "analysis_attempt": 1,
+            "error": "invalid_analysis_quote",
+            "record_id": "01a0f55c-b354-75bf-bfe6-e609c71e78b9",
+            "rejected_reply_record_id": "01a0f55c-cdc4-7050-9407-e13529f6822e",
+            "run_id": "01a0f55c-6337-76df-98ba-f1d86d920f45"
+          },
+          {
+            "analysis_attempt": 2,
+            "error": "unverified_analysis_evidence",
+            "record_id": "01a0f55c-b354-75bf-bfe6-e609c71e78b9",
+            "rejected_reply_record_id": "01a0f55c-dfbc-76c6-8a9f-557ac778d3e9",
+            "run_id": "01a0f55c-6337-76df-98ba-f1d86d920f45"
+          }
+        ]
+      }
+    },
+    {
+      "created_at": 1790822886425,
+      "id": "01a0f55c-987b-714f-a570-b6a755f8d605",
+      "kind": "interaction",
+      "root_user_message_id": "01a0f55c-6337-76df-98ba-f1d746016651",
+      "sequence": 584,
+      "value": {
+        "records": [
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f55c-9884-7357-8a4f-dff9416091c9",
+            "source": "tool_call"
+          },
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f55c-ac12-7610-b0d2-56a91c67c8c1",
+            "source": "tool_result"
+          }
+        ],
+        "text": "",
+        "tools": [
+          {
+            "action_id": "01a0f55c-987b-714f-a570-b6a8591b70e3",
+            "name": "wait"
+          }
+        ],
+        "updates": [
+          {
+            "call_record_id": "01a0f55c-9884-7357-8a4f-dff9416091c9",
+            "name": "wait"
+          },
+          {
+            "name": "wait",
+            "result_record_id": "01a0f55c-ac12-7610-b0d2-56a91c67c8c1"
+          },
+          {
+            "record_id": null,
+            "state": "finished",
+            "tool_count": 1
+          }
+        ]
+      }
+    },
+    {
+      "created_at": 1790822879983,
+      "id": "01a0f55c-92e0-7052-b842-f635f821c1c4",
+      "kind": "interaction",
+      "root_user_message_id": "01a0f55c-6337-76df-98ba-f1d746016651",
+      "sequence": 580,
+      "value": {
+        "records": [
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f55c-92eb-72e2-bb4c-c15b24639380",
+            "source": "tool_call"
+          },
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f55c-92ee-760b-960e-35342d1994f4",
+            "source": "tool_result"
+          }
+        ],
+        "text": "",
+        "tools": [
+          {
+            "action_id": "01a0f55c-92e0-7052-b842-f6368d9d10ae",
+            "name": "input_text"
+          }
+        ],
+        "updates": [
+          {
+            "call_record_id": "01a0f55c-92eb-72e2-bb4c-c15b24639380",
+            "name": "input_text"
+          },
+          {
+            "name": "input_text",
+            "result_record_id": "01a0f55c-92ee-760b-960e-35342d1994f4"
+          },
+          {
+            "record_id": null,
+            "state": "finished",
+            "tool_count": 1
+          }
+        ]
+      }
+    },
+    {
+      "created_at": 1790822878030,
+      "id": "01a0f55c-8b3b-7057-95c2-933c66307e51",
+      "kind": "interaction",
+      "root_user_message_id": "01a0f55c-6337-76df-98ba-f1d746016651",
+      "sequence": 576,
+      "value": {
+        "records": [
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f55c-8b47-7303-be0d-5177930cc5a1",
+            "source": "tool_call"
+          },
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f55c-8b4c-7121-88af-3773fc3b6114",
+            "source": "tool_result"
+          }
+        ],
+        "text": "Selection confirmed on \"2. Skip\". Now confirming with Enter.",
+        "tools": [
+          {
+            "action_id": "01a0f55c-8b3b-7057-95c2-933d47684f79",
+            "name": "send_keys"
+          }
+        ],
+        "updates": [
+          {
+            "call_record_id": "01a0f55c-8b47-7303-be0d-5177930cc5a1",
+            "name": "send_keys"
+          },
+          {
+            "name": "send_keys",
+            "result_record_id": "01a0f55c-8b4c-7121-88af-3773fc3b6114"
+          },
+          {
+            "record_id": null,
+            "state": "finished",
+            "tool_count": 1
+          }
+        ]
+      }
+    },
+    {
+      "created_at": 1790822875007,
+      "id": "01a0f55c-6e9b-772d-a76b-e6159b1abc87",
+      "kind": "interaction",
+      "root_user_message_id": "01a0f55c-6337-76df-98ba-f1d746016651",
+      "sequence": 571,
+      "value": {
+        "records": [
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f55c-6ea3-746a-8f6a-9b17f8617bb4",
+            "source": "tool_call"
+          },
+          {
+            "kind": "text",
+            "record_id": "01a0f55c-6eaa-709e-a431-f84366a0cb29",
+            "source": null
+          }
+        ],
+        "text": "I'll read the menu state back before confirming.",
+        "tools": [
+          {
+            "action_id": "01a0f55c-6e9b-772d-a76b-e61607110f37",
+            "name": "read_terminal"
+          }
+        ],
+        "updates": [
+          {
+            "call_record_id": "01a0f55c-6ea3-746a-8f6a-9b17f8617bb4",
+            "name": "read_terminal"
+          },
+          {
+            "record_id": "01a0f55c-6eaa-709e-a431-f84366a0cb29",
+            "state": "analyzing",
+            "tool_count": 1
+          },
+          {
+            "record_id": "01a0f55c-6eaa-709e-a431-f84366a0cb29",
+            "state": "analyzed",
+            "summary": "Codex update menu is still shown with the selection marker moved from option 1 to \"› 2. Skip\"; no update has been executed yet."
+          }
+        ]
+      }
+    },
+    {
+      "created_at": 1790822867767,
+      "id": "01a0f55c-6337-76df-98ba-f1d746016651",
+      "kind": "user",
+      "root_user_message_id": "01a0f55c-6337-76df-98ba-f1d746016651",
+      "sequence": 570,
+      "value": {
+        "message": "继续刚才被manual_input_preempted_agent取消的任务，这条用户消息重新授权本次操作。Codex已经在当前Terminal运行，更新菜单已经选到Skip；不要重启Codex、不要更新软件。回读菜单后使用enter确认Skip，进入交互界面，提交制作和验证字符鹈鹕骑自行车动画的要求，完成后退出Codex并在这个Terminal运行动画、保持播放。禁止codex exec。"
+      }
+    }
+  ],
+  "evidence_collection_complete": true,
+  "tool_calls": [
+    {
+      "record_id": "01a0f55c-b349-707c-815d-21053e9fc347",
+      "interaction_id": "01a0f55c-b33e-773d-bd65-cb9ef240d789",
+      "call": {
+        "arguments": {
+          "max_lines": 60,
+          "mode": "screen",
+          "session_id": "48bba8d122c75dca"
+        },
+        "name": "read_terminal"
+      },
+      "call_body": "{\"arguments\":{\"max_lines\":60,\"mode\":\"screen\",\"session_id\":\"48bba8d122c75dca\"},\"name\":\"read_terminal\"}",
+      "sequence": 588,
+      "position": 0
+    },
+    {
+      "record_id": "01a0f55c-9884-7357-8a4f-dff9416091c9",
+      "interaction_id": "01a0f55c-987b-714f-a570-b6a755f8d605",
+      "call": {
+        "arguments": {
+          "duration_ms": 5000
+        },
+        "name": "wait"
+      },
+      "call_body": "{\"arguments\":{\"duration_ms\":5000},\"name\":\"wait\"}",
+      "sequence": 584,
+      "position": 0,
+      "result_record_id": "01a0f55c-ac12-7610-b0d2-56a91c67c8c1",
+      "result": {
+        "elapsed_ms": 5002
+      },
+      "result_body": "{\"elapsed_ms\":5002}",
+      "result_position": 1
+    },
+    {
+      "record_id": "01a0f55c-92eb-72e2-bb4c-c15b24639380",
+      "interaction_id": "01a0f55c-92e0-7052-b842-f635f821c1c4",
+      "call": {
+        "arguments": {
+          "session_id": "48bba8d122c75dca",
+          "submit": true,
+          "text": ""
+        },
+        "name": "input_text"
+      },
+      "call_body": "{\"arguments\":{\"session_id\":\"48bba8d122c75dca\",\"submit\":true,\"text\":\"\"},\"name\":\"input_text\"}",
+      "sequence": 580,
+      "position": 0,
+      "result_record_id": "01a0f55c-92ee-760b-960e-35342d1994f4",
+      "result": {
+        "accepted": true,
+        "command_completion": "unknown",
+        "session_id": "48bba8d122c75dca"
+      },
+      "result_body": "{\"accepted\":true,\"command_completion\":\"unknown\",\"session_id\":\"48bba8d122c75dca\"}",
+      "result_position": 1
+    },
+    {
+      "record_id": "01a0f55c-8b47-7303-be0d-5177930cc5a1",
+      "interaction_id": "01a0f55c-8b3b-7057-95c2-933c66307e51",
+      "call": {
+        "arguments": {
+          "key": "return",
+          "session_id": "48bba8d122c75dca"
+        },
+        "name": "send_keys"
+      },
+      "call_body": "{\"arguments\":{\"key\":\"return\",\"session_id\":\"48bba8d122c75dca\"},\"name\":\"send_keys\"}",
+      "sequence": 576,
+      "position": 0,
+      "result_record_id": "01a0f55c-8b4c-7121-88af-3773fc3b6114",
+      "result": {
+        "error": "unsupported_key",
+        "executed": false
+      },
+      "result_body": "{\"error\":\"unsupported_key\",\"executed\":false}",
+      "result_position": 1
+    },
+    {
+      "record_id": "01a0f55c-6ea3-746a-8f6a-9b17f8617bb4",
+      "interaction_id": "01a0f55c-6e9b-772d-a76b-e6159b1abc87",
+      "call": {
+        "arguments": {
+          "max_lines": 60,
+          "mode": "screen",
+          "session_id": "48bba8d122c75dca"
+        },
+        "name": "read_terminal"
+      },
+      "call_body": "{\"arguments\":{\"max_lines\":60,\"mode\":\"screen\",\"session_id\":\"48bba8d122c75dca\"},\"name\":\"read_terminal\"}",
+      "sequence": 571,
+      "position": 0
+    }
+  ],
+  "terminal_observations": [
+    {
+      "record_id": "01a0f55c-b354-75bf-bfe6-e609c71e78b9",
+      "interaction_id": "01a0f55c-b33e-773d-bd65-cb9ef240d789",
+      "call_record_id": "01a0f55c-b349-707c-815d-21053e9fc347",
+      "sequence": 588,
+      "position": 1,
+      "body": "╭─────────────────────────────────────────────────────────────────────────────────────────────────────╮\n│ ✨ Update available! 0.159.2 -> 0.159.3                                                             │\n│ Run sh -c 'curl -fsSL https:\/\/chatgpt.com\/codex\/install.sh | CODEX_NON_INTERACTIVE=1 sh' to update. │\n│                                                                                                     │\n│ See full release notes:                                                                             │\n│ https:\/\/github.com\/openai\/codex\/releases\/latest                                                     │\n╰─────────────────────────────────────────────────────────────────────────────────────────────────────╯\n\n\n  >_ OpenAI Codex (v0.159.2)\n     ~\/Downloads\/Temp2026\/Temp10\/test-1001\n\n  Shall we turn “huh?” into “aha!”?\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n› Ask Codex to do anything\n\n  GPT-6-Astra high · Context 100% left · 0 in · 0 out · Fast off\n  ← for agents · ? for shortcuts                                                       ⚠ 1 warning · f2 to view"
+    },
+    {
+      "record_id": "01a0f55c-6eaa-709e-a431-f84366a0cb29",
+      "interaction_id": "01a0f55c-6e9b-772d-a76b-e6159b1abc87",
+      "call_record_id": "01a0f55c-6ea3-746a-8f6a-9b17f8617bb4",
+      "sequence": 571,
+      "position": 1,
+      "body": "\n  Update available · 0.159.2 → 0.159.3\n  Release notes: https:\/\/github.com\/openai\/codex\/releases\/latest\n\n  1. Update now (runs `sh -c 'curl -fsSL https:\/\/chatgpt.com\/codex\/install.sh | CODEX_NON_INTERACTIVE=1 sh'`)\n› 2. Skip\n  3. Skip until next version\n\n  enter continue · esc skip\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    }
+  ],
+  "submitted_message_found": true,
+  "pure_wait_verified": true,
+  "verified_codex_launch": null,
+  "account_identity_preserved": true,
+  "elapsed_ms": 39080,
+  "screenshots": [
+    "terminal-agent-workflow-prepared.png",
+    "terminal-agent-workflow-submitted.png",
+    "terminal-agent-workflow-failed.png"
+  ]
+}

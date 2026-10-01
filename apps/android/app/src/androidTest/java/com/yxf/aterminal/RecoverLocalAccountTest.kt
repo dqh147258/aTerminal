@@ -61,7 +61,7 @@ class RecoverLocalAccountTest {
         assertEquals("Recovery must preserve the exact device ID", originalDevice, renewed.getString("device_id"))
         assertEquals(tokens.getString("username"), renewed.getString("username"))
         saved.put("tokens", renewed)
-        assertEquals(originalIdentity, saved.getJSONObject("identity").toString())
+        assertTrue("Recovery must preserve the saved device key", originalIdentity == saved.getJSONObject("identity").toString())
         store.save(saved.toString())
         File(context.filesDir, "local-device-recovery-results.json").writeText(JSONObject()
             .put("passed", true).put("device_id", originalDevice).put("identity_preserved", true)

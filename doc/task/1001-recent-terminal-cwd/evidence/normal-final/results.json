@@ -1,0 +1,29 @@
+{
+  "passed": false,
+  "real_encrypted_rpc": true,
+  "valid_directory": "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+  "invalid_directory": "\/Volumes\/Code\/My\/aTerminal\/.local\/interactive-pelican\/expired directory",
+  "timeout_seconds": 180,
+  "sessions_before": [
+    "48bba8d122c75dca"
+  ],
+  "layout_normal": {
+    "visible_height": 2138,
+    "dialog_height": 1571,
+    "create_bounds": "[871,1830][1047,1979]",
+    "cancel_bounds": "[695,1830][871,1979]"
+  },
+  "unclaimed_new_session_ids": [],
+  "account_identity_preserved": true,
+  "existing_sessions_preserved": true,
+  "closed_test_sessions": [],
+  "sessions_after": [
+    "48bba8d122c75dca"
+  ],
+  "error": "java.lang.AssertionError: ime: create button clipped by screen\/IME",
+  "elapsed_ms": 9001,
+  "screenshots": [
+    "recent-directory-normal.png",
+    "recent-directory-failed.png"
+  ]
+}

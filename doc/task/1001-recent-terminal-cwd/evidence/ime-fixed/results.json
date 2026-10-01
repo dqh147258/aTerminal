@@ -1,0 +1,10 @@
+{
+  "passed": false,
+  "real_encrypted_rpc": true,
+  "valid_directory": "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+  "invalid_directory": "\/Volumes\/Code\/My\/aTerminal\/.local\/interactive-pelican\/expired directory",
+  "timeout_seconds": 180,
+  "error": "java.lang.AssertionError: Timed out: saved Desktop connection restored",
+  "elapsed_ms": 180084,
+  "screenshots": []
+}

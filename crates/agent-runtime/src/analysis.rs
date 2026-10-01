@@ -173,7 +173,14 @@ impl LineTable {
             let mut expanded = Vec::new();
             for line in lines.iter() {
                 if line.is_object() {
-                    expanded.extend(self.reference(line)?.into_iter().map(Value::String));
+                    // A TUI range can include blank layout separators. They cannot form
+                    // search anchors; validate the entire range before omitting those rows.
+                    expanded.extend(
+                        self.reference(line)?
+                            .into_iter()
+                            .filter(|text| !text.trim().is_empty())
+                            .map(Value::String),
+                    );
                 } else {
                     expanded.push(line.clone());
                 }
@@ -195,7 +202,7 @@ mod tests {
 
     fn observation() -> (tempfile::TempDir, Store, Scope, String, String) {
         let temp = tempfile::tempdir().unwrap();
-        let store = Store::open(&temp.path().join("history.db")).unwrap();
+        let store = Store::open(&temp.path().join("data/history.db")).unwrap();
         let scope = store.agent("owner", "desktop", Some("session")).unwrap();
         let user = store
             .accept_user_authorized(&scope, "u", "inspect", json!({}), None, false)
@@ -279,6 +286,57 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             "unverified_analysis_evidence"
+        );
+    }
+
+    #[test]
+    fn tui_reference_ranges_ignore_blank_layout_rows_without_loosening_validation() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&temp.path().join("data/history.db")).unwrap();
+        let scope = store.agent("owner", "desktop", Some("session")).unwrap();
+        let user = store
+            .accept_user_authorized(&scope, "u", "inspect", json!({}), None, false)
+            .unwrap();
+        let body = "• Working (38s • esc to interrupt)\n  └ Tip: Use /keymap to configure keyboard shortcuts.\n\n\n› Ask Codex to do anything\n\n  GPT-6-Astra high · Context 100% left\n  ← for agents · ? for shortcuts";
+        let record = store
+            .archive(
+                &scope,
+                &user.run_id,
+                "read",
+                "text",
+                json!({"alternate_screen":false}),
+                body.as_bytes(),
+            )
+            .unwrap();
+        let table = LineTable::visible(&record.id, body, body, None);
+        let digest = table.expand(json!({"summary":"Working TUI","tui_lines":[{"record_id":record.id,"line_start":1,"line_end":8}]})).unwrap();
+        let summary = store.analyze(&scope, &record.id, digest).unwrap();
+        assert_eq!(summary["tui_lines"].as_array().unwrap().len(), 5);
+        assert!(
+            summary["tui_lines"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|line| !line.as_str().unwrap().trim().is_empty())
+        );
+        assert!(
+            table
+                .expand(json!({"tui_lines":[{"record_id":record.id,"line_start":1,"line_end":9}]}))
+                .is_err()
+        );
+        let legacy = table
+            .expand(json!({"summary":"Invalid legacy blank","tui_lines":[""]}))
+            .unwrap();
+        assert_eq!(
+            store
+                .analyze(&scope, &record.id, legacy)
+                .unwrap_err()
+                .to_string(),
+            "invalid_analysis_tui_line"
+        );
+        assert_eq!(
+            store.record_bytes(&scope, &record.id).unwrap().1,
+            body.as_bytes()
         );
     }
 

@@ -212,6 +212,9 @@ class RecentDirectoriesUiTest {
         hideKeyboard()
         waitFor("IME dismissed") { main {
             val visible = Rect(); dialog()!!.window!!.decorView.getWindowVisibleDisplayFrame(visible)
+            report.put("layout_after_ime", JSONObject().put("visible_height", visible.height()).put("expected_visible_height", before)
+                .put("dialog_height", dialog()!!.window!!.decorView.height).put("ime_visible", imeVisible())
+                .put("content_height", generateSequence(field().parent) { it.parent }.filterIsInstance<ScrollView>().first().getChildAt(0).height))
             visible.height() >= before - activity.dp(8)
         } }
     }
@@ -285,7 +288,9 @@ class RecentDirectoriesUiTest {
                 baseline!!.any { it.id == originalSelected && it.desktopAttached && !it.exited })
             val seeded = recent()
             assertTrue("Coordinator must seed both canonical paths", valid in seeded && invalid in seeded)
-            openCreation(); screenshot("normal"); checkKeyboardLayout()
+            openCreation(); screenshot("normal")
+            if (InstrumentationRegistry.getArguments().getString("check_ime", "true") == "true") checkKeyboardLayout()
+            else report.put("ime_check_skipped", true)
             choose(invalid); screenshot("invalid-selected")
             val beforeInvalid = ids(sessions()); pendingBefore = beforeInvalid
             button(AlertDialog.BUTTON_POSITIVE)

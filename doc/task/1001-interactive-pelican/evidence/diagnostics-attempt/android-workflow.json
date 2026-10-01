@@ -1,0 +1,611 @@
+{
+  "passed": false,
+  "session": "48bba8d122c75dca",
+  "expected_model": "stealth\/space-bunny-alpha",
+  "timeout_seconds": 1800,
+  "codex_mode": "interactive",
+  "diagnostic_grace_seconds": 30,
+  "configuration_revision": 20,
+  "model_profile_id": "openrouter-space-bunny",
+  "actual_model": "stealth\/space-bunny-alpha",
+  "state_before": {
+    "agent_id": "01a0f556-c269-7324-ba85-8f8aa880f3b7",
+    "available": true,
+    "history_generation": 0,
+    "last_event_sequence": 533,
+    "last_run": null,
+    "state": "idle"
+  },
+  "state": {
+    "agent_id": "01a0f556-c269-7324-ba85-8f8aa880f3b7",
+    "available": true,
+    "config_revision": 20,
+    "error": "manual_input_preempted_agent",
+    "history_generation": 0,
+    "last_event_sequence": 569,
+    "live_text": "",
+    "queued_messages": 0,
+    "root_user_message_id": "01a0f557-5fb1-748a-8081-c2bedd18e0b5",
+    "run_id": "01a0f557-5fb1-748a-8081-c2bf891560dd",
+    "state": "cancelled"
+  },
+  "run_id": "01a0f557-5fb1-748a-8081-c2bf891560dd",
+  "root_user_message_id": "01a0f557-5fb1-748a-8081-c2bedd18e0b5",
+  "error": "java.lang.AssertionError: Run cancelled: manual_input_preempted_agent",
+  "history": [
+    {
+      "created_at": 1790822573469,
+      "id": "01a0f557-e587-709a-92d0-ea477a604147",
+      "kind": "interaction",
+      "root_user_message_id": "01a0f557-5fb1-748a-8081-c2bedd18e0b5",
+      "sequence": 566,
+      "value": {
+        "records": [
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f557-e59a-7173-a998-0584476b5466",
+            "source": "tool_call"
+          },
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f557-e59d-766d-8c47-cad5581a215c",
+            "source": "tool_result"
+          }
+        ],
+        "text": "",
+        "tools": [
+          {
+            "action_id": "01a0f557-e587-709a-92d0-ea481f5720cd",
+            "name": "send_keys"
+          }
+        ],
+        "updates": [
+          {
+            "call_record_id": "01a0f557-e59a-7173-a998-0584476b5466",
+            "name": "send_keys"
+          },
+          {
+            "name": "send_keys",
+            "result_record_id": "01a0f557-e59d-766d-8c47-cad5581a215c"
+          },
+          {
+            "record_id": null,
+            "state": "finished",
+            "tool_count": 1
+          }
+        ]
+      }
+    },
+    {
+      "created_at": 1790822569773,
+      "id": "01a0f557-bca1-7078-ac39-fdbdadaf235e",
+      "kind": "interaction",
+      "root_user_message_id": "01a0f557-5fb1-748a-8081-c2bedd18e0b5",
+      "sequence": 561,
+      "value": {
+        "records": [
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f557-bcaa-7735-a9db-59d4a5c3e167",
+            "source": "tool_call"
+          },
+          {
+            "kind": "text",
+            "record_id": "01a0f557-bcb2-773c-a9f0-2c8a9e490303",
+            "source": null
+          }
+        ],
+        "text": "",
+        "tools": [
+          {
+            "action_id": "01a0f557-bca1-7078-ac39-fdbec42a1b52",
+            "name": "read_terminal"
+          }
+        ],
+        "updates": [
+          {
+            "call_record_id": "01a0f557-bcaa-7735-a9db-59d4a5c3e167",
+            "name": "read_terminal"
+          },
+          {
+            "record_id": "01a0f557-bcb2-773c-a9f0-2c8a9e490303",
+            "state": "analyzing",
+            "tool_count": 1
+          },
+          {
+            "record_id": "01a0f557-bcb2-773c-a9f0-2c8a9e490303",
+            "state": "analyzed",
+            "summary": "Codex launched and shows an interactive upgrade prompt offering \"Update now\", \"Skip\", or \"Skip until next version\", with the default cursor on option 1 and an \"enter continue · esc skip\" hint line."
+          }
+        ]
+      }
+    },
+    {
+      "created_at": 1790822560798,
+      "id": "01a0f557-a46b-74e1-b906-10c796a0ba40",
+      "kind": "interaction",
+      "root_user_message_id": "01a0f557-5fb1-748a-8081-c2bedd18e0b5",
+      "sequence": 557,
+      "value": {
+        "records": [
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f557-a472-77d5-93d5-e355c5fb9d52",
+            "source": "tool_call"
+          },
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f557-b418-7350-91f3-455554bedaf3",
+            "source": "tool_result"
+          }
+        ],
+        "text": "",
+        "tools": [
+          {
+            "action_id": "01a0f557-a46b-74e1-b906-10c8b6a00d5c",
+            "name": "wait"
+          }
+        ],
+        "updates": [
+          {
+            "call_record_id": "01a0f557-a472-77d5-93d5-e355c5fb9d52",
+            "name": "wait"
+          },
+          {
+            "name": "wait",
+            "result_record_id": "01a0f557-b418-7350-91f3-455554bedaf3"
+          },
+          {
+            "record_id": null,
+            "state": "finished",
+            "tool_count": 1
+          }
+        ]
+      }
+    },
+    {
+      "created_at": 1790822555023,
+      "id": "01a0f557-9d85-73d8-809e-f62c354f5cad",
+      "kind": "interaction",
+      "root_user_message_id": "01a0f557-5fb1-748a-8081-c2bedd18e0b5",
+      "sequence": 551,
+      "value": {
+        "records": [
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f557-9d8c-74a5-aeb1-148610f26afe",
+            "source": "tool_call"
+          },
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f557-9d8e-731b-a6b9-cf368a4d065a",
+            "source": "tool_result"
+          }
+        ],
+        "text": "Analysis complete. Now I'll start Codex in interactive mode.",
+        "tools": [
+          {
+            "action_id": "01a0f557-9d85-73d8-809e-f62db65f1c41",
+            "name": "input_text"
+          }
+        ],
+        "updates": [
+          {
+            "call_record_id": "01a0f557-9d8c-74a5-aeb1-148610f26afe",
+            "name": "input_text"
+          },
+          {
+            "name": "input_text",
+            "result_record_id": "01a0f557-9d8e-731b-a6b9-cf368a4d065a"
+          },
+          {
+            "record_id": null,
+            "state": "finished",
+            "tool_count": 1
+          }
+        ]
+      }
+    },
+    {
+      "created_at": 1790822551687,
+      "id": "01a0f557-743a-779a-ab50-5ec95c853d01",
+      "kind": "interaction",
+      "root_user_message_id": "01a0f557-5fb1-748a-8081-c2bedd18e0b5",
+      "sequence": 543,
+      "value": {
+        "records": [
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f557-7441-7205-886a-2c2305cc8152",
+            "source": "tool_call"
+          },
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f557-7443-705c-8fec-7ef822a6e9b8",
+            "source": "tool_result"
+          },
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f557-744a-7491-a1ba-023c5d053e28",
+            "source": "tool_call"
+          },
+          {
+            "kind": "text",
+            "record_id": "01a0f557-7450-72c5-998a-04ea432c1078",
+            "source": null
+          },
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f557-852d-7715-9bdb-a342fe974321",
+            "source": "analysis_attempt"
+          }
+        ],
+        "text": "",
+        "tools": [
+          {
+            "action_id": "01a0f557-743a-779a-ab50-5ecad0b3e4b9",
+            "name": "read_record"
+          },
+          {
+            "action_id": "01a0f557-743a-779a-ab50-5ecbf4001877",
+            "name": "read_terminal"
+          }
+        ],
+        "updates": [
+          {
+            "call_record_id": "01a0f557-7441-7205-886a-2c2305cc8152",
+            "name": "read_record"
+          },
+          {
+            "name": "read_record",
+            "result_record_id": "01a0f557-7443-705c-8fec-7ef822a6e9b8"
+          },
+          {
+            "call_record_id": "01a0f557-744a-7491-a1ba-023c5d053e28",
+            "name": "read_terminal"
+          },
+          {
+            "record_id": "01a0f557-7450-72c5-998a-04ea432c1078",
+            "state": "analyzing",
+            "tool_count": 2
+          },
+          {
+            "analysis_attempt": 1,
+            "error": "unverified_analysis_evidence",
+            "record_id": "01a0f557-7450-72c5-998a-04ea432c1078",
+            "rejected_reply_record_id": "01a0f557-852d-7715-9bdb-a342fe974321",
+            "run_id": "01a0f557-5fb1-748a-8081-c2bf891560dd"
+          },
+          {
+            "record_id": "01a0f557-7450-72c5-998a-04ea432c1078",
+            "state": "analyzed",
+            "summary": "Terminal shows only a zsh prompt line \"carl@Carls-Mac-Pro test-1001 %\" followed by blank lines; no command output or application interface is visible."
+          }
+        ]
+      }
+    },
+    {
+      "created_at": 1790822542235,
+      "id": "01a0f557-6b0c-7627-9691-042534752552",
+      "kind": "interaction",
+      "root_user_message_id": "01a0f557-5fb1-748a-8081-c2bedd18e0b5",
+      "sequence": 537,
+      "value": {
+        "records": [
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f557-6b35-75ab-a3e0-c8327a1a3d10",
+            "source": "tool_call"
+          },
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f557-6b92-7737-ae3f-35213182ae3f",
+            "source": "tool_result"
+          },
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f557-6b99-7510-867a-aeed264c4782",
+            "source": "tool_call"
+          },
+          {
+            "kind": "associated_text",
+            "record_id": "01a0f557-6b9a-719e-bc0d-0ec36f812dfd",
+            "source": "tool_result"
+          }
+        ],
+        "text": "I'll start by checking the terminal state and reading the retained history.",
+        "tools": [
+          {
+            "action_id": "01a0f557-6b0c-7627-9691-04263f0283b0",
+            "name": "get_terminal_state"
+          },
+          {
+            "action_id": "01a0f557-6b0c-7627-9691-04271f880dca",
+            "name": "read_record"
+          }
+        ],
+        "updates": [
+          {
+            "call_record_id": "01a0f557-6b35-75ab-a3e0-c8327a1a3d10",
+            "name": "get_terminal_state"
+          },
+          {
+            "name": "get_terminal_state",
+            "result_record_id": "01a0f557-6b92-7737-ae3f-35213182ae3f"
+          },
+          {
+            "call_record_id": "01a0f557-6b99-7510-867a-aeed264c4782",
+            "name": "read_record"
+          },
+          {
+            "name": "read_record",
+            "result_record_id": "01a0f557-6b9a-719e-bc0d-0ec36f812dfd"
+          },
+          {
+            "record_id": null,
+            "state": "finished",
+            "tool_count": 2
+          }
+        ]
+      }
+    },
+    {
+      "created_at": 1790822539185,
+      "id": "01a0f557-5fb1-748a-8081-c2bedd18e0b5",
+      "kind": "user",
+      "root_user_message_id": "01a0f557-5fb1-748a-8081-c2bedd18e0b5",
+      "sequence": 535,
+      "value": {
+        "message": "在\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001启动codex交互模式, 让它在其中做一个Terminal版本的字符型的鹈鹕骑自行车, 需要在Terminal窗口通过字符实现动画效果, 不能直接执行codex exec。请先进入Codex交互界面，再把制作要求提交给它；等待它完成并验证文件可运行。最后退出Codex，在这个Terminal启动字符动画，保持播放以便验收。遇到目录信任或本次操作授权提示，可以按本任务范围处理；不要改供应商配置。"
+      }
+    }
+  ],
+  "evidence_collection_complete": true,
+  "tool_calls": [
+    {
+      "record_id": "01a0f557-e59a-7173-a998-0584476b5466",
+      "interaction_id": "01a0f557-e587-709a-92d0-ea477a604147",
+      "call": {
+        "arguments": {
+          "key": "down",
+          "session_id": "48bba8d122c75dca"
+        },
+        "name": "send_keys"
+      },
+      "call_body": "{\"arguments\":{\"key\":\"down\",\"session_id\":\"48bba8d122c75dca\"},\"name\":\"send_keys\"}",
+      "sequence": 566,
+      "position": 0,
+      "result_record_id": "01a0f557-e59d-766d-8c47-cad5581a215c",
+      "result": {
+        "accepted": true,
+        "command_completion": "unknown",
+        "session_id": "48bba8d122c75dca"
+      },
+      "result_body": "{\"accepted\":true,\"command_completion\":\"unknown\",\"session_id\":\"48bba8d122c75dca\"}",
+      "result_position": 1
+    },
+    {
+      "record_id": "01a0f557-bcaa-7735-a9db-59d4a5c3e167",
+      "interaction_id": "01a0f557-bca1-7078-ac39-fdbdadaf235e",
+      "call": {
+        "arguments": {
+          "max_lines": 60,
+          "mode": "screen",
+          "session_id": "48bba8d122c75dca"
+        },
+        "name": "read_terminal"
+      },
+      "call_body": "{\"arguments\":{\"max_lines\":60,\"mode\":\"screen\",\"session_id\":\"48bba8d122c75dca\"},\"name\":\"read_terminal\"}",
+      "sequence": 561,
+      "position": 0
+    },
+    {
+      "record_id": "01a0f557-a472-77d5-93d5-e355c5fb9d52",
+      "interaction_id": "01a0f557-a46b-74e1-b906-10c796a0ba40",
+      "call": {
+        "arguments": {
+          "duration_ms": 4000
+        },
+        "name": "wait"
+      },
+      "call_body": "{\"arguments\":{\"duration_ms\":4000},\"name\":\"wait\"}",
+      "sequence": 557,
+      "position": 0,
+      "result_record_id": "01a0f557-b418-7350-91f3-455554bedaf3",
+      "result": {
+        "elapsed_ms": 4003
+      },
+      "result_body": "{\"elapsed_ms\":4003}",
+      "result_position": 1
+    },
+    {
+      "record_id": "01a0f557-9d8c-74a5-aeb1-148610f26afe",
+      "interaction_id": "01a0f557-9d85-73d8-809e-f62c354f5cad",
+      "call": {
+        "arguments": {
+          "session_id": "48bba8d122c75dca",
+          "submit": true,
+          "text": "codex"
+        },
+        "name": "input_text"
+      },
+      "call_body": "{\"arguments\":{\"session_id\":\"48bba8d122c75dca\",\"submit\":true,\"text\":\"codex\"},\"name\":\"input_text\"}",
+      "sequence": 551,
+      "position": 0,
+      "result_record_id": "01a0f557-9d8e-731b-a6b9-cf368a4d065a",
+      "result": {
+        "accepted": true,
+        "command_completion": "unknown",
+        "session_id": "48bba8d122c75dca"
+      },
+      "result_body": "{\"accepted\":true,\"command_completion\":\"unknown\",\"session_id\":\"48bba8d122c75dca\"}",
+      "result_position": 1
+    },
+    {
+      "record_id": "01a0f557-7441-7205-886a-2c2305cc8152",
+      "interaction_id": "01a0f557-743a-779a-ab50-5ec95c853d01",
+      "call": {
+        "arguments": {
+          "part": "anchors",
+          "record_id": "01a0f557-5fb3-747a-97e1-bdfb3f929807"
+        },
+        "name": "read_record"
+      },
+      "call_body": "{\"arguments\":{\"part\":\"anchors\",\"record_id\":\"01a0f557-5fb3-747a-97e1-bdfb3f929807\"},\"name\":\"read_record\"}",
+      "sequence": 543,
+      "position": 0,
+      "result_record_id": "01a0f557-7443-705c-8fec-7ef822a6e9b8",
+      "result": {
+        "head_anchor": null,
+        "metadata": {
+          "generation": 0,
+          "high": 531
+        },
+        "record_id": "01a0f557-5fb3-747a-97e1-bdfb3f929807",
+        "search_anchor_status": "unclassified",
+        "search_head_anchor": {
+          "lines": [],
+          "positions": []
+        },
+        "search_tail_anchor": {
+          "lines": [],
+          "positions": []
+        },
+        "tail_anchor": null,
+        "tui_lines": []
+      },
+      "result_body": "{\"head_anchor\":null,\"metadata\":{\"generation\":0,\"high\":531},\"record_id\":\"01a0f557-5fb3-747a-97e1-bdfb3f929807\",\"search_anchor_status\":\"unclassified\",\"search_head_anchor\":{\"lines\":[],\"positions\":[]},\"search_tail_anchor\":{\"lines\":[],\"positions\":[]},\"tail_anchor\":null,\"tui_lines\":[]}",
+      "result_position": 1
+    },
+    {
+      "record_id": "01a0f557-744a-7491-a1ba-023c5d053e28",
+      "interaction_id": "01a0f557-743a-779a-ab50-5ec95c853d01",
+      "call": {
+        "arguments": {
+          "max_lines": 60,
+          "mode": "tail",
+          "session_id": "48bba8d122c75dca"
+        },
+        "name": "read_terminal"
+      },
+      "call_body": "{\"arguments\":{\"max_lines\":60,\"mode\":\"tail\",\"session_id\":\"48bba8d122c75dca\"},\"name\":\"read_terminal\"}",
+      "sequence": 543,
+      "position": 2
+    },
+    {
+      "record_id": "01a0f557-6b35-75ab-a3e0-c8327a1a3d10",
+      "interaction_id": "01a0f557-6b0c-7627-9691-042534752552",
+      "call": {
+        "arguments": {
+          "session_id": "48bba8d122c75dca"
+        },
+        "name": "get_terminal_state"
+      },
+      "call_body": "{\"arguments\":{\"session_id\":\"48bba8d122c75dca\"},\"name\":\"get_terminal_state\"}",
+      "sequence": 537,
+      "position": 0,
+      "result_record_id": "01a0f557-6b92-7737-ae3f-35213182ae3f",
+      "result": {
+        "alternate_screen": false,
+        "application_task": {
+          "evidence_source": "no_application_adapter",
+          "state": "unknown"
+        },
+        "capabilities": {
+          "application_completion": false,
+          "foreground_group": true,
+          "shell_integration": true
+        },
+        "cols": 112,
+        "desktop_attached": true,
+        "epoch": 2342454428525447203,
+        "foreground_job": {
+          "evidence_source": "os_process_group",
+          "members": [
+            {
+              "pid": 61514,
+              "program": "\/bin\/zsh",
+              "start_identity": "Thu Oct 1 10:41:38 2026"
+            }
+          ],
+          "observed_at": 1790822542225,
+          "process_group": 61514,
+          "state": "running"
+        },
+        "initial_cwd": "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+        "manual_revision": 0,
+        "observed_at": 1790822542135,
+        "observed_cwd": "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+        "revision": 4,
+        "rows": 38,
+        "session_id": "48bba8d122c75dca",
+        "session_process": {
+          "evidence_source": "pty_child",
+          "exit_code": null,
+          "pid": 61514,
+          "start_identity": "Thu Oct 1 10:41:38 2026",
+          "state": "running"
+        },
+        "shell": {
+          "cwd": "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+          "evidence_source": "session_shell_hook",
+          "exit_code": 0,
+          "phase": "prompt",
+          "reported_at": 1790822499955,
+          "trusted_for_authorization": false
+        }
+      },
+      "result_body": "{\"alternate_screen\":false,\"application_task\":{\"evidence_source\":\"no_application_adapter\",\"state\":\"unknown\"},\"capabilities\":{\"application_completion\":false,\"foreground_group\":true,\"shell_integration\":true},\"cols\":112,\"desktop_attached\":true,\"epoch\":2342454428525447203,\"foreground_job\":{\"evidence_source\":\"os_process_group\",\"members\":[{\"pid\":61514,\"program\":\"\/bin\/zsh\",\"start_identity\":\"Thu Oct 1 10:41:38 2026\"}],\"observed_at\":1790822542225,\"process_group\":61514,\"state\":\"running\"},\"initial_cwd\":\"\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001\",\"manual_revision\":0,\"observed_at\":1790822542135,\"observed_cwd\":\"\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001\",\"revision\":4,\"rows\":38,\"session_id\":\"48bba8d122c75dca\",\"session_process\":{\"evidence_source\":\"pty_child\",\"exit_code\":null,\"pid\":61514,\"start_identity\":\"Thu Oct 1 10:41:38 2026\",\"state\":\"running\"},\"shell\":{\"cwd\":\"\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001\",\"evidence_source\":\"session_shell_hook\",\"exit_code\":0,\"phase\":\"prompt\",\"reported_at\":1790822499955,\"trusted_for_authorization\":false}}",
+      "result_position": 1
+    },
+    {
+      "record_id": "01a0f557-6b99-7510-867a-aeed264c4782",
+      "interaction_id": "01a0f557-6b0c-7627-9691-042534752552",
+      "call": {
+        "arguments": {
+          "part": "summary",
+          "record_id": "01a0f557-5fb3-747a-97e1-bdfb3f929807"
+        },
+        "name": "read_record"
+      },
+      "call_body": "{\"arguments\":{\"part\":\"summary\",\"record_id\":\"01a0f557-5fb3-747a-97e1-bdfb3f929807\"},\"name\":\"read_record\"}",
+      "sequence": 537,
+      "position": 2,
+      "result_record_id": "01a0f557-6b9a-719e-bc0d-0ec36f812dfd",
+      "result": {
+        "record_id": "01a0f557-5fb3-747a-97e1-bdfb3f929807",
+        "summary": null
+      },
+      "result_body": "{\"record_id\":\"01a0f557-5fb3-747a-97e1-bdfb3f929807\",\"summary\":null}",
+      "result_position": 3
+    }
+  ],
+  "terminal_observations": [
+    {
+      "record_id": "01a0f557-bcb2-773c-a9f0-2c8a9e490303",
+      "interaction_id": "01a0f557-bca1-7078-ac39-fdbdadaf235e",
+      "call_record_id": "01a0f557-bcaa-7735-a9db-59d4a5c3e167",
+      "sequence": 561,
+      "position": 1,
+      "body": "\n  Update available · 0.159.2 → 0.159.3\n  Release notes: https:\/\/github.com\/openai\/codex\/releases\/latest\n\n› 1. Update now (runs `sh -c 'curl -fsSL https:\/\/chatgpt.com\/codex\/install.sh | CODEX_NON_INTERACTIVE=1 sh'`)\n  2. Skip\n  3. Skip until next version\n\n  enter continue · esc skip\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    },
+    {
+      "record_id": "01a0f557-7450-72c5-998a-04ea432c1078",
+      "interaction_id": "01a0f557-743a-779a-ab50-5ec95c853d01",
+      "call_record_id": "01a0f557-744a-7491-a1ba-023c5d053e28",
+      "sequence": 543,
+      "position": 3,
+      "body": "carl@Carls-Mac-Pro test-1001 %\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+    }
+  ],
+  "submitted_message_found": true,
+  "pure_wait_verified": true,
+  "verified_codex_launch": null,
+  "account_identity_preserved": true,
+  "elapsed_ms": 41079,
+  "screenshots": [
+    "terminal-agent-workflow-prepared.png",
+    "terminal-agent-workflow-submitted.png",
+    "terminal-agent-workflow-failed.png"
+  ]
+}

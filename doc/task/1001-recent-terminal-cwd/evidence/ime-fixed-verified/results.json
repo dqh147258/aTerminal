@@ -1,0 +1,36 @@
+{
+  "passed": false,
+  "real_encrypted_rpc": true,
+  "valid_directory": "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+  "invalid_directory": "\/Volumes\/Code\/My\/aTerminal\/.local\/interactive-pelican\/expired directory",
+  "timeout_seconds": 180,
+  "sessions_before": [
+    "bb62538b3469573d"
+  ],
+  "layout_normal": {
+    "visible_height": 2138,
+    "dialog_height": 1571,
+    "create_bounds": "[871,1830][1047,1979]",
+    "cancel_bounds": "[695,1830][871,1979]"
+  },
+  "layout_ime": {
+    "visible_height": 1371,
+    "dialog_height": 1349,
+    "create_bounds": "[871,1336][1047,1485]",
+    "cancel_bounds": "[695,1336][871,1485]"
+  },
+  "unclaimed_new_session_ids": [],
+  "account_identity_preserved": true,
+  "existing_sessions_preserved": true,
+  "closed_test_sessions": [],
+  "sessions_after": [
+    "bb62538b3469573d"
+  ],
+  "error": "java.lang.AssertionError: Timed out: IME dismissed",
+  "elapsed_ms": 180642,
+  "screenshots": [
+    "recent-directory-normal.png",
+    "recent-directory-ime.png",
+    "recent-directory-failed.png"
+  ]
+}

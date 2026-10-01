@@ -1,0 +1,8 @@
+
+JUnit version 4.13.2
+..REAL_INTERACTIVE_LAUNCH={"mode":"interactive","submission_record_id":"01a0f5b3-21dd-7336-9462-27de75438483","prompt_call_record_id":"01a0f5b3-afe3-7308-8987-7d5b6bdddbfe","call_record_id":"01a0f5b3-00b4-748d-9183-97e9e26647b8","prompt_terminal_record_id":"01a0f5b3-f491-7660-be88-e6255c3a0ad8","launch_command":"codex","terminal_record_id":"01a0f5b3-6ee9-74b3-90d1-4f469ecdf8dd","prompt_submission_record_id":"01a0f5b3-d04e-752d-a274-122661b56a22"}
+REAL_INTERACTIVE_LAUNCH={"mode":"interactive","submission_record_id":"01a0f5b3-21dd-7336-9462-27de75438483","prompt_call_record_id":"01a0f5b3-afe3-7308-8987-7d5b6bdddbfe","call_record_id":"01a0f5b3-00b4-748d-9183-97e9e26647b8","prompt_terminal_record_id":"01a0f5b3-f491-7660-be88-e6255c3a0ad8","launch_command":"codex","terminal_record_id":"01a0f5b3-6ee9-74b3-90d1-4f469ecdf8dd","prompt_submission_record_id":"01a0f5b3-d04e-752d-a274-122661b56a22"}
+..........
+Time: 0.088
+
+OK (12 tests)

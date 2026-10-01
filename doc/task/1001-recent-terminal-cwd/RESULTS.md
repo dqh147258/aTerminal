@@ -30,6 +30,18 @@
 
 未执行 Android/iOS 安装、设备/模拟器视觉验收或完整 mobile native 平台构建；这些按协调者指令交由主 checkout 统一完成。
 
+## 主 checkout 功能验收（2026-10-01）
+
+已通过 Git 集成并构建 Android 三个 ABI、Debug/AndroidTest APK 和 Lint；iOS Debug 模拟器 App 编译链接通过，未安装或执行 iOS UI 测试。
+
+Android 16 `emulator-5586` 的正常账号与真实加密 RPC 验收通过，见 [完整报告](evidence/full-final/results.json)。选择已被删除的最近目录后，Desktop 返回 `working directory is unavailable`，输入与按钮保持可重试且没有创建新 Session；两次选择有效目录创建后，`SessionInfo.cwd` 与真实 OS cwd 都为 `/Users/carl/Downloads/Temp2026/Temp10/test-1001`，MRU 中只有一项且位于首位。取消不创建，会话与账号身份保留，测试仅关闭自身创建的两个会话。
+
+实际截图发现并修复了固定 80% 弹窗空白、IME 覆盖部分按钮触摸区、以及收起 IME 后高度预算依赖受限 Dialog 几何的问题。最终使用 Activity WindowMetrics/Insets 与标题/页脚独立测量，短列表保持 WRAP_CONTENT、长列表滚动，保留既有主题与标准按钮；监听器随 dismiss 解绑。[普通画面](evidence/full-final/recent-directory-normal.png)、[IME 画面](evidence/full-final/recent-directory-ime.png)。完整按钮 bounds 验证通过，收起后的 visible height 恢复到 2138。
+
+失败尝试保留在 evidence 各目录，最终报告未覆盖它们。`functional-only` 单独完成了不含 IME 的真实创建逻辑验证；`full-final` 同时覆盖创建与 IME。验收器另修正启动连接等待、内容 ScrollView 定位、以及 Account HTTP 后保存轮换令牌，保留正常身份。
+
+720 × 1280、density 320（360 × 640 dp）、font_scale=1.3 的同一完整真实 UI 测试也通过，见 [小屏大字体报告](evidence/small-large-font/results.json)。测试后恢复原 1080 × 2340 / density 440 / font_scale=1.0 及原硬件键盘 IME 设置；移除测试专用已失效目录的 MRU 项，只保留真实目录与原会话。字符动画 Session 保持运行。
+
 ## 文件清单
 
 - `crates/desktop-agent/src/recent_directories.rs`：新增持久化/规范路径/上界/MRU 与关键测试。

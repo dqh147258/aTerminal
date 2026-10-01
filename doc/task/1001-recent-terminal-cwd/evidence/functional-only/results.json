@@ -1,0 +1,65 @@
+{
+  "passed": true,
+  "real_encrypted_rpc": true,
+  "valid_directory": "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+  "invalid_directory": "\/Volumes\/Code\/My\/aTerminal\/.local\/interactive-pelican\/expired directory",
+  "timeout_seconds": 180,
+  "sessions_before": [
+    "bb62538b3469573d"
+  ],
+  "layout_normal": {
+    "visible_height": 2138,
+    "dialog_height": 1063,
+    "create_bounds": "[871,1576][1047,1725]",
+    "cancel_bounds": "[695,1576][871,1725]"
+  },
+  "ime_check_skipped": true,
+  "directory_error": "reason=working directory is unavailable",
+  "invalid_rejected_without_session": true,
+  "layout_rejected": {
+    "visible_height": 2138,
+    "dialog_height": 1571,
+    "create_bounds": "[871,1830][1047,1979]",
+    "cancel_bounds": "[695,1830][871,1979]"
+  },
+  "creation_1": {
+    "session": "f7fb7aded7843216",
+    "cwd": "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+    "observed_cwd": "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+    "mru": [
+      "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+      "\/Volumes\/Code\/My\/aTerminal\/.local\/interactive-pelican\/expired directory"
+    ]
+  },
+  "creation_2": {
+    "session": "c755347ab56a2cce",
+    "cwd": "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+    "observed_cwd": "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+    "mru": [
+      "\/Users\/carl\/Downloads\/Temp2026\/Temp10\/test-1001",
+      "\/Volumes\/Code\/My\/aTerminal\/.local\/interactive-pelican\/expired directory"
+    ]
+  },
+  "cancel_without_session": true,
+  "unclaimed_new_session_ids": [],
+  "account_identity_preserved": true,
+  "existing_sessions_preserved": true,
+  "closed_test_sessions": [
+    "f7fb7aded7843216",
+    "c755347ab56a2cce"
+  ],
+  "sessions_after": [
+    "bb62538b3469573d"
+  ],
+  "elapsed_ms": 14924,
+  "screenshots": [
+    "recent-directory-normal.png",
+    "recent-directory-invalid-selected.png",
+    "recent-directory-rejected.png",
+    "recent-directory-selected-1.png",
+    "recent-directory-success-1.png",
+    "recent-directory-selected-2.png",
+    "recent-directory-success-2.png",
+    "recent-directory-cancel-prepared.png"
+  ]
+}
