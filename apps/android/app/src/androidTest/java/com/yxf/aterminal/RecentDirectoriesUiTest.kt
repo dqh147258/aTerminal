@@ -83,7 +83,14 @@ class RecentDirectoriesUiTest {
         catch (error: Exception) { future.cancel(true); throw AssertionError("RPC failed: $label", error) }
     }
     private fun identity(): List<String> {
-        val device = read("current mobile identity") { account.devices().single { it.current }.id }
+        val epoch = main { member("accountEpoch") as Int }
+        val device = read("current mobile identity") {
+            try { account.devices().single { it.current }.id }
+            finally {
+                MainActivity::class.java.getDeclaredMethod("persist", Int::class.javaPrimitiveType)
+                    .apply { isAccessible = true }.invoke(activity, epoch)
+            }
+        }
         return main { listOf(member("serverUrl") as String, member("accountName") as String, device) }
     }
     private fun connection() = main {
@@ -163,7 +170,8 @@ class RecentDirectoriesUiTest {
         val bottom = IntArray(2); positive.getLocationOnScreen(bottom)
         val origin = IntArray(2); decor.getLocationOnScreen(origin)
         assertTrue("Blank space below standard buttons", origin[1] + decor.height - bottom[1] - positive.height <= activity.dp(64))
-        val scroll = dialogViews().filterIsInstance<ScrollView>().single()
+        // AlertDialog has its own framework ScrollView as well as the custom directory content.
+        val scroll = generateSequence(field().parent) { it.parent }.filterIsInstance<ScrollView>().first()
         if (scroll.getChildAt(0).height > scroll.height) {
             assertTrue("Long content must scroll", scroll.canScrollVertically(1) || scroll.canScrollVertically(-1))
             scroll.scrollTo(0, scroll.getChildAt(0).height)
@@ -260,6 +268,7 @@ class RecentDirectoriesUiTest {
                 ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<MainActivity>()
                     .firstOrNull { it.hasWindowFocus() }?.also { activity = it } != null && member("entryPending") == false && member("loginBusy") == false && member("connecting") == false
             } }
+            waitFor("saved Desktop connection restored") { main { member("connected") == true && member("entryPending") == false } }
             main {
                 for (extra in listOf("isolated_ui", "terminal_input_test", "acceptance_test", "render_fixture")) assertFalse("Normal Activity required", activity.intent.getBooleanExtra(extra, false))
                 assertTrue("Saved login required; harness never logs in", (member("accountName") as String).isNotBlank())
@@ -335,7 +344,12 @@ class RecentDirectoriesUiTest {
                         read("close only test-created sessions") {
                             val cleanup = RemoteTerminal()
                             try {
-                                account.connect(desktop, cleanup)
+                                val epoch = main { member("accountEpoch") as Int }
+                                try { account.connect(desktop, cleanup) }
+                                finally {
+                                    MainActivity::class.java.getDeclaredMethod("persist", Int::class.javaPrimitiveType)
+                                        .apply { isAccessible = true }.invoke(activity, epoch)
+                                }
                                 for (id in owned) {
                                     connection()
                                     if (cleanup.sessions().any { it.id == id }) { cleanup.select(id, false); cleanup.closeSelected() }

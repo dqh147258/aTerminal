@@ -1731,13 +1731,13 @@ pub fn terminal_tools(global: bool) -> Vec<ToolDefinition> {
         ),
         (
             "input_text",
-            "Write terminal text; submit is a separate Enter action. Requires the current user write grant.",
+            "Paste terminal text within the current user write grant. submit=true appends a single Enter after the paste. An embedded newline is pasted text and does not submit a bracketed-paste draft. To submit separately, use send_keys with key=enter.",
             json!({"session_id":{"type":"string"},"text":{"type":"string"},"submit":{"type":"boolean"}}),
             vec!["text"],
         ),
         (
             "send_keys",
-            "Send a named key with bounded repeat count",
+            "Send a supported named key such as enter, escape, tab, up, down, left or right with a bounded repeat count. For Ctrl+C or Ctrl+D use key=c or key=d with modifiers=[ctrl].",
             json!({"session_id":{"type":"string"},"key":{"type":"string"},"modifiers":{"type":"array","items":{"enum":["ctrl","alt","shift"]},"maxItems":3,"uniqueItems":true},"repeat":{"type":"integer","minimum":1,"maximum":20}}),
             vec!["key"],
         ),

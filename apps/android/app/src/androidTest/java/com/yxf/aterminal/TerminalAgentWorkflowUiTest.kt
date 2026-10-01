@@ -81,7 +81,14 @@ class TerminalAgentWorkflowUiTest {
     private fun run(state: JSONObject) = state.optJSONObject("last_run") ?: state
     private fun identity(): List<String> {
         val account = main { get("account") as Account }
-        val current = read("current mobile identity") { account.devices().single { it.current }.id }
+        val epoch = main { get("accountEpoch") as Int }
+        val current = read("current mobile identity") {
+            try { account.devices().single { it.current }.id }
+            finally {
+                MainActivity::class.java.getDeclaredMethod("persist", Int::class.javaPrimitiveType)
+                    .apply { isAccessible = true }.invoke(activity, epoch)
+            }
+        }
         return main { listOf(get("serverUrl") as String, get("accountName") as String, current) }
     }
     private fun screenshot(name: String) {
