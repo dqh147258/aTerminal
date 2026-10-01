@@ -6,10 +6,19 @@ private enum UITestInput {
     static func replace(_ field: XCUIElement, with value: String, app: XCUIApplication = XCUIApplication(), file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertTrue(field.waitForExistence(timeout: 20), "Expected input is unavailable", file: file, line: line)
         field.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Input keyboard is unavailable", file: file, line: line)
         let existing = field.value as? String ?? ""
         let hasExistingText = !existing.isEmpty && existing != field.placeholderValue
         if hasExistingText {
             field.typeKey("a", modifierFlags: .command)
+            field.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
+            let cleared = field.value as? String ?? ""
+            if !cleared.isEmpty && cleared != field.placeholderValue {
+                let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                attachment.name = "fixture-input-clear-failure"; attachment.lifetime = .keepAlways
+                XCTContext.runActivity(named: "Input must be completely cleared") { $0.add(attachment) }
+                XCTFail("Native keyboard selection did not clear the complete input", file: file, line: line); return
+            }
         }
         if !value.isEmpty { field.typeText(value) }
         else if hasExistingText { field.typeText(XCUIKeyboardKey.delete.rawValue) }
