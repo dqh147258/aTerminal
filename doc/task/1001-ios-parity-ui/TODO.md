@@ -9,3 +9,4 @@
 - [x] 追加正常Agent缓存正文异步搜索、scope/query屏障及fixture
 - [x] 追加搜索确定性检查、x86_64构建与[未Review]提交
 - [x] 同批修复binding.reasoning兼容性，直接生产回归检查
+- [x] R12：volatile快照owner绑定、身份切换/密码/self revoke清理、direct owner检查与既有ChatStoreChecks、x86_64构建
