@@ -85,6 +85,9 @@ struct ChatPanel: View {
                 .onChange(of: model.target) { _ in firstRender = true }
             }
             .simultaneousGesture(DragGesture().onEnded { gesture in if model.browsing && historyBottomVisible && gesture.translation.height < 0 { model.load() } })
+            if !model.historyCacheWarning.isEmpty {
+                Text(model.historyCacheWarning).font(.caption).foregroundColor(WorkspaceStyle.danger).accessibilityIdentifier("chat.cache.warning")
+            }
             if !model.attachments.isEmpty {
                 ScrollView(.horizontal) { HStack {
                     ForEach(model.attachments) { picture in

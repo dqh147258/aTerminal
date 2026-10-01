@@ -225,6 +225,18 @@ final class WorkspaceUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "cedar-body-only-731")).firstMatch.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["chat.send"].isEnabled)
     }
+    func testClosedHistoryCanBeFoundByFullWorkingDirectory() {
+        let app = launch(["--workspace-fixture", "--settings-fixture", "--show-drawer"])
+        replaceText(app.textFields["workspace.search"], with: "/fixture/closed/workspace")
+        let closed = app.buttons["session.history.fixture-closed"]
+        XCTAssertTrue(closed.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["session.history.fixture-offline"].exists)
+        closed.tap()
+        XCTAssertTrue(element(app, "chat.session").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["/fixture/closed/workspace"].exists)
+        XCTAssertFalse(app.buttons["chat.send"].isEnabled)
+        capture("history-closed-full-directory")
+    }
     func testFailedSaveKeepsNonSensitiveDraftAndReleasesBusy() {
         let app = settingsFixture("save-failure"); addProvider(app)
         app.buttons["settings.save"].tap()

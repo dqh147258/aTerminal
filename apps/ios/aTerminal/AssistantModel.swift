@@ -63,6 +63,7 @@ struct AgentItem: Identifiable {
     @Published var image: UIImage?
     @Published var evidenceVisible = false
     @Published var settingsVisible = false
+    @Published private(set) var historyCacheWarning = ""
     private var scope: ChatScope?
     private var historyTarget:ChatScope?
     private var connected = false
@@ -71,7 +72,7 @@ struct AgentItem: Identifiable {
         if global { return desktopName }
         guard let target else { return "未选择终端" }
         if target.device == terminal?.deviceID, let session = terminal?.sessions.first(where: { $0.id == target.session }) { return session.cwd }
-        return archives.first(where: { $0.scope == target })?.title ?? "离线历史"
+        return archives.first(where: { $0.scope == target })?.workingDirectory ?? "离线历史"
     }
     var destinationLabel:String {(scope?.identity.account ?? "")+" · "+desktopName}
     private var visible = false
@@ -79,10 +80,10 @@ struct AgentItem: Identifiable {
     private var generation: Int64?
     private var cursor: String?
     private var pages: [[AgentItem]] = []
-    private var fullMessages: [String: [String: Any]] = [:]
     private var task: Task<Void, Never>?
     private weak var terminal: TerminalModel?
     private var cache: AgentCache?
+    private let historyCache: AgentHistoryCache
     private let historySearch: AgentSearchSession
     @Published private(set) var historyCacheRevision = 0
     var historySearchBusy: Bool { historySearch.busy }
@@ -120,12 +121,20 @@ struct AgentItem: Identifiable {
             let worker = Task.detached(priority: .userInitiated) { try AgentCacheSearch.matches(path: path, scopes: scopes, query: query) }
             return try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
         }
-        historySearch.changed = { [weak self] in self?.objectWillChange.send() }
+        let pagesCache: AgentCache?
+        var cacheFailure: String?
         do {
             let root = WorkspacePreferences.historyDirectory
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            cache = try AgentCache.open(path: root.appendingPathComponent("agent-cache.sqlite3").path)
-        } catch { status = "历史缓存不可用：\(error.localizedDescription)" }
+            pagesCache = try AgentCache.open(path: path)
+        } catch { pagesCache = nil; cacheFailure = error.localizedDescription }
+        historyCache = AgentHistoryCache(write: { scope, cursor, page in
+            guard let pagesCache else { throw AgentMessageCache.Failure.unavailable }
+            try pagesCache.storePage(scope: scope, cursor: cursor, page: page)
+        }, read: { scope, cursor in try pagesCache?.page(scope: scope, cursor: cursor) }, messages: try? AgentMessageCache(path: path))
+        cache = pagesCache
+        historySearch.changed = { [weak self] in self?.objectWillChange.send() }
+        if let cacheFailure { status = "历史缓存不可用：\(cacheFailure)" }
     }
     func context(identity: ChatIdentity?, scope: ChatScope?, title: String, device: String, connected: Bool, core: RemoteTerminal, terminal: TerminalModel) {
         self.terminal = terminal;desktopName=device
@@ -136,19 +145,23 @@ struct AgentItem: Identifiable {
         if connectionChanged || self.connected != connected { globalEpoch += 1; globalLoading = false; globalCreating = false; globalConfirmed = false; archiveLoading = false }
         let changedDesktop = self.scope?.identity != scope?.identity || self.scope?.device != scope?.device
         if self.scope?.identity != identity { historySearch.cancel() }
-        saveDraft(); stop(); self.scope = scope; historyTarget=nil; self.connected = connected; available = false
+        saveDraft(); stop(); self.scope = scope; historyTarget=nil; self.connected = connected; available = false; historyCacheWarning = ""
         if let identity, let data = WorkspacePreferences.defaults.data(forKey: "agent.archives." + identity.key) { archives = (try? JSONDecoder().decode([ChatArchive].self, from: data)) ?? [] }
         else { archives = [] }
         if changedDesktop { globalID = nil; global = false; globalEpoch += 1; globalLoading = false; globalCreating = false; globalRows = []; restoreGlobals() }
         restoreDraft()
         if let scope, !scope.session.isEmpty {
-            archives.removeAll { $0.scope == scope }; archives.append(ChatArchive(scope: scope, title: title, deviceName: device)); saveArchives()
+            if !archives.contains(where: { $0.scope == scope }) { archives.append(ChatArchive(scope: scope, title: title, deviceName: device)) }
+            saveArchives()
         }
         #if DEBUG
         if SettingsFixture.enabled, let identity {
-            let examples = [ChatArchive(scope: ChatScope(identity: identity, device: "fixture-desktop", session: "fixture-closed"), title: "已关闭会话", deviceName: "Fixture Desktop"),
-                            ChatArchive(scope: ChatScope(identity: identity, device: "fixture-offline-desktop", session: "fixture-offline"), title: "离线历史", deviceName: "Offline Desktop")]
-            for archive in examples where !archives.contains(where: { $0.scope == archive.scope }) { archives.append(archive) }
+            let examples = [ChatArchive(scope: ChatScope(identity: identity, device: "fixture-desktop", session: "fixture-closed"), title: "已关闭会话", deviceName: "Fixture Desktop", cwd: "/fixture/closed/workspace"),
+                            ChatArchive(scope: ChatScope(identity: identity, device: "fixture-offline-desktop", session: "fixture-offline"), title: "离线历史", deviceName: "Offline Desktop", cwd: "/fixture/offline/workspace")]
+            for archive in examples {
+                if let index = archives.firstIndex(where: { $0.scope == archive.scope }) { archives[index].updateDirectory(archive.workingDirectory, title: archive.title, deviceName: archive.deviceName) }
+                else { archives.append(archive) }
+            }
             saveArchives()
             let closed = ChatScope(identity: identity, device: "fixture-desktop", session: "fixture-closed")
             let page: [String: Any] = ["generation": 1, "has_more": false, "items": [["id": "fixture-body-search", "sequence": 1, "kind": "assistant", "value": ["text": "正文专有词 星河缓存检索 cedar-body-only-731"]]]]
@@ -217,24 +230,16 @@ struct AgentItem: Identifiable {
             guard version==epoch else{return}
             do {
                 var command: [String: Any] = ["action": "history"]; if let before { command["cursor"] = before }
-                var offline = false
-                var response: [String: Any]
-                do {
-                    response = try await request(command, destination: target)
-                    var expanded: [[String: Any]] = []
-                    for item in response["items"] as? [[String: Any]] ?? [] {
-                        guard version == epoch else { return }
-                        expanded.append((try? await completeMessage(item, target: target, version: version)) ?? item)
-                    }
-                    response["items"] = expanded
-                    let text = String(decoding: try JSONSerialization.data(withJSONObject: response), as: UTF8.self)
-                    try? cache?.storePage(scope: target.key, cursor: before, page: text)
-                    historyCacheRevision += 1
-                } catch {
-                    guard let text = try cache?.page(scope: target.key, cursor: before), let cached = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else { throw error }
-                    response = cached; offline = true
-                }
+                let page = try await historyCache.load(scope: target.key, cursor: before,
+                    fetch: { try await self.request(command, destination: target) },
+                    record: { id, cursor in
+                        var request: [String: Any] = ["action": "record", "record_id": id, "part": "body"]
+                        if let cursor { request["cursor"] = cursor }
+                        return try await self.request(request, destination: target)
+                    }, valid: { version == self.epoch })
                 guard version == epoch else { return }
+                let response = page.value
+                historyCacheWarning = page.warning; historyCacheRevision += 1
                 generation = (response["generation"] as? NSNumber)?.int64Value
                 cursor = response["cursor"] as? String; hasMore = response["has_more"] as? Bool ?? false
                 if first { pages = [] }
@@ -250,7 +255,7 @@ struct AgentItem: Identifiable {
                 }
                 items = browsing ? Array(chronological.reversed()) : chronological
                 if global && globalTitle == "新会话", let first = chronological.first(where: { $0.kind == "你" }) { globalTitle = String(first.text.prefix(48)) }
-                if offline { status = "离线缓存 · 删除状态尚未同步" }
+                if page.offline { status = "离线缓存 · 删除状态尚未同步" }
             } catch { if version == epoch { status = "历史加载失败：\(terminalError(error))" } }
             if version == epoch { loading = false }
         }
@@ -301,6 +306,19 @@ struct AgentItem: Identifiable {
         guard let identity = scope?.identity, let data = try? JSONEncoder().encode(archives) else { return }
         WorkspacePreferences.defaults.set(data, forKey: "agent.archives." + identity.key)
     }
+    func rememberSessions(identity: ChatIdentity?, device: String, deviceName: String, sessions: [RemoteSession]) {
+        guard let identity, identity == scope?.identity, !device.isEmpty else { return }
+        var updated = archives; var changed = false
+        for session in sessions where !session.cwd.isEmpty {
+            let target = ChatScope(identity: identity, device: device, session: session.id)
+            if let index = updated.firstIndex(where: { $0.scope == target }) {
+                changed = updated[index].updateDirectory(session.cwd, title: session.displayName, deviceName: deviceName) || changed
+            } else {
+                updated.append(ChatArchive(scope: target, title: session.displayName, deviceName: deviceName, cwd: session.cwd)); changed = true
+            }
+        }
+        if changed { archives = updated; saveArchives() }
+    }
     func loadArchives() {
         guard connected, !archiveLoading, let scope else { return }
         archiveLoading = true; let connection = connectionEpoch
@@ -324,26 +342,6 @@ struct AgentItem: Identifiable {
         }
     }
     func openHistory(_ archive:ChatArchive) { saveDraft(); historyTarget=archive.scope; global=archive.scope.session.isEmpty; globalID=nil; restoreDraft(); browsing=true; reset() }
-    private func completeMessage(_ item: [String: Any], target: ChatScope, version: Int) async throws -> [String: Any] {
-        guard let value = item["value"] as? [String: Any], value["partial"] as? Bool == true,
-              let id = value["record_id"] as? String else { return item }
-        let key = target.key + ":" + id
-        if let original = fullMessages[key] { var result = item; result["value"] = original; return result }
-        var text = ""; var cursor: String?
-        repeat {
-            guard version == epoch else { throw CancellationError() }
-            var command: [String: Any] = ["action": "record", "record_id": id, "part": "body"]; if let cursor { command["cursor"] = cursor }
-            let part = try await request(command, destination: target)
-            guard version == epoch, part["kind"] as? String == "history_event" else { throw ChatFailure.message("消息原文不可用") }
-            text += part["body"] as? String ?? ""
-            guard text.utf8.count <= 4 * 1024 * 1024 else { throw ChatFailure.message("消息超过原文大小限制") }
-            cursor = part["cursor"] as? String
-        } while cursor != nil
-        guard let original = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else { throw ChatFailure.message("消息原文格式错误") }
-        if fullMessages.count >= 100 { fullMessages.removeAll() }
-        fullMessages[key] = original
-        var result = item; result["value"] = original; return result
-    }
     func record(_ id: String) {
         let version = epoch
         Task { guard version==epoch else{return}; do {

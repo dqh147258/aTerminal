@@ -104,6 +104,7 @@ struct ChatArchive: Codable, Identifiable {
     let scope: ChatScope
     var title: String
     var deviceName: String
+    var cwd: String? = nil
     var messages: [ChatMessage] = []
     var updated = Date()
     var pendingID: String?
@@ -111,6 +112,12 @@ struct ChatArchive: Codable, Identifiable {
     var status = ""
     var lastEventIDs: [String: UInt64]?
     var id: String { scope.key }
+    var workingDirectory: String { cwd.flatMap { $0.isEmpty ? nil : $0 } ?? title }
+    @discardableResult mutating func updateDirectory(_ value: String, title: String, deviceName: String) -> Bool {
+        guard !value.isEmpty, cwd != value || self.title != title || self.deviceName != deviceName else { return false }
+        cwd = value; self.title = title; self.deviceName = deviceName; updated = Date()
+        return true
+    }
     mutating func appendEvents(_ events: [AssistantEvent], requestID: String) {
         var last = lastEventIDs?[requestID] ?? 0
         for event in events.sorted(by: { $0.id < $1.id }) where event.id > last {

@@ -15,7 +15,7 @@ enum AgentCacheSearch {
         defer { sqlite3_close(database) }
         sqlite3_busy_timeout(database, 100)
         var statement: OpaquePointer?
-        let sql = "SELECT p.body FROM pages p JOIN cache_generations g ON p.scope=g.scope AND p.generation=g.generation WHERE p.scope=?1 ORDER BY p.touched DESC LIMIT 3"
+        let sql = "SELECT p.body,p.generation FROM pages p JOIN cache_generations g ON p.scope=g.scope AND p.generation=g.generation WHERE p.scope=?1 ORDER BY p.touched DESC LIMIT 3"
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else { throw SearchFailure.unavailable }
         defer { sqlite3_finalize(statement) }
         let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
@@ -33,7 +33,15 @@ enum AgentCacheSearch {
                 guard count <= 1024 * 1024 else { throw SearchFailure.unavailable }
                 let data = Data(bytes: bytes, count: count)
                 guard let page = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
-                if (page["items"] as? [[String: Any]] ?? []).contains(where: { body($0).localizedCaseInsensitiveContains(query) }) {
+                let generation = sqlite3_column_int64(statement, 1)
+                if try (page["items"] as? [[String: Any]] ?? []).contains(where: { item in
+                    if body(item).localizedCaseInsensitiveContains(query) { return true }
+                    guard let value = item["value"] as? [String: Any], value["partial"] as? Bool == true,
+                          let record = value["record_id"] as? String,
+                          let full = try AgentMessageCache.value(in: database, scope: scope, generation: generation, record: record) else { return false }
+                    var completed = item; completed["value"] = full
+                    return body(completed).localizedCaseInsensitiveContains(query)
+                }) {
                     matches.insert(scope); break
                 }
             }

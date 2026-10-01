@@ -98,6 +98,7 @@ struct WorkspaceScreen: View {
         }
         .onChange(of: model.generation) { _ in creating = false; syncChat() }
         .onChange(of: model.deviceID) { _ in creating = false }
+        .onChange(of: model.sessions.map { [$0.id, $0.cwd] }) { _ in syncChat() }
         .onChange(of: model.identity) { _ in
             creating = false
             syncChat()
@@ -145,6 +146,11 @@ struct WorkspaceScreen: View {
 
     private func syncChat() {
         assistant.context(identity: model.identity, scope: model.chatScope ?? model.identity.map { ChatScope(identity:$0,device:model.deviceID,session:"") }, title: model.currentSession?.displayName ?? "终端", device: model.deviceName, connected: model.connected, core: model.core, terminal: model)
+        for (device, sessions) in model.sessionSnapshots {
+            let name = model.devices.first(where: { $0.id == device })?.name ?? assistant.archives.first(where: { $0.scope.device == device })?.deviceName ?? "Desktop"
+            assistant.rememberSessions(identity: model.identity, device: device, deviceName: name, sessions: sessions)
+        }
+        assistant.rememberSessions(identity: model.identity, device: model.deviceID, deviceName: model.deviceName, sessions: model.sessions)
     }
     private func updateOrientation() {
         let bounds = UIScreen.main.bounds
@@ -239,7 +245,7 @@ struct WorkspaceScreen: View {
         let identity = model.identity ?? ChatIdentity(server: model.server, account: model.username)
         var entries: [String: WorkspaceEntry] = [:]
         for archive in assistant.archives where archive.scope.identity == identity && !archive.scope.session.isEmpty {
-            entries[archive.scope.key] = WorkspaceEntry(archive: archive, session: nil, path: archive.title)
+            entries[archive.scope.key] = WorkspaceEntry(archive: archive, session: nil, path: archive.workingDirectory)
         }
         var snapshots = model.sessionSnapshots
         if !model.deviceID.isEmpty { snapshots[model.deviceID] = model.sessions }
