@@ -1,6 +1,6 @@
 # 独立审查记录
 
-**最新独立源码审查完成，无剩余阻塞。** 审阅生产89fc011、1035586、2edd331、4400898、ae9b4cf、0e6980c、b2d3f3a与冻结main590a4f9，R1–R12及后续原生输入/抽屉/高级展开均已修正。main全部production Swift字节与实现worktree一致；pbx只加入必要源引用，签名设置未因实现子任务修改。helper由协调者main拥有，最新b4f8fa2的clear-first/单行验空路径已复核。测试提交7e55a62/b62dd8a由协调者集成；本任务未merge、未操作sim/服务/用户身份。App build、完整截图与真实RPC由协调者执行。
+**最终独立源码审查完成，无剩余阻塞。** 已审阅生产89fc011、1035586、2edd331、4400898、ae9b4cf、0e6980c、b2d3f3a、6dcec6b以及main10ecef6。R1–R12与后续原生输入、抽屉、高级展开、可见选择器标签及选中值语义均已修正。main590a4f9时生产源码字节与实现worktree一致；最后main10ecef6增加当前选项可访问性值，由独立子任务明确复核通过。pbx只加入必要源引用，签名设置未因实现子任务修改。helper由协调者main拥有，b4f8fa2的clear-first/单行验空路径已复核。测试提交7e55a62/b62dd8a由协调者集成；审查子任务未merge、未操作sim/服务/用户身份。设备执行与最终证据由协调者完成。
 
 | ID / 优先级 | 具体代码与触发 | 影响 / 预期 | 证据 / 状态 |
 | --- | --- | --- | --- |
@@ -38,3 +38,9 @@
 - f93fac8 testAgentBodySearchFindsClosedHistory：正文独有token筛选同时排除active/offline，进入closed历史并读到同token；已有closed/offline测试用非空draft检查只读，避免复制测试业务。冻结main完整UITest离线SDK typecheck通过。
 
 只读日志确认：native-editor两项WorkspaceUITests fixture UI PASS；fixture-final首轮14项PASS，Catalog/ClosedHistory/Login三项fixture-retest PASS，合计17个不同fixture testcase均通过。此为协调者设备执行证据，不能写成单次17/17整套通过，也不能替代LiveService RPC。live-final第一个真实Desktop路线已PASS；实际MCP/Skill UUID操作与host资源/配置哈希由协调者另结算。
+
+## 最终结算（协调者归档）
+
+6dcec6b以现有FieldShell补齐连接协议、供应商、思考模式、默认绑定及三种scope的可见名称；10ecef6保留实际Picker标识并补当前选项的accessibilityValue。选项值、Binding和保存协议均不变。独立审查子任务已明确确认10ecef6语义修正通过；标签后Azure/catalog定向通过、binding含当前值/继承还原通过，小屏大字体/横屏复测通过。
+
+最终17个fixture场景与3个真实Desktop场景都有通过结果。真实MCP/Skill表单完成修订20→30的导入、编辑、启停和删除；两个不可变Skill版本的文本/二进制资源哈希一致，无关配置哈希一致，UUID条目已移除。专用PTY字符/Enter/delete/Tab/Ctrl-C通过；隔离zsh首次未加载compinit导致Tab预期失败，fixture环境补全初始化后复测通过，没有改用户Shell配置。最终arm64 Release与x86_64 Debug构建通过。未执行实际iOS LLM/图片发送、系统文件夹选择/手机上传或用户密码/设备撤销，未用fixture成功替代真实RPC结论。永久20页截图、最终逐场景结果与资源观测位于协调目录`doc/task/1001-ios-parity/evidence`。
