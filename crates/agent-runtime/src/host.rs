@@ -1358,7 +1358,7 @@ impl AgentHost {
             }),
             _ => false,
         };
-        for _ in 0..2 {
+        for attempt in 1..=2 {
             let request = job.snapshot.builder.build(entries, Some(record))?;
             let instruction = request.chat_history.last().unwrap().clone();
             let response = self
@@ -1403,6 +1403,14 @@ impl AgentHost {
                 },
             ));
             if !calls.is_empty() {
+                self.archive_analysis_rejection(
+                    job,
+                    &unit,
+                    record,
+                    attempt,
+                    json!({"error":"analysis_stage_tools_forbidden","tools":calls.iter().take(8).map(|call|call.function.name.chars().take(128).collect::<String>()).collect::<Vec<_>>()}),
+                    &text,
+                )?;
                 for c in calls {
                     entries.push(tool_result(
                         &job.root,
@@ -1426,6 +1434,14 @@ impl AgentHost {
             let summary = match analysis {
                 Ok(summary) => summary,
                 Err(error) => {
+                    self.archive_analysis_rejection(
+                        job,
+                        &unit,
+                        record,
+                        attempt,
+                        json!({"error":error.to_string().chars().take(256).collect::<String>()}),
+                        &text,
+                    )?;
                     entries.push(entry(Origin::ObservationAnalysis,&job.root,Message::user(format!("Application analysis rejected: {error}. Return only the requested JSON. Every quote and fact evidence must be copied verbatim from record body text, never metadata or its JSON representation. Omit unsupported facts instead of inventing evidence; tui_lines must be an array of exact full body strings (empty if no TUI). Host supplies status and anchors."))));
                     continue;
                 }
@@ -1471,6 +1487,35 @@ impl AgentHost {
             }
         }
         bail!("observation_analysis_pending")
+    }
+    // Diagnostics are associated evidence, not model instructions or pending observations.
+    // Store only reply text and bounded tool names, never request/provider data or tool arguments.
+    fn archive_analysis_rejection(
+        &self,
+        job: &Job,
+        unit: &str,
+        record: &str,
+        attempt: usize,
+        rejection: Value,
+        text: &str,
+    ) -> Result<()> {
+        let mut end = text.len().min(8192);
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let reply = self.store.archive(
+            &job.scope,
+            &job.run,
+            &format!("{}/analysis/{unit}/{record}/{attempt}", job.run),
+            "associated_text",
+            json!({"source":"analysis_attempt","history_unit_id":unit,"run_id":job.run,"record_id":record,"analysis_attempt":attempt,"error":rejection["error"],"tools":rejection["tools"],"reply_bytes":text.len(),"reply_truncated":end<text.len()}),
+            &text.as_bytes()[..end],
+        )?;
+        self.store.unit_update(
+            &job.scope,
+            unit,
+            json!({"run_id":job.run,"record_id":record,"analysis_attempt":attempt,"error":rejection["error"],"rejected_reply_record_id":reply.id}),
+        )
     }
     async fn compact(
         &self,
@@ -1770,6 +1815,13 @@ mod runtime_contracts {
     use rig_core::streaming::{
         RawStreamingChoice as Raw, RawStreamingToolCall, StreamFinal, StreamingCompletionResponse,
     };
+    // Exact idle-TUI rows from the 1001 Android observation, before any task was submitted.
+    const CODEX_IDLE_TUI: [&str; 4] = [
+        "  >_ OpenAI Codex (v0.159.2)",
+        "     ~/Downloads/Temp2026/Temp10/test-1001",
+        "› Ask Codex to do anything",
+        "  GPT-6-Astra high · Context 100% left · 0 in · 0 out · Fast off",
+    ];
     struct StubModel {
         calls: AtomicU32,
         delay: Duration,
@@ -1786,8 +1838,9 @@ mod runtime_contracts {
                 let choice = if self.recovery {
                     match n {
                         0=>Raw::ToolCall(RawStreamingToolCall::new("read-call","read_terminal".into(),json!({"mode":"tail"}))),
-                        1|2=>Raw::Message("invalid analysis".into()),
-                        3=>Raw::Message(json!({"summary":"Exact archived text inspected","key_quotes":[],"facts":[],"tui_lines":[]}).to_string()),
+                        1=>Raw::Message("invalid analysis".into()),
+                        2=>Raw::Message(json!({"summary":"Invalid classification","tui_lines":["invented row"]}).to_string()),
+                        3=>Raw::Message(json!({"summary":"Exact archived text inspected","key_quotes":[],"facts":[],"tui_lines":CODEX_IDLE_TUI}).to_string()),
                         _=>Raw::Message("done".into()),
                     }
                 } else {
@@ -1814,6 +1867,7 @@ mod runtime_contracts {
     #[derive(Default)]
     struct Backend {
         reads: AtomicU32,
+        body: Option<String>,
     }
     impl TerminalBackend for Backend {
         fn authorize(&self, _write: bool) -> BackendFuture<'_, ()> {
@@ -1827,13 +1881,17 @@ mod runtime_contracts {
         ) -> BackendFuture<'a, ToolOutput> {
             Box::pin(async move {
                 self.reads.fetch_add(1, Ordering::AcqRel);
+                let body = self
+                    .body
+                    .clone()
+                    .unwrap_or_else(|| "original terminal text".into());
                 Ok(ToolOutput {
                     value: json!({}),
                     observation: Some(Observation {
                         kind: "text".into(),
-                        body: "original terminal text".into(),
+                        body: body.clone(),
                         model_body: None,
-                        metadata: json!({"head":["original terminal text"],"tail":["original terminal text"]}),
+                        metadata: json!({"head":body.lines().take(10).collect::<Vec<_>>(),"tail":body.lines().collect::<Vec<_>>(),"alternate_screen":false}),
                         binary: false,
                         record_id: None,
                     }),
@@ -2355,10 +2413,16 @@ mod runtime_contracts {
             delay: Duration::ZERO,
             recovery: true,
         });
-        let backend = Arc::new(Backend::default());
+        let backend = Arc::new(Backend {
+            body: Some(CODEX_IDLE_TUI.join("\n")),
+            ..Default::default()
+        });
         let host = AgentHost::new(store.clone(), tokio::runtime::Handle::current());
         host.submit(scope.clone(), "user-1", "read", json!({}), true, "", || {
-            Ok(snapshot(model.clone(), backend.clone(), true))
+            let mut snapshot = snapshot(model.clone(), backend.clone(), true);
+            snapshot.builder.settings.additional_params =
+                Some(json!({"private_setting":"DO_NOT_ARCHIVE_PROVIDER_SETTINGS"}));
+            Ok(snapshot)
         })
         .unwrap();
         assert_eq!(settle(&host, &scope).await["state"], "paused");
@@ -2378,10 +2442,71 @@ mod runtime_contracts {
         );
         assert_eq!(model.calls.load(Ordering::Acquire), 3);
         assert_eq!(backend.reads.load(Ordering::Acquire), 1);
+        let rejected = narrated.unwrap().value["updates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|update| update["analysis_attempt"].is_number())
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(rejected.len(), 2);
+        assert_eq!(rejected[0]["analysis_attempt"], 1);
+        assert_eq!(rejected[0]["error"], "invalid_analysis_json");
+        assert_eq!(rejected[1]["analysis_attempt"], 2);
+        assert_eq!(rejected[1]["error"], "invalid_analysis_tui_line");
+        let observation = rejected[0]["record_id"].as_str().unwrap();
+        assert_eq!(rejected[1]["record_id"], observation);
+        assert!(
+            store
+                .record(&scope, observation, "summary", 0)
+                .unwrap()
+                .record
+                .pending
+        );
         drop(host);
         drop(store);
         let store = Arc::new(Store::open(&path).unwrap());
-        let host = AgentHost::new(store, tokio::runtime::Handle::current());
+        for update in &rejected {
+            let id = update["rejected_reply_record_id"].as_str().unwrap();
+            let page = store.record_page(&scope, id, "body", None, 12288).unwrap();
+            assert_eq!(page["kind"], "associated_text");
+            assert_eq!(page["metadata"]["source"], "analysis_attempt");
+            assert_eq!(page["metadata"]["error"], update["error"]);
+            assert_eq!(page["metadata"]["record_id"], observation);
+            assert_eq!(page["metadata"]["run_id"], update["run_id"]);
+            assert!(
+                !page
+                    .to_string()
+                    .contains("DO_NOT_ARCHIVE_PROVIDER_SETTINGS")
+            );
+            assert!(
+                !store
+                    .record(&scope, id, "summary", 0)
+                    .unwrap()
+                    .record
+                    .pending
+            );
+            if update["analysis_attempt"] == 1 {
+                assert_eq!(page["body"], "invalid analysis");
+            } else {
+                assert_eq!(
+                    page["body"],
+                    json!({"summary":"Invalid classification","tui_lines":["invented row"]})
+                        .to_string()
+                );
+            }
+        }
+        let reloaded = store.history(&scope, None).unwrap();
+        assert_eq!(
+            reloaded
+                .items
+                .iter()
+                .find(|item| item.id == narrated.unwrap().id)
+                .unwrap()
+                .value["updates"],
+            narrated.unwrap().value["updates"]
+        );
+        let host = AgentHost::new(store.clone(), tokio::runtime::Handle::current());
         host.status(&scope, json!({"state":"changed"})).unwrap();
         tokio::time::sleep(Duration::from_millis(30)).await;
         assert_eq!(model.calls.load(Ordering::Acquire), 3);
@@ -2399,6 +2524,172 @@ mod runtime_contracts {
         assert_eq!(state["state"], "completed", "{state}");
         assert_eq!(model.calls.load(Ordering::Acquire), 5);
         assert_eq!(backend.reads.load(Ordering::Acquire), 1);
+        let original = store
+            .record_page(&scope, observation, "body", None, 12288)
+            .unwrap();
+        assert_eq!(original["body"], CODEX_IDLE_TUI.join("\n"));
+        assert_eq!(
+            store
+                .record(&scope, observation, "summary", 0)
+                .unwrap()
+                .record
+                .summary
+                .unwrap()["search_anchor_status"],
+            "unavailable_tui_only"
+        );
+    }
+    #[tokio::test]
+    async fn rejected_analysis_is_bounded_and_recovery_never_replays_writes() {
+        struct RejectedModel(AtomicU32);
+        impl Model for RejectedModel {
+            fn stream(
+                &self,
+                _: rig_core::completion::CompletionRequest,
+            ) -> BackendFuture<'_, StreamingCompletionResponse> {
+                Box::pin(async move {
+                    let call = self.0.fetch_add(1, Ordering::AcqRel);
+                    let choices = match call {
+                        0 => vec![
+                            Raw::ToolCall(RawStreamingToolCall::new("write-call", "input_text".into(), json!({"text":"authorized input","submit":true}))),
+                            Raw::ToolCall(RawStreamingToolCall::new("read-call", "read_terminal".into(), json!({"mode":"screen"}))),
+                        ],
+                        1 => vec![
+                            Raw::Message("鹈".repeat(3000)),
+                            Raw::ToolCall(RawStreamingToolCall::new("forbidden-write", "input_text".into(), json!({"text":"DO_NOT_ARCHIVE_TOOL_ARGUMENTS","submit":true}))),
+                        ],
+                        2 => vec![Raw::Message(json!({"summary":"Invalid fact","facts":[{"claim":"completed","evidence":"invented evidence","certainty":"observed"}],"tui_lines":[]}).to_string())],
+                        3 => vec![Raw::Message(json!({"summary":"Archived observation analyzed","tui_lines":[]}).to_string())],
+                        _ => vec![Raw::Message("done".into())],
+                    };
+                    let mut chunks = choices.into_iter().map(Ok).collect::<Vec<_>>();
+                    chunks.push(Ok(Raw::FinalResponse(StreamFinal::new(
+                        "test",
+                        Default::default(),
+                    ))));
+                    Ok(StreamingCompletionResponse::stream(
+                        "test",
+                        Box::pin(futures_util::stream::iter(chunks)),
+                    ))
+                })
+            }
+        }
+        #[derive(Default)]
+        struct WriteBackend {
+            writes: AtomicU32,
+            terminal: Backend,
+        }
+        impl TerminalBackend for WriteBackend {
+            fn authorize(&self, _: bool) -> BackendFuture<'_, ()> {
+                Box::pin(async { Ok(()) })
+            }
+            fn invoke<'a>(
+                &'a self,
+                context: ToolContext,
+                name: &'a str,
+                args: Value,
+            ) -> BackendFuture<'a, ToolOutput> {
+                Box::pin(async move {
+                    if name == "input_text" {
+                        self.writes.fetch_add(1, Ordering::AcqRel);
+                        Ok(ToolOutput {
+                            value: json!({"accepted":true}),
+                            observation: None,
+                            outcome: Some("accepted".into()),
+                        })
+                    } else {
+                        self.terminal.invoke(context, name, args).await
+                    }
+                })
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("data/rejected.db");
+        let store = Arc::new(Store::open(&path).unwrap());
+        let scope = store.agent("owner", "desktop", Some("session")).unwrap();
+        let model = Arc::new(RejectedModel(AtomicU32::new(0)));
+        let backend = Arc::new(WriteBackend::default());
+        let host = AgentHost::new(store.clone(), tokio::runtime::Handle::current());
+        host.submit(
+            scope.clone(),
+            "initial",
+            "write and observe",
+            json!({}),
+            true,
+            "",
+            || Ok(snapshot(model.clone(), backend.clone(), true)),
+        )
+        .unwrap();
+        let paused = settle(&host, &scope).await;
+        assert_eq!(paused["state"], "paused");
+        assert_eq!(paused["error"], "observation_analysis_pending");
+        assert_eq!(
+            backend.writes.load(Ordering::Acquire),
+            1,
+            "analysis must not execute the forbidden write"
+        );
+        assert_eq!(backend.terminal.reads.load(Ordering::Acquire), 1);
+        let history = store.history(&scope, None).unwrap();
+        let attempts = history
+            .items
+            .iter()
+            .filter(|item| item.kind == "interaction")
+            .flat_map(|item| item.value["updates"].as_array().unwrap())
+            .filter(|update| update["analysis_attempt"].is_number())
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0]["error"], "analysis_stage_tools_forbidden");
+        assert_eq!(attempts[1]["error"], "unverified_analysis_evidence");
+        let reply_id = attempts[0]["rejected_reply_record_id"].as_str().unwrap();
+        let page = store
+            .record_page(&scope, reply_id, "body", None, 12288)
+            .unwrap();
+        assert_eq!(page["metadata"]["tools"], json!(["input_text"]));
+        assert_eq!(page["metadata"]["reply_bytes"], 9000);
+        assert_eq!(page["metadata"]["reply_truncated"], true);
+        assert_eq!(page["body"].as_str().unwrap(), "鹈".repeat(2730));
+        assert!(page["body"].as_str().unwrap().len() <= 8192);
+        assert!(!page.to_string().contains("DO_NOT_ARCHIVE_TOOL_ARGUMENTS"));
+        let other = store
+            .agent("owner", "desktop", Some("other-session"))
+            .unwrap();
+        assert!(
+            store
+                .record_page(&other, reply_id, "body", None, 12288)
+                .is_err()
+        );
+        drop(host);
+        drop(store);
+        let store = Arc::new(Store::open(&path).unwrap());
+        assert_eq!(
+            store
+                .record_page(&scope, reply_id, "body", None, 12288)
+                .unwrap()["body"],
+            page["body"]
+        );
+        let host = AgentHost::new(store, tokio::runtime::Handle::current());
+        host.submit(
+            scope.clone(),
+            "continue",
+            "resume the same analysis",
+            json!({}),
+            true,
+            "",
+            || Ok(snapshot(model.clone(), backend.clone(), true)),
+        )
+        .unwrap();
+        assert_eq!(settle(&host, &scope).await["state"], "completed");
+        assert_eq!(model.0.load(Ordering::Acquire), 5);
+        assert_eq!(
+            backend.writes.load(Ordering::Acquire),
+            1,
+            "restart and recovery must not replay the original write"
+        );
+        assert_eq!(
+            backend.terminal.reads.load(Ordering::Acquire),
+            1,
+            "recovery must analyze the original observation"
+        );
     }
     #[tokio::test]
     async fn root_cancellation_stops_its_children_and_same_root_delegation_appends() {
