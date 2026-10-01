@@ -1,31 +1,36 @@
-# 验收状态与执行边界
+# iOS 独立验收最终交接
 
-最新独立源码审查已完成，无剩余源码阻塞：包括ae9b4cf原生code editor/clear、0e6980c identity drawer、b2d3f3a独立高级参数Button及main b4f8fa2清空helper。冻结main590a4f9全部production Swift与实现worktree一致，实际main UITest SDK离线typecheck通过。测试提交7e55a62/b62dd8a均已交协调者，未由本任务merge。完整simulator、20页截图及真实RPC由协调者执行；本任务只读其结果。
+- Status: Completed
+- Updated: 2026-10-01
+- 独立源码审查无剩余阻塞；最后复查 main 10ecef6、标签布局6dcec6b及原生editor/identity drawer/高级展开小diff。
+- 本任务交付测试7e55a62/b62dd8a与review文档；协调者整合到main。本任务没有操作sim、共享服务、用户身份或Downloads，没有merge；source/tests最后保持不变。
 
-可集成文件：`apps/ios/UITests/WorkspaceUITests.swift`、`apps/ios/Tests/AgentSettingsChecks.swift`、`scripts/check-ios-settings.py`，以及本验收目录文档。production源码/pbx未改；未commit/merge。
+## 自动化与实际证据
 
-## 纯 fixture
+| 类别 | 最终结果与边界 | 证据 |
+| --- | --- | --- |
+| Host production logic | SettingsDraft 10组PASS；缓存正文搜索2组、binding reasoning、owner snapshot隔离/持久历史保留PASS；实际main UITest SDK离线typecheck PASS | 本任务build/ios-parity-checks及REVIEW.md，调用真实生产helper，不复制算法 |
+| iPhone15 fixture UI | 17个不同testcase全部PASS：14首轮+Catalog/ClosedHistory/Login三项定向复测；涵盖设置路由、取消/失败/busy、Azure、目录、绑定、读取、扩展、scope草稿、正文搜索；没有真实LLM调用 | main build/ios-parity-fixture-final.log、ios-parity-fixture-retest.log；evidence/full-tests.json、retest-tests.json |
+| 小屏 | SE两项PASS，含大字体/键盘/横屏actions；标签修正后的SE大字体/横屏另由协调者确认PASS | main build/ios-parity-small-final.log；evidence/small-tests.json、small-labels-tests.json |
+| 真实Desktop路由 | 专用新iPhone15与预附着disposable PTY，Desktop设置读取与新UI路径PASS | main build/ios-parity-live-final.log |
+| 真实MCP/完整Skill | UI round-trip约94秒PASS：MCP disabled HTTP localhost:9导入、timeout=12345编辑读回、启停/确认删除；Desktop完整Skill安装、有效SKILL.md编辑读回、启停/确认删除。只操作预生成的两个UUID | main build/ios-parity-live-final.log；evidence/live-final-screenshots-tests.json |
+| Host RPC完整性 | 11个revision状态(20…30)、2个Skill版本；两版非Markdown资源SHA与baseline一致，无关配置SHA一致，UUID条目已删除，errors=0 | evidence/live-observations.json、live-baseline-hashes.json；本任务只读统计和哈希结果，未调用RPC |
+| 真实键盘 | printf/输入/Enter/delete/Tab/CtrlC最终PASS，0skip。第一次Tab失败来自disposable zsh -f未compinit；协调者仅该独立PTY启用compinit -D -i后完整重测成功 | main build/ios-parity-keyboard-final.log；evidence/keyboard-final-screenshots-tests.json |
+| Release | arm64 Release BUILD SUCCEEDED；最终日志仅既有静态libai_terminal_mobile.a debug-map重复对象警告 | main build/ios-parity-device-final.log |
+| 最后标签语义 | 6dcec6b显示连接协议/供应商/思考/默认绑定及三scope名称；10ecef6补当前选项accessibilityValue，绑定/选项/RPC逻辑与测试断言保留。Azure/catalog、binding-final及SE标签大字体定向实测由协调者确认PASS | evidence/labels-final-screenshots-tests.json、bindings-final-screenshots-tests.json、small-labels-tests.json |
 
-`WorkspaceUITests` 只用 `--login-fixture` 或 `--workspace-fixture`；设置/Global用 `--settings-fixture`。场景 `--settings-fixture-scenario=save-failure` 一次replace失败；`save-delayed`延迟3.5秒。测试添加 `ui-provider`/`ui-mcp`，endpoint为 `https://fixture.invalid/v1`，不使用正常凭据。所有fixture模式禁止normal AgentCache、migration、网络；defaults/history/keychain和生产账号隔离。fixtures由实现者生产DEBUG注入提供，测试不另实现业务reducer。测试覆盖独立Global/Session/第二Global草稿、目录分页/query cursor清理、binding当前覆盖回继承、读取边界、MCP确认删除/Skill编辑、设置来源返回、失败draft/busy、大字体/键盘/横屏固定actions。
+## 永久图集
 
-## opt-in live
+20页iOS截图与测试摘要/manifest在 main `doc/task/1001-ios-parity/evidence`，01-terminal至20-global-chat对应永久0930共用参考；04/06/10及小屏截图已由协调者刷新。capture来源映射见SCREENSHOTS.md。fixture中的数据、消息和配置是测试数据；截图只证明对应UI场景，不能冒充真实RPC配置结果。
 
-`LiveServiceUITests`仅在 `AI_TERMINAL_IOS_FIXTURE=/absolute/private/path.json`时启用；缺失时跳过。协调者使用全新专用iPhone15 `12E9EB2C-B331-4B83-9451-25797C989E2B`和 `--service-test`隔离身份，私有登录先由协调者完成；预先连接disposable PTY，terminal预置唯一typingMarker。JSON最小字段 `{ "session": "disposable-session-id", "typingMarker": "unique-fixture-marker-at-least-16-bytes", "caPemPath": "/absolute/public-ca.pem" }`，CA可省略，旧caPem纯公钥内容兼容。代码不读取password/username，不登录、不退出、不清空身份、不创建/关闭会话。先匹配marker，再匹配session row，选择后再次匹配marker，之后才可输入。
+## 准确未测范围
 
-只跑 `-only-testing:aTerminalUITests/WorkspaceUITests` 是 fixture UI；只跑 `-only-testing:aTerminalUITests/LiveServiceUITests` 是真实 PTY/read-only 设置路由。真实 MCP/Skill 配置操作另由协调者隔离 UUID RPC 数据路径执行，不能把 fixture save 当真实 RPC。
+- 未运行iOS真实LLM消息发送/完成、真实模型供应商/Azure凭据调用或真实目录discover；Session/Global消息与草稿UI为fixture，配置编辑关键合同另有host logic检查，真实配置读取路由已测。
+- 未实际走iOS系统folder选择器/手机文件夹上传UI；本次真实Skill是Desktop绝对目录完整安装/编辑。文件枚举、二进制/空文件、symlink/大小边界有host deterministic checks，不能替代fileImporter实际选择。
+- 没有真实硬件安装/运行；arm64证据为Release构建，实际交互为专用simulator。MCP导入/配置启停测试使用localhost:9，无真实MCP工具调用。
 
-## 已执行
+## 测试与数据合同
 
-- `xcrun swiftc -module-cache-path build/ios-parity-checks/swift-cache apps/ios/aTerminal/ChatStore.swift apps/ios/Tests/ChatStoreChecks.swift -o build/ios-parity-checks/chat-store-checks` 后运行：PASS，账号/服务器/设备/会话隔离、事件 cursor/dedup、请求边界、最近终端隔离。
-- `xcrun swiftc -frontend -parse apps/ios/UITests/WorkspaceUITests.swift`：PASS，仅 syntax。
-- `python3 scripts/check-ios-settings.py --source-root /Volumes/Code/public-worktree/aTerminal/1001-ios-parity-ui --ui-typecheck`：PASS，直接链接实际SettingsDraft.swift，10组host logic检查及完整UI XCTest的iOS Simulator SDK typecheck通过，没有launch设备。新增catalog cancelRead迟到success/error barrier。可在Git集成后省略source-root检查本checkout；结果与源码SHA位于 `build/ios-parity-checks/settings/verification.json`。
-- runner Python语法 `python3 -m py_compile scripts/check-ios-settings.py`：PASS。
-- `git diff --check`：PASS。
+WorkspaceUITests只用DEBUG fixture：defaults/history/AgentCache/Keychain隔离，禁止normalCache/migration/network。main helper由协调者维护：正规.clear验空后输入；没有clear的单行控件右端定位+UTF16长度delete后验空；TextView没有clear失败中止。所有失败断言不回显输入、凭据或配置dump；本分支旧helper保留历史，整合应保留main已实测版本，不复制文件。
 
-20页永久参考已逐页查看，fixture-01至20截图路由见SCREENSHOTS.md；关闭/离线history只读新测试与Global列表global.back、Skill编辑返回详情合同已同步。没有merge；未触碰设备/服务/用户身份。
-
-首轮7e55a62；第二b62dd8a含live extension、R9/R10回归及初始输入helper。本分支helper停留b62dd8a供历史记录，运行/整合始终保留协调者main最终helper，不复制文件。最新正规.clear按钮验空，缺少clear的单行输入用右端坐标+UTF16长度delete并验空，TextView缺clear失败中止。R12 owner、正文搜索/绑定补充checks已通过。
-
-只读设备日志：native-editor两项fixture UI通过；fixture-final先14项通过，fixture-retest的Catalog/ClosedHistory/Login三项再通过，合计17个不同fixture testcase全部PASS。新增正文only搜索测试也通过，20页capture留在协调者xcresult附件。live-final真实Desktop路由已PASS；MCP/Skill UUID与资源/原配置hash仍由协调者独立验证，不能用fixture结论替代。
-
-opt-in `LiveServiceUITests/testDisposableMcpAndSkillProductionFormsRoundTrip` 需要fixture可选 `mcpId`、`skillId`、`skillPath`。ID为纯UUID或合法字母/数字/-/_前缀+带连字符36位UUID，二者不同；Skill path为本轮Desktop完整临时包POSIX绝对路径。字段缺失/无效在launch前skip。安装前assert两个UUID都不存在，避免覆盖；MCP先disabled HTTP http://localhost:9/mcp，编辑call_timeout_ms=12345并读回，enable/disable/确认delete；Skill安装完整目录，只edit SKILL.md为固定有效frontmatter，读回、disable/enable/确认delete。只操作这两个UUID；不读credentials或配置dump、不send Agent、不运行terminal command、不登录/退出。host由协调者观察revision、非Markdown资源哈希与原配置完整性，失败兜底cleanup。真实测试由协调者执行，本任务只离线typecheck。
+LiveServiceUITests需opt-in AI_TERMINAL_IOS_FIXTURE，最小JSON为session/typingMarker/可选caPemPath，无credentials；先验证唯一marker与指定session，再执行允许操作。扩展测试另需mcpId/skillId/skillPath，ID为纯UUID或合法前缀+36位带连字符UUID，互不相同；缺失/无效在launch前skip，安装前确认UUID不存在。只编辑这两个UUID，不登录/退出/清空身份，不send Agent；host负责配置/资源哈希与失败cleanup。键盘case单独在已验证的disposable PTY输入固定测试命令。

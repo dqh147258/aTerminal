@@ -1,6 +1,6 @@
 # 独立审查记录
 
-**最终独立源码审查完成，无剩余阻塞。** 已审阅生产89fc011、1035586、2edd331、4400898、ae9b4cf、0e6980c、b2d3f3a、6dcec6b以及main10ecef6。R1–R12与后续原生输入、抽屉、高级展开、可见选择器标签及选中值语义均已修正。main590a4f9时生产源码字节与实现worktree一致；最后main10ecef6增加当前选项可访问性值，由独立子任务明确复核通过。pbx只加入必要源引用，签名设置未因实现子任务修改。helper由协调者main拥有，b4f8fa2的clear-first/单行验空路径已复核。测试提交7e55a62/b62dd8a由协调者集成；审查子任务未merge、未操作sim/服务/用户身份。设备执行与最终证据由协调者完成。
+**最终独立源码审查完成，无剩余阻塞。** 已审阅89fc011、1035586、2edd331、4400898、ae9b4cf、0e6980c、b2d3f3a、6dcec6b及main10ecef6，R1–R12与后续编辑/抽屉/展开/标签修正已确认。pbx仅加入必要源引用；helper由协调者main拥有，clear-first/单行验空路径已复核。测试7e55a62/b62dd8a已由协调者集成；本任务未merge、未操作sim/服务/用户身份。最终实测证据与未测边界完整汇总于HANDOFF.md。
 
 | ID / 优先级 | 具体代码与触发 | 影响 / 预期 | 证据 / 状态 |
 | --- | --- | --- | --- |
@@ -39,8 +39,8 @@
 
 只读日志确认：native-editor两项WorkspaceUITests fixture UI PASS；fixture-final首轮14项PASS，Catalog/ClosedHistory/Login三项fixture-retest PASS，合计17个不同fixture testcase均通过。此为协调者设备执行证据，不能写成单次17/17整套通过，也不能替代LiveService RPC。live-final第一个真实Desktop路线已PASS；实际MCP/Skill UUID操作与host资源/配置哈希由协调者另结算。
 
-## 最终结算（协调者归档）
+## 最后标签修正与实际收尾
 
-6dcec6b以现有FieldShell补齐连接协议、供应商、思考模式、默认绑定及三种scope的可见名称；10ecef6保留实际Picker标识并补当前选项的accessibilityValue。选项值、Binding和保存协议均不变。独立审查子任务已明确确认10ecef6语义修正通过；标签后Azure/catalog定向通过、binding含当前值/继承还原通过，小屏大字体/横屏复测通过。
+6dcec6b只用FieldShell增加可见连接协议/供应商/思考模式/默认绑定及Global/Session默认/当前覆盖标题；Picker selection/tag、scope、ID与保存逻辑保留，FieldShell没有父ID传播。10ecef6明确accessibilityValue为当前protocol/provider、中文模式/绑定选择、scope modelID或继承/未绑定文本；新可见名称与当前值均可被朗读，没有放宽test断言或改业务逻辑。Azure/catalog定向PASS，binding-final及SE标签大字体/横屏由协调者确认PASS，刷新04/06/10截图。源码复核无阻塞。
 
-最终17个fixture场景与3个真实Desktop场景都有通过结果。真实MCP/Skill表单完成修订20→30的导入、编辑、启停和删除；两个不可变Skill版本的文本/二进制资源哈希一致，无关配置哈希一致，UUID条目已移除。专用PTY字符/Enter/delete/Tab/Ctrl-C通过；隔离zsh首次未加载compinit导致Tab预期失败，fixture环境补全初始化后复测通过，没有改用户Shell配置。最终arm64 Release与x86_64 Debug构建通过。未执行实际iOS LLM/图片发送、系统文件夹选择/手机上传或用户密码/设备撤销，未用fixture成功替代真实RPC结论。永久20页截图、最终逐场景结果与资源观测位于协调目录`doc/task/1001-ios-parity/evidence`。
+最终只读实际证据：SE两项PASS；Live Desktop路线与约94秒UUID MCP/完整Skill UI PASS；live-observations为11状态/2版本，全部资源SHA与baseline一致、unrelated config SHA一致、UUID已删除/errors=0。keyboard-final独立PTY完整输入/Enter/delete/Tab/CtrlC PASS、0skip；首次zsh -f Tab失败由协调者仅测试PTY compinit -D -i修复环境。arm64 Release最终日志BUILD SUCCEEDED，仅既有静态库debug-map重复对象警告。未实测iOS真实LLM消息/供应商凭据调用、系统folder选择器/手机folder upload、真实硬件运行或MCP工具调用；fixture、host logic、真实RPC与build证据分别记录，见HANDOFF.md。

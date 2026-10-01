@@ -5,7 +5,7 @@
 
 ## 目标与范围
 
-对照 Android 当前实现和永久 UI 参考，建立功能差异/验证矩阵，独占更新 `apps/ios/UITests/WorkspaceUITests.swift`、新增关键确定性检查和隔离 runner。独立审查实现 worktree 的最终差异并向协调者报告。不得修改 production Swift 或 project.pbxproj，不操作模拟器、服务、用户账号或 Downloads；不 commit/merge。
+对照Android当前实现和永久UI参考，建立功能差异/验证矩阵，独占更新UI Tests、新增关键确定性检查和隔离runner，独立审查生产diff。不得修改production Swift/pbx，不操作模拟器、服务、用户账号或Downloads；后续明确授权测试/脚本/文档commit，仍不merge。
 
 ## 当前状态与证据
 
@@ -27,7 +27,7 @@
 
 ## 风险与回退
 
-无生产编辑。追加review原生editor/clear ae9b4cf、identity drawer 0e6980c、高级展开Button b2d3f3a及冻结main590a4f9，全部production Swift与实现worktree一致，无剩余源码阻塞。SettingsDraft direct10组及正文/绑定/owner checks通过，main最终helper与完整UITest离线typecheck通过。只读协调者日志确认17个不同fixture测试（14首轮+3定向复测）均PASS，真实Desktop路由PASS；MCP/Skill UUID/hash由协调者另验证。已交付7e55a62/b62dd8a，未由本任务merge或操作设备/服务/身份。
+无生产编辑，最后review6dcec6b可见标签及main10ecef6当前Value语义，无剩余源码阻塞。Host logic10组与正文/绑定/owner检查通过；协调者fixture17项、SE两项与标签后大字体/横屏通过，真实Desktop/UUID MCP完整Skill/最终keyboard通过，11revision/2version资源与无关config哈希一致、UUID已删，arm64 Release成功。未实测iOS真实LLM消息、系统folder选择/手机folder上传或真实硬件运行；准确边界与全部证据见HANDOFF.md。已交付测试/文档commit，未由本任务merge或操作设备/服务/身份。
 
 ## 未决问题、歧义与确认
 
