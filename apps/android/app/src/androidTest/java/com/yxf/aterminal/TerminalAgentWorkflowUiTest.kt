@@ -11,6 +11,7 @@ import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONTokener
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -25,7 +26,11 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /** Opt-in live workflow; the coordinator supplies files/terminal-agent-workflow-fixture.json:
- * {session, message, expected_model, timeout_seconds, previous_root_user_message_id?}.
+ * {session, message, expected_model, timeout_seconds, previous_root_user_message_id?,
+ *  codex_mode?: "exec" | "interactive"} (defaults to the original exec workflow).
+ * Interactive evidence requires a submitted launch, its TUI banner, and a submitted prompt echoed
+ * by a later read_terminal archive. Reports include those archives' bodies for coordinator review;
+ * launch/prompt evidence alone does not verify the generated animation or its completion.
  * Use an attached, idle test session; previous_root links a documented paused workflow recovery.
  * Starts the normal signed-in App, sends only through its Agent composer, and leaves it signed in.
  * The fixture contains no credentials. Reports/screenshots stay in the App's private files directory.
@@ -131,7 +136,8 @@ class TerminalAgentWorkflowUiTest {
         throw AssertionError("Run history exceeds 24 pages")
     }
 
-    private data class TerminalEvidence(val recordId: String, val sequence: Long, val body: String)
+    private enum class CodexMode { EXEC, INTERACTIVE }
+    private data class TerminalEvidence(val recordId: String, val sequence: Long, val body: String, val position: Int = Int.MAX_VALUE)
     // Split simple shell commands outside quoted arguments, comments and substitutions.
     // Here-documents are deliberately unsupported: their body is not executable shell input.
     private fun shellCommands(text: String): List<String> {
@@ -162,44 +168,157 @@ class TerminalAgentWorkflowUiTest {
     private val codexExec = Regex("^\\s*(?:(?:command|exec)\\s+)?(?:/[^\\s\\\"';&|]+/)?codex\\s+exec(?=\\s|$)")
     private val exitPrint = Regex("""^\s*printf\s+['"]([A-Z][A-Z0-9_]*_EXIT)=%[sd]\\n['"]\s+["']?\$\?["']?\s*$""")
     private val codexBanner = Regex("""(?m)^OpenAI Codex \(v[0-9][^\r\n)]*\)\s*$""")
+    private val codexTuiBanner = Regex("""(?m)^[ \t]*(?:│[ \t]*)?>_ OpenAI Codex \(v[0-9][^\r\n)]*\)[ \t]*(?:│)?[ \t]*\r?$""")
     private fun accepted(evidence: JSONObject): Boolean = evidence.optJSONObject("result")?.let {
         it.optBoolean("accepted") && !it.has("error") && it.opt("executed") != false
     } == true
-    private fun verifiedLaunch(calls: List<JSONObject>, observations: List<TerminalEvidence>): JSONObject? {
+    private fun sameSession(call: JSONObject): Boolean = call.getJSONObject("arguments").optString("session_id").let { it.isBlank() || it == session }
+    private fun submission(ordered: List<JSONObject>, index: Int): JSONObject? {
+        val evidence = ordered[index]
+        val call = evidence.getJSONObject("call")
+        if (call.optString("name") != "input_text" || !sameSession(call) || !accepted(evidence)) return null
+        if (call.getJSONObject("arguments").optBoolean("submit")) return evidence
+        // A draft qualifies only when the next write to this terminal is an accepted, plain Enter.
+        val next = ordered.drop(index + 1).firstOrNull {
+            val candidate = it.getJSONObject("call")
+            candidate.optString("name") in setOf("input_text", "send_keys") && sameSession(candidate)
+        } ?: return null
+        val nextCall = next.getJSONObject("call")
+        val keys = nextCall.getJSONObject("arguments")
+        return next.takeIf { nextCall.optString("name") == "send_keys" && accepted(next) &&
+            keys.optString("key").lowercase() == "enter" && (keys.optJSONArray("modifiers")?.length() ?: 0) == 0 &&
+            keys.optInt("repeat", 1) == 1 }
+    }
+    private fun after(observation: TerminalEvidence, evidence: JSONObject): Boolean =
+        observation.sequence > evidence.getLong("sequence") || (observation.sequence == evidence.getLong("sequence") &&
+            observation.position > evidence.optInt("result_position", evidence.getInt("position")))
+    private fun after(evidence: JSONObject, observation: TerminalEvidence): Boolean =
+        evidence.getLong("sequence") > observation.sequence || (evidence.getLong("sequence") == observation.sequence &&
+            evidence.getInt("position") > observation.position)
+
+    // Only literal shell words are supported. Fail closed on substitutions, redirection or shell
+    // syntax rather than treating text quoted for echo, a script, or a here-document as a launch.
+    private fun shellWords(command: String): List<String>? {
+        val words = mutableListOf<String>()
+        val word = StringBuilder()
+        var quote: Char? = null
+        var escaped = false
+        var started = false
+        for (char in command) {
+            if (escaped) { word.append(char); escaped = false; started = true; continue }
+            if (char == '\\' && quote != '\'') { escaped = true; started = true; continue }
+            if (quote == '\'') { if (char == quote) quote = null else word.append(char); continue }
+            if (char in "\u0024`" || (quote == null && char in "<>(){}")) return null
+            if (quote == '"') { if (char == quote) quote = null else word.append(char); continue }
+            if (char in "\"'") { quote = char; started = true; continue }
+            if (char.isWhitespace()) { if (started) { words.add(word.toString()); word.clear(); started = false } }
+            else { word.append(char); started = true }
+        }
+        if (quote != null || escaped) return null
+        if (started) words.add(word.toString())
+        return words
+    }
+    private data class CodexInvocation(val mode: CodexMode, val prompt: String?)
+    private fun codexInvocation(command: String): CodexInvocation? {
+        val words = shellWords(command) ?: return null
+        var index = if (words.firstOrNull() in setOf("command", "exec")) 1 else 0
+        val executable = words.getOrNull(index++) ?: return null
+        if (executable != "codex" && !(executable.startsWith('/') && executable.substringAfterLast('/') == "codex")) return null
+        val valueOptions = setOf("-c", "--config", "-m", "--model", "-p", "--profile", "-s", "--sandbox",
+            "-a", "--ask-for-approval", "-C", "--cd", "--add-dir", "--enable", "--disable", "-i", "--image")
+        val flags = setOf("--no-alt-screen", "--full-auto", "--search", "--oss", "--dangerously-bypass-approvals-and-sandbox")
+        var promptOnly = false
+        while (index < words.size) {
+            val word = words[index]
+            if (word == "--") { promptOnly = true; index++; break }
+            if (!word.startsWith('-')) break
+            if (word in valueOptions) { if (index + 1 >= words.size) return null; index += 2 }
+            else if (word.substringBefore('=') in valueOptions && '=' in word) index++
+            else if (word in flags) index++
+            else return null // Includes --version/-V and --help/-h probes.
+        }
+        val arguments = words.drop(index)
+        if (!promptOnly && arguments.firstOrNull() in setOf("exec", "e")) return CodexInvocation(CodexMode.EXEC, null)
+        // This fixture supports a new interactive session, not the CLI's administrative subcommands.
+        if (arguments.size > 1 || (!promptOnly && arguments.firstOrNull() in setOf("resume", "r", "fork", "review", "login", "logout",
+                "mcp", "mcp-server", "app", "app-server", "completion", "sandbox", "debug", "apply", "a", "cloud", "features", "help"))) return null
+        return CodexInvocation(CodexMode.INTERACTIVE, arguments.singleOrNull()?.takeIf { it.isNotBlank() })
+    }
+    private fun promptEchoed(body: String, prompt: String): Boolean {
+        fun compact(text: String) = text.filterNot { it.isWhitespace() }
+        val expected = compact(prompt)
+        if (expected.isEmpty()) return false
+        val lines = body.lines()
+        for ((index, line) in lines.withIndex()) {
+            val trimmed = line.trimStart()
+            if (!trimmed.startsWith("› ")) continue
+            val echo = StringBuilder(trimmed.removePrefix("› "))
+            if (compact(echo.toString()) == expected) return true
+            for (continuation in lines.drop(index + 1)) {
+                if (continuation.isNotEmpty() && !continuation.first().isWhitespace()) break
+                echo.append(continuation.trim())
+                val actual = compact(echo.toString())
+                if (actual == expected) return true
+                if (!expected.startsWith(actual)) break
+            }
+        }
+        return false
+    }
+    private fun verifiedInteractiveLaunch(ordered: List<JSONObject>, observations: List<TerminalEvidence>): JSONObject? {
+        val submitted = ordered.indices.mapNotNull { index -> submission(ordered, index)?.let { index to it } }
+        // A successful interactive launch cannot excuse an actual non-interactive launch in this Run.
+        if (submitted.any { (index, _) -> shellCommands(ordered[index].getJSONObject("call").getJSONObject("arguments").optString("text"))
+                .any { codexInvocation(it)?.mode == CodexMode.EXEC } }) return null
+        for ((index, launchSubmission) in submitted) {
+            val evidence = ordered[index]
+            val commands = shellCommands(evidence.getJSONObject("call").getJSONObject("arguments").optString("text"))
+            for (command in commands) {
+                val invocation = codexInvocation(command)?.takeIf { it.mode == CodexMode.INTERACTIVE } ?: continue
+                val banner = observations.firstOrNull { after(it, launchSubmission) && codexTuiBanner.containsMatchIn(it.body) } ?: continue
+                for ((promptIndex, promptSubmission) in submitted) {
+                    val promptCall = ordered[promptIndex]
+                    val prompt = if (promptIndex == index) invocation.prompt?.takeUnless { it.trimStart().startsWith('/') } ?: continue else {
+                        if (!after(promptCall, banner)) continue
+                        promptCall.getJSONObject("call").getJSONObject("arguments").optString("text").takeIf { it.isNotBlank() && !it.trimStart().startsWith('/') } ?: continue
+                    }
+                    val echoed = observations.firstOrNull { after(it, promptSubmission) && promptEchoed(it.body, prompt) } ?: continue
+                    return JSONObject().put("mode", "interactive").put("launch_command", command.trim())
+                        .put("call_record_id", evidence.getString("record_id")).put("submission_record_id", launchSubmission.getString("record_id"))
+                        .put("terminal_record_id", banner.recordId).put("prompt_call_record_id", promptCall.getString("record_id"))
+                        .put("prompt_submission_record_id", promptSubmission.getString("record_id")).put("prompt_terminal_record_id", echoed.recordId)
+                }
+            }
+        }
+        return null
+    }
+    private fun verifiedLaunch(calls: List<JSONObject>, observations: List<TerminalEvidence>, mode: CodexMode = CodexMode.EXEC): JSONObject? {
         val ordered = calls.sortedWith(compareBy({ it.getLong("sequence") }, { it.getInt("position") }))
+        if (mode == CodexMode.INTERACTIVE) return verifiedInteractiveLaunch(ordered, observations)
         for ((index, evidence) in ordered.withIndex()) {
             val call = evidence.getJSONObject("call")
-            if (call.optString("name") != "input_text" || !accepted(evidence)) continue
+            val submission = submission(ordered, index) ?: continue
             val args = call.getJSONObject("arguments")
             val commands = shellCommands(args.optString("text"))
             val launches = commands.indices.filter { codexExec.containsMatchIn(commands[it]) }
             if (launches.isEmpty()) continue
-            val submission = if (args.optBoolean("submit")) evidence else {
-                // A draft qualifies only when the next terminal write is an accepted, plain Enter.
-                val next = ordered.drop(index + 1).firstOrNull {
-                    it.getJSONObject("call").optString("name") in setOf("input_text", "send_keys")
-                } ?: continue
-                val nextCall = next.getJSONObject("call")
-                val keys = nextCall.getJSONObject("arguments")
-                if (nextCall.optString("name") != "send_keys" || !accepted(next) ||
-                    keys.optString("key").lowercase() != "enter" || (keys.optJSONArray("modifiers")?.length() ?: 0) != 0 ||
-                    keys.optInt("repeat", 1) != 1) continue
-                next
-            }
             val markers = launches.mapNotNull { commands.getOrNull(it + 1)?.let { command -> exitPrint.matchEntire(command)?.groupValues?.get(1) } }
             val observed = observations.firstOrNull { observation ->
-                observation.sequence >= submission.getLong("sequence") &&
+                after(observation, submission) &&
                     (codexBanner.containsMatchIn(observation.body) || observation.body.lineSequence().any { line -> markers.any { line.trimEnd('\r') == "$it=0" } })
             } ?: continue
-            return JSONObject().put("call_record_id", evidence.getString("record_id"))
+            return JSONObject().put("mode", "exec").put("call_record_id", evidence.getString("record_id"))
                 .put("submission_record_id", submission.getString("record_id")).put("terminal_record_id", observed.recordId)
         }
         return null
     }
 
-    private fun verifyCalls(items: JSONArray, message: String) {
+    private fun verifyCalls(items: JSONArray, message: String, mode: CodexMode = CodexMode.EXEC, validate: Boolean = true,
+                            loadRecord: (String, String?) -> String = ::record) {
+        report.put("evidence_collection_complete", false)
         val calls = JSONArray()
         report.put("tool_calls", calls)
+        val terminalReads = JSONArray()
+        report.put("terminal_observations", terminalReads)
         var foundMessage = false
         var foundElapsedWait = false
         val seen = mutableSetOf<String>()
@@ -207,7 +326,7 @@ class TerminalAgentWorkflowUiTest {
         for (index in 0 until items.length()) {
             val item = items.getJSONObject(index)
             var value = item.getJSONObject("value")
-            if (value.optBoolean("partial")) value = JSONObject(record(value.getString("record_id")))
+            if (value.optBoolean("partial")) value = JSONObject(loadRecord(value.getString("record_id"), null))
             if (item.getString("kind") == "user") foundMessage = foundMessage || value.optString("message") == message
             if (item.getString("kind") != "interaction") continue
             // The complete record index preserves call/result order; updates retain only a bounded tail.
@@ -219,32 +338,41 @@ class TerminalAgentWorkflowUiTest {
                 if (!seen.add(id)) continue
                 when (entry.optString("source")) {
                     "tool_call" -> {
-                        val call = JSONObject(record(id))
+                        val body = loadRecord(id, null)
+                        val call = JSONObject(body)
                         precedingCall = JSONObject().put("record_id", id).put("interaction_id", item.getString("id")).put("call", call)
-                            .put("sequence", item.getLong("sequence")).put("position", position)
-                        if (call.optString("name") in setOf("wait", "input_text", "send_keys")) calls.put(precedingCall)
+                            .put("call_body", body).put("sequence", item.getLong("sequence")).put("position", position)
+                        calls.put(precedingCall)
                     }
                     "tool_result" -> {
                         val call = precedingCall ?: continue
                         val name = call.getJSONObject("call").optString("name")
-                        if (name !in setOf("wait", "input_text", "send_keys")) continue
-                        val result = JSONObject(record(id))
-                        call.put("result_record_id", id).put("result", result)
-                        if (name == "wait" && result.length() == 1 && result.opt("elapsed_ms") is Number && result.getLong("elapsed_ms") > 0) foundElapsedWait = true
+                        val body = loadRecord(id, null)
+                        val result = JSONTokener(body).nextValue()
+                        call.put("result_record_id", id).put("result", result).put("result_body", body).put("result_position", position)
+                        if (name == "wait" && result is JSONObject && result.length() == 1 && result.opt("elapsed_ms") is Number && result.getLong("elapsed_ms") > 0) foundElapsedWait = true
                     }
                     else -> if (entry.optString("kind") == "text" && precedingCall?.getJSONObject("call")?.optString("name") == "read_terminal") {
-                        observations.add(TerminalEvidence(id, item.getLong("sequence"), record(id, item.getString("id"))))
+                        val body = loadRecord(id, item.getString("id"))
+                        observations.add(TerminalEvidence(id, item.getLong("sequence"), body, position))
+                        terminalReads.put(JSONObject().put("record_id", id).put("interaction_id", item.getString("id"))
+                            .put("call_record_id", precedingCall.getString("record_id")).put("sequence", item.getLong("sequence"))
+                            .put("position", position).put("body", body))
                     }
                 }
             }
         }
-        assertTrue("This Run did not contain the message submitted from the UI", foundMessage)
+        report.put("submitted_message_found", foundMessage).put("pure_wait_verified", foundElapsedWait)
         val recorded = (0 until calls.length()).map { calls.getJSONObject(it) }
+        val launch = verifiedLaunch(recorded, observations, mode)
+        report.put("verified_codex_launch", launch ?: JSONObject.NULL).put("evidence_collection_complete", true)
+        if (!validate) return
+        assertTrue("This Run did not contain the message submitted from the UI", foundMessage)
         assertTrue("No actual wait tool-call record in this Run", recorded.any { it.getJSONObject("call").optString("name") == "wait" })
         assertTrue("No wait result containing only a positive elapsed_ms in this Run", foundElapsedWait)
-        val launch = verifiedLaunch(recorded, observations)
-        assertNotNull("No accepted, submitted codex exec followed by archived Codex launch/completion output", launch)
-        report.put("verified_codex_launch", launch)
+        assertNotNull(if (mode == CodexMode.INTERACTIVE)
+            "No accepted, submitted interactive Codex launch with archived TUI banner and submitted prompt readback (or a non-interactive exec was submitted)"
+            else "No accepted, submitted codex exec followed by archived Codex launch/completion output", launch)
     }
 
     private fun fixtureCall(name: String, args: JSONObject, result: JSONObject? = JSONObject().put("accepted", true), sequence: Long = 1): JSONObject =
@@ -288,6 +416,129 @@ class TerminalAgentWorkflowUiTest {
         assertNull("Enter must submit the same unchanged draft", verifiedLaunch(listOf(draft, changedDraft, enter), afterEnter))
     }
 
+    @Test fun interactiveCodexEvidenceRequiresLaunchSubmissionAndPromptReadback() {
+        val prompt = "Create and run a pelican riding a bicycle character animation."
+        val banner = TerminalEvidence("tui", 2, "╭──────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.159.2)            │\n╰──────────────────────────────────────╯\n")
+        val echo = TerminalEvidence("prompt-echo", 4, "› Create and run a pelican riding a\n  bicycle character animation.\n\n• Creating the animation.\n")
+        val task = fixtureCall("input_text", JSONObject().put("text", prompt).put("submit", true), sequence = 3)
+        for (command in listOf("codex", "cd /fixture && command /usr/local/bin/codex --no-alt-screen --sandbox workspace-write",
+                "exec '/usr/local/bin/codex' -C '/fixture path' -c 'model_reasoning_effort=\"high\"'")) {
+            val launch = fixtureCall("input_text", JSONObject().put("text", command).put("submit", true))
+            val verified = verifiedLaunch(listOf(task, launch), listOf(echo, banner), CodexMode.INTERACTIVE)
+            assertNotNull("Submitted interactive launch and task must qualify: $command", verified)
+            assertEquals("interactive", verified!!.getString("mode"))
+            assertEquals("tui", verified.getString("terminal_record_id"))
+            assertEquals("prompt-echo", verified.getString("prompt_terminal_record_id"))
+        }
+        val inline = fixtureCall("input_text", JSONObject().put("text", "codex --no-alt-screen '$prompt'").put("submit", true))
+        assertNotNull("An initial positional prompt is interactive", verifiedLaunch(listOf(inline), listOf(banner, echo), CodexMode.INTERACTIVE))
+        val literalExecPrompt = fixtureCall("input_text", JSONObject().put("text", "codex -- 'exec'").put("submit", true))
+        assertNotNull("After --, exec is a prompt rather than a subcommand", verifiedLaunch(listOf(literalExecPrompt), listOf(banner, echo.copy(body = "› exec\n")), CodexMode.INTERACTIVE))
+        val launch = fixtureCall("input_text", JSONObject().put("text", "codex").put("submit", true))
+        assertNull("Launching a TUI without a task is insufficient", verifiedLaunch(listOf(launch), listOf(banner), CodexMode.INTERACTIVE))
+        assertNull("Accepted task input without terminal readback is insufficient", verifiedLaunch(listOf(launch, task), listOf(banner), CodexMode.INTERACTIVE))
+        assertNull("An unrelated task echo is insufficient", verifiedLaunch(listOf(launch, task), listOf(banner, echo.copy(body = "› Some other task\n")), CodexMode.INTERACTIVE))
+        assertNull("Task readback before its submission is insufficient", verifiedLaunch(listOf(launch, task), listOf(banner, echo.copy(sequence = 2)), CodexMode.INTERACTIVE))
+        assertNull("An exec banner is not a TUI banner", verifiedLaunch(listOf(launch, task), listOf(banner.copy(body = "OpenAI Codex (v0.159.2)\n"), echo), CodexMode.INTERACTIVE))
+        assertNull("Assistant descriptions are not TUI output", verifiedLaunch(listOf(launch, task), listOf(banner.copy(body = "Codex is running interactively."), echo), CodexMode.INTERACTIVE))
+    }
+
+    @Test fun interactiveCodexEvidenceRejectsExecProbesAndUnexecutedInput() {
+        val prompt = "Draw and run the character animation"
+        val banner = TerminalEvidence("tui", 2, ">_ OpenAI Codex (v0.159.2)\n")
+        val echo = TerminalEvidence("echo", 4, "› $prompt\n")
+        val task = fixtureCall("input_text", JSONObject().put("text", prompt).put("submit", true), sequence = 3)
+        fun input(text: String, submit: Boolean = true, result: JSONObject? = JSONObject().put("accepted", true)) =
+            fixtureCall("input_text", JSONObject().put("text", text).put("submit", submit), result)
+        for (command in listOf("codex exec '$prompt'", "codex --no-alt-screen exec '$prompt'", "codex -C /fixture e '$prompt'",
+                "codex --version", "command -v codex; codex --version", "codex --help", "codex login", "codex completion zsh",
+                "echo codex", "echo 'sample; codex'", "echo sample # codex", "cat <<EOF\ncodex\nEOF", "echo \$(codex)")) {
+            assertNull("Non-interactive commands and probes must fail: $command", verifiedLaunch(listOf(input(command), task), listOf(banner, echo), CodexMode.INTERACTIVE))
+        }
+        assertNull("An unsubmitted launch is a draft", verifiedLaunch(listOf(input("codex", false), task), listOf(banner, echo), CodexMode.INTERACTIVE))
+        for (result in listOf(null, JSONObject().put("error", "lease_lost").put("executed", false),
+                JSONObject().put("accepted", true).put("executed", false))) {
+            assertNull("A launch without an accepted execution receipt must fail", verifiedLaunch(listOf(input("codex", result = result), task), listOf(banner, echo), CodexMode.INTERACTIVE))
+        }
+        val launch = input("codex")
+        for (result in listOf(null, JSONObject().put("error", "lease_lost"), JSONObject().put("accepted", true).put("executed", false))) {
+            val rejectedTask = fixtureCall("input_text", JSONObject().put("text", prompt).put("submit", true), result, 3)
+            assertNull("A task without an accepted execution receipt must fail", verifiedLaunch(listOf(launch, rejectedTask), listOf(banner, echo), CodexMode.INTERACTIVE))
+        }
+        val exec = fixtureCall("input_text", JSONObject().put("text", "codex --sandbox workspace-write exec task").put("submit", true), sequence = 5)
+        assertNull("A valid interactive launch must not excuse another submitted exec", verifiedLaunch(listOf(launch, task, exec), listOf(banner, echo), CodexMode.INTERACTIVE))
+        assertNull("Exit markers cannot replace an interactive banner", verifiedLaunch(listOf(launch, task), listOf(banner.copy(body = "CODEX_FIXTURE_EXIT=0\n"), echo), CodexMode.INTERACTIVE))
+    }
+
+    @Test fun interactiveCodexEvidenceRequiresUnchangedDraftAndOrderedReceipts() {
+        val prompt = "Create and run the animation"
+        val launchDraft = fixtureCall("input_text", JSONObject().put("text", "codex"))
+        val launchEnter = fixtureCall("send_keys", JSONObject().put("key", "enter"), sequence = 2)
+        val banner = TerminalEvidence("tui", 3, ">_ OpenAI Codex (v0.159.2)\n")
+        val taskDraft = fixtureCall("input_text", JSONObject().put("text", prompt), sequence = 4)
+        val taskEnter = fixtureCall("send_keys", JSONObject().put("key", "enter"), sequence = 5)
+        val echo = TerminalEvidence("echo", 6, "› $prompt\n")
+        val calls = listOf(launchDraft, launchEnter, taskDraft, taskEnter)
+        assertNotNull(verifiedLaunch(calls, listOf(banner, echo), CodexMode.INTERACTIVE))
+        for (args in listOf(JSONObject().put("key", "enter").put("modifiers", JSONArray().put("ctrl")),
+                JSONObject().put("key", "enter").put("repeat", 2), JSONObject().put("key", "tab"))) {
+            val otherKey = fixtureCall("send_keys", args, sequence = 5)
+            assertNull("Only a plain single Enter submits a draft", verifiedLaunch(listOf(launchDraft, launchEnter, taskDraft, otherKey), listOf(banner, echo), CodexMode.INTERACTIVE))
+        }
+        val changed = fixtureCall("input_text", JSONObject().put("text", " changed"), sequence = 5)
+        assertNull("The launch draft must be unchanged", verifiedLaunch(listOf(launchDraft, changed, launchEnter.copyJsonSequence(6), taskDraft.copyJsonSequence(8), taskEnter.copyJsonSequence(9)),
+            listOf(banner.copy(sequence = 7), echo.copy(sequence = 10)), CodexMode.INTERACTIVE))
+        assertNull("The task draft must be unchanged", verifiedLaunch(listOf(launchDraft, launchEnter, taskDraft, changed, taskEnter.copyJsonSequence(6)),
+            listOf(banner, echo.copy(sequence = 7)), CodexMode.INTERACTIVE))
+        val launch = fixtureCall("input_text", JSONObject().put("text", "codex").put("submit", true)).put("result_position", 2)
+        val task = fixtureCall("input_text", JSONObject().put("text", prompt).put("submit", true), sequence = 2).put("result_position", 2)
+        assertNull("Same-unit output before the launch receipt must fail", verifiedLaunch(listOf(launch, task),
+            listOf(banner.copy(sequence = 1, position = 1), echo.copy(sequence = 2, position = 3)), CodexMode.INTERACTIVE))
+        assertNull("Same-unit output before the task receipt must fail", verifiedLaunch(listOf(launch, task),
+            listOf(banner.copy(sequence = 1, position = 3), echo.copy(sequence = 2, position = 1)), CodexMode.INTERACTIVE))
+        assertNotNull("Same-unit output after both receipts must qualify", verifiedLaunch(listOf(launch, task),
+            listOf(banner.copy(sequence = 1, position = 3), echo.copy(sequence = 2, position = 3)), CodexMode.INTERACTIVE))
+    }
+
+    private fun JSONObject.copyJsonSequence(sequence: Long) = JSONObject(toString()).put("sequence", sequence)
+
+    @Test fun pausedWorkflowDiagnosticsKeepRawCallsResultsAndTerminalBodies() {
+        val pause = "Run paused: tool_timeout_outcome_unknown"
+        report.put("error", pause)
+        val records = mapOf(
+            "state-call" to "{\"name\":\"get_terminal_state\",\"arguments\":{}}",
+            "state-result" to "{\"state\":\"running\"}",
+            "list-call" to "{\"name\":\"list_sessions\",\"arguments\":{}}",
+            "list-result" to "[]",
+            "input-call" to "{\"name\":\"input_text\",\"arguments\":{\"text\":\"codex\",\"submit\":true}}",
+            "input-result" to "{\"error\":\"lease_lost\",\"executed\":false}",
+            "read-call" to "{\"name\":\"read_terminal\",\"arguments\":{\"mode\":\"screen\"}}",
+            "terminal" to ">_ OpenAI Codex (v0.159.2)\nwaiting for approval\n")
+        val entries = JSONArray()
+        for ((id, _) in records) entries.put(JSONObject().put("record_id", id).put("kind", if (id == "terminal") "text" else "associated_text")
+            .put("source", if (id.endsWith("-call")) "tool_call" else if (id.endsWith("-result")) "tool_result" else JSONObject.NULL))
+        val history = JSONArray().put(JSONObject().put("id", "unit").put("kind", "interaction").put("sequence", 1)
+            .put("value", JSONObject().put("records", entries)))
+        verifyCalls(history, "missing while paused", CodexMode.INTERACTIVE, validate = false) { id, unit ->
+            if (id == "terminal") assertEquals("unit", unit) else assertNull(unit)
+            records.getValue(id)
+        }
+        assertEquals("Diagnostics must preserve the real pause error", pause, report.getString("error"))
+        assertTrue(report.getBoolean("evidence_collection_complete"))
+        assertFalse(report.getBoolean("submitted_message_found"))
+        assertFalse(report.getBoolean("pure_wait_verified"))
+        assertTrue(report.isNull("verified_codex_launch"))
+        val calls = report.getJSONArray("tool_calls")
+        assertEquals("Include all archived tools, including rejected writes", 4, calls.length())
+        assertEquals(records.getValue("state-call"), calls.getJSONObject(0).getString("call_body"))
+        assertEquals(records.getValue("list-result"), calls.getJSONObject(1).getString("result_body"))
+        assertEquals("lease_lost", calls.getJSONObject(2).getJSONObject("result").getString("error"))
+        val observations = report.getJSONArray("terminal_observations")
+        assertEquals(1, observations.length())
+        assertEquals(records.getValue("terminal"), observations.getJSONObject(0).getString("body"))
+        assertEquals("read-call", observations.getJSONObject(0).getString("call_record_id"))
+    }
+
     @Test fun terminalAgentWorkflowUsesConfiguredModelAndRealTools() {
         val file = File(context.filesDir, "terminal-agent-workflow-fixture.json")
         assumeTrue("Explicit private workflow fixture required", file.isFile)
@@ -295,18 +546,24 @@ class TerminalAgentWorkflowUiTest {
         var originalIdentity: List<String>? = null
         var submitted = false
         var root = ""
+        var message = ""
+        var codexMode = CodexMode.EXEC
         var failure: Throwable? = null
         try {
             assertTrue("Fixture exceeds 64 KiB", file.length() <= 65536)
             val fixture = JSONObject(file.readText())
             session = fixture.getString("session")
-            val message = fixture.getString("message").trim()
+            message = fixture.getString("message").trim()
+            val mode = fixture.optString("codex_mode", "exec")
+            assertTrue("codex_mode must be exec or interactive", mode in setOf("exec", "interactive"))
+            codexMode = if (mode == "interactive") CodexMode.INTERACTIVE else CodexMode.EXEC
             val expectedModel = fixture.getString("expected_model")
             val previousRoot = fixture.optString("previous_root_user_message_id").takeUnless { it.isBlank() || it == "null" }
             val seconds = fixture.optLong("timeout_seconds", 1800)
             assertTrue("Invalid fixture fields", session.isNotBlank() && message.isNotBlank() && expectedModel.isNotBlank() && seconds in 1L..3600L)
             deadline = started + seconds * 1000
-            report.put("session", session).put("expected_model", expectedModel).put("timeout_seconds", seconds).put("diagnostic_grace_seconds", 30)
+            report.put("session", session).put("expected_model", expectedModel).put("timeout_seconds", seconds)
+                .put("codex_mode", mode).put("diagnostic_grace_seconds", 30)
             context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
             waitFor("normal MainActivity", minOf(deadline, started + 60000)) {
                 main { ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<MainActivity>()
@@ -395,7 +652,7 @@ class TerminalAgentWorkflowUiTest {
                 for (index in 0 until previousHistory.length()) currentHistory.put(previousHistory.getJSONObject(index))
                 report.put("history", currentHistory)
             }
-            verifyCalls(currentHistory, message)
+            verifyCalls(currentHistory, message, codexMode)
         } catch (error: Throwable) { failure = error; report.put("error", error.toString()) }
         finally {
             // A timeout does not cancel the Desktop Run or send any terminal input.
@@ -403,7 +660,8 @@ class TerminalAgentWorkflowUiTest {
             if (submitted && ::remote.isInitialized && failure != null) {
                 try {
                     report.put("state", agent("state"))
-                    if (root.isNotEmpty()) history(root)
+                    if (root.isNotEmpty() && !report.optBoolean("evidence_collection_complete"))
+                        verifyCalls(history(root), message, codexMode, validate = false)
                 } catch (error: Throwable) { report.put("diagnostic_error", error.toString()) }
             }
             if (originalIdentity != null) try {
