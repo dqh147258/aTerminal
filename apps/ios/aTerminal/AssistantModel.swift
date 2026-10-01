@@ -83,6 +83,20 @@ struct AgentItem: Identifiable {
     private var task: Task<Void, Never>?
     private weak var terminal: TerminalModel?
     private var cache: AgentCache?
+    private let historySearch: AgentSearchSession
+    @Published private(set) var historyCacheRevision = 0
+    var historySearchBusy: Bool { historySearch.busy }
+    var historySearchError: String { historySearch.error }
+    func searchCachedHistory(query: String, scopes: [ChatScope], refresh: Bool = false) {
+        guard let identity = scope?.identity else { historySearch.cancel(); return }
+        let allowed = Set(scopes.filter { $0.identity == identity && !$0.session.isEmpty && !$0.session.hasPrefix("global:") }.map(\.key))
+        historySearch.update(identity: identity.key, query: query, scopes: allowed, refresh: refresh)
+    }
+    func cachedHistoryMatches(_ scope: ChatScope, query: String) -> Bool {
+        guard scope.identity == self.scope?.identity else { return false }
+        return historySearch.contains(scope: scope.key, identity: scope.identity.key, query: query)
+    }
+    func cancelHistorySearch() { historySearch.cancel() }
     var canSend: Bool { writeReason == nil && connected && available && !submitting && (global ? globalID != nil : !(target?.session ?? "").isEmpty) && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty) }
     var canCancel: Bool { writeReason == nil && connected && running }
     var writeReason: String? {
@@ -101,6 +115,12 @@ struct AgentItem: Identifiable {
     }
     var target: ChatScope? { (historyTarget ?? scope).map { ChatScope(identity: $0.identity, device: $0.device, session: global ? globalID.map { "global:" + $0 } ?? "" : $0.session) } }
     init() {
+        let path = WorkspacePreferences.historyDirectory.appendingPathComponent("agent-cache.sqlite3").path
+        historySearch = AgentSearchSession { scopes, query in
+            let worker = Task.detached(priority: .userInitiated) { try AgentCacheSearch.matches(path: path, scopes: scopes, query: query) }
+            return try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
+        }
+        historySearch.changed = { [weak self] in self?.objectWillChange.send() }
         do {
             let root = WorkspacePreferences.historyDirectory
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -115,6 +135,7 @@ struct AgentItem: Identifiable {
         contextConnection = terminal.generation
         if connectionChanged || self.connected != connected { globalEpoch += 1; globalLoading = false; globalCreating = false; globalConfirmed = false; archiveLoading = false }
         let changedDesktop = self.scope?.identity != scope?.identity || self.scope?.device != scope?.device
+        if self.scope?.identity != identity { historySearch.cancel() }
         saveDraft(); stop(); self.scope = scope; historyTarget=nil; self.connected = connected; available = false
         if let identity, let data = WorkspacePreferences.defaults.data(forKey: "agent.archives." + identity.key) { archives = (try? JSONDecoder().decode([ChatArchive].self, from: data)) ?? [] }
         else { archives = [] }
@@ -129,6 +150,9 @@ struct AgentItem: Identifiable {
                             ChatArchive(scope: ChatScope(identity: identity, device: "fixture-offline-desktop", session: "fixture-offline"), title: "离线历史", deviceName: "Offline Desktop")]
             for archive in examples where !archives.contains(where: { $0.scope == archive.scope }) { archives.append(archive) }
             saveArchives()
+            let closed = ChatScope(identity: identity, device: "fixture-desktop", session: "fixture-closed")
+            let page: [String: Any] = ["generation": 1, "has_more": false, "items": [["id": "fixture-body-search", "sequence": 1, "kind": "assistant", "value": ["text": "正文专有词 星河缓存检索 cedar-body-only-731"]]]]
+            if let bytes = try? JSONSerialization.data(withJSONObject: page) { try? cache?.storePage(scope: closed.key, cursor: nil, page: String(decoding: bytes, as: UTF8.self)) }
         }
         #endif
         if connected {loadArchives()}
@@ -180,6 +204,7 @@ struct AgentItem: Identifiable {
             status = (global ? "全局" : "当前终端") + " · " + state + (response["error"] as? String).map { " · " + $0 }.orEmpty
             if let next = (response["history_generation"] as? NSNumber)?.int64Value {
                 try cache?.reconcile(scope: target.key, generation: next)
+                historyCacheRevision += 1
                 if let generation, generation != next { reset() }
                 else if !browsing { load(first: true) }
             }
@@ -204,6 +229,7 @@ struct AgentItem: Identifiable {
                     response["items"] = expanded
                     let text = String(decoding: try JSONSerialization.data(withJSONObject: response), as: UTF8.self)
                     try? cache?.storePage(scope: target.key, cursor: before, page: text)
+                    historyCacheRevision += 1
                 } catch {
                     guard let text = try cache?.page(scope: target.key, cursor: before), let cached = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else { throw error }
                     response = cached; offline = true
