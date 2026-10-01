@@ -245,6 +245,31 @@ mod tests {
     use super::*;
     use ai_terminal_engine::Engine;
     use crossterm::event::KeyEvent;
+    #[test]
+    fn focus_notifications_require_application_mode_and_keep_protocol_bytes() {
+        let mut engine = Engine::new(4, 12, 1).unwrap();
+        for (event, bytes) in [
+            (Event::FocusGained, b"\x1b[I"),
+            (Event::FocusLost, b"\x1b[O"),
+        ] {
+            assert!(encode(event.clone(), engine.input_modes()).is_none());
+            engine.feed(b"\x1b[?1004h");
+            assert!(matches!(
+                route(event.clone(), &engine.snapshot(), false, false),
+                Action::Bytes(encoded) if encoded == bytes
+            ));
+            assert!(matches!(
+                route(event.clone(), &engine.snapshot(), false, true),
+                Action::Ignore
+            ));
+            engine.feed(b"\x1b[?1004l");
+            assert!(matches!(
+                route(event, &engine.snapshot(), false, false),
+                Action::Ignore
+            ));
+        }
+    }
+
     fn wheel(kind: MK, modifiers: M) -> Event {
         Event::Mouse(crossterm::event::MouseEvent {
             kind,
