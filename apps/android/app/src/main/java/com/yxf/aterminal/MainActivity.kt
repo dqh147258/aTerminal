@@ -623,17 +623,49 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             }); gap(16)
             addView(label("最近使用", 12f, Palette.muted)); addView(loading); addView(recent)
         }
-        val dialog = AlertDialog.Builder(this).setTitle("新建会话").setView(scroll(content).apply { isFillViewport = false })
+        val viewport = scroll(content).apply { isFillViewport = false }
+        val dialog = AlertDialog.Builder(this).setTitle("新建会话").setView(viewport)
             .setNegativeButton("取消", null).setPositiveButton("创建", null).create()
         fun current() = active && dialog.isShowing && generation == version && deviceId == desktop && connected
+        var removeLayoutListener: (() -> Unit)? = null
         createDialog = dialog
-        dialog.setOnDismissListener { if (createDialog === dialog) createDialog = null }
+        dialog.setOnDismissListener {
+            removeLayoutListener?.invoke(); removeLayoutListener = null
+            if (createDialog === dialog) createDialog = null
+        }
         dialog.setOnShowListener {
             dialog.window?.setBackgroundDrawable(shape(Palette.surface, true))
-            // AlertDialog bounds its custom ScrollView after reserving title/buttons.
-            // WRAP_CONTENT avoids empty space for short lists and resizes above the IME.
             dialog.window?.setLayout(-1, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
             dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            val decor = dialog.window!!.decorView
+            val visible = android.graphics.Rect()
+            val decorPosition = IntArray(2); val contentPosition = IntArray(2); val buttonPosition = IntArray(2)
+            val fitContent = android.view.ViewTreeObserver.OnGlobalLayoutListener {
+                if (!dialog.isShowing || decor.height == 0 || viewport.width == 0 || content.height == 0) return@OnGlobalLayoutListener
+                decor.getWindowVisibleDisplayFrame(visible)
+                if (visible.height() <= 0) return@OnGlobalLayoutListener
+                decor.getLocationOnScreen(decorPosition); viewport.getLocationOnScreen(contentPosition)
+                // Native AlertDialog may reserve only the footer's minimum height during IME
+                // resize. Include complete button hit areas, even if they extend past decor.
+                var footerBottom = decorPosition[1] + decor.height
+                for (which in intArrayOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE)) {
+                    val button = dialog.getButton(which)
+                    button.getLocationOnScreen(buttonPosition)
+                    footerBottom = maxOf(footerBottom, buttonPosition[1] + button.height)
+                }
+                val titleHeight = (contentPosition[1] - decorPosition[1]).coerceAtLeast(0)
+                val footerHeight = (footerBottom - contentPosition[1] - viewport.height).coerceAtLeast(0)
+                val available = (visible.height() - titleHeight - footerHeight - dp(8)).coerceAtLeast(0)
+                // ScrollView measures its child at natural height: this also grows back after
+                // IME dismissal and shrinks to fit empty/short lists without a fixed window size.
+                val height = minOf(content.height + viewport.paddingTop + viewport.paddingBottom, available)
+                if (viewport.layoutParams.height != height) {
+                    viewport.layoutParams = viewport.layoutParams.apply { this.height = height }
+                }
+            }
+            val observer = decor.viewTreeObserver
+            observer.addOnGlobalLayoutListener(fitContent)
+            removeLayoutListener = { if (observer.isAlive) observer.removeOnGlobalLayoutListener(fitContent) }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 if (!current() || submitting) return@setOnClickListener
                 // Keep the exact path: spaces and shell metacharacters are valid directory names.
