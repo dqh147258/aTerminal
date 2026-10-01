@@ -1,6 +1,6 @@
 # 验收状态与执行边界
 
-独立源码审查已完成：R1–R12已确认修复，无剩余源码阻塞。main生产Swift与实现worktree4400898一致，main10f2add仅改Command-A测试输入helper且实际main UITest SDK离线typecheck通过。测试提交7e55a62/b62dd8a均已交协调者，未由本任务merge。主checkout完整simulator XCTest、20页截图及隔离真实RPC由协调者执行；本任务不宣称已实测通过。
+最新独立源码审查已完成，无剩余源码阻塞：包括ae9b4cf原生code editor/clear、0e6980c identity drawer、b2d3f3a独立高级参数Button及main b4f8fa2清空helper。冻结main590a4f9全部production Swift与实现worktree一致，实际main UITest SDK离线typecheck通过。测试提交7e55a62/b62dd8a均已交协调者，未由本任务merge。完整simulator、20页截图及真实RPC由协调者执行；本任务只读其结果。
 
 可集成文件：`apps/ios/UITests/WorkspaceUITests.swift`、`apps/ios/Tests/AgentSettingsChecks.swift`、`scripts/check-ios-settings.py`，以及本验收目录文档。production源码/pbx未改；未commit/merge。
 
@@ -24,6 +24,8 @@
 
 20页永久参考已逐页查看，fixture-01至20截图路由见SCREENSHOTS.md；关闭/离线history只读新测试与Global列表global.back、Skill编辑返回详情合同已同步。没有merge；未触碰设备/服务/用户身份。
 
-首轮提交7e55a62；第二提交b62dd8a含live extension、R9/R10回归及初始共用SelectAll helper。后续菜单在iOS17.5不可用，协调者main10f2add改为原生Command-A；本分支helper停留b62dd8a供历史记录，合并/运行应保留main最终helper，不复制文件。v3实际smoke结果由协调者确认。R12实际owner隔离检查已通过，正文搜索/绑定补充检查亦通过。
+首轮7e55a62；第二b62dd8a含live extension、R9/R10回归及初始输入helper。本分支helper停留b62dd8a供历史记录，运行/整合始终保留协调者main最终helper，不复制文件。最新正规.clear按钮验空，缺少clear的单行输入用右端坐标+UTF16长度delete并验空，TextView缺clear失败中止。R12 owner、正文搜索/绑定补充checks已通过。
+
+只读设备日志：native-editor两项fixture UI通过；fixture-final先14项通过，fixture-retest的Catalog/ClosedHistory/Login三项再通过，合计17个不同fixture testcase全部PASS。新增正文only搜索测试也通过，20页capture留在协调者xcresult附件。live-final真实Desktop路由已PASS；MCP/Skill UUID与资源/原配置hash仍由协调者独立验证，不能用fixture结论替代。
 
 opt-in `LiveServiceUITests/testDisposableMcpAndSkillProductionFormsRoundTrip` 需要fixture可选 `mcpId`、`skillId`、`skillPath`。ID为纯UUID或合法字母/数字/-/_前缀+带连字符36位UUID，二者不同；Skill path为本轮Desktop完整临时包POSIX绝对路径。字段缺失/无效在launch前skip。安装前assert两个UUID都不存在，避免覆盖；MCP先disabled HTTP http://localhost:9/mcp，编辑call_timeout_ms=12345并读回，enable/disable/确认delete；Skill安装完整目录，只edit SKILL.md为固定有效frontmatter，读回、disable/enable/确认delete。只操作这两个UUID；不读credentials或配置dump、不send Agent、不运行terminal command、不登录/退出。host由协调者观察revision、非Markdown资源哈希与原配置完整性，失败兜底cleanup。真实测试由协调者执行，本任务只离线typecheck。

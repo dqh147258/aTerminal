@@ -27,7 +27,7 @@
 
 ## 风险与回退
 
-无生产编辑。独立review生产89fc011、1035586、2edd331、4400898及main整合10f2add，R1–R12修正确认，无剩余源码审查阻塞。10组SettingsDraft direct、正文搜索/绑定/owner snapshot检查、main原生Command-A UITestInput离线typecheck通过。已交付7e55a62/b62dd8a两个[未Review]测试提交；无本任务merge或设备/服务/身份操作。协调者负责完整sim截图/真实RPC；输入smoke v3与live运行结果不冒充本任务实测。
+无生产编辑。追加review原生editor/clear ae9b4cf、identity drawer 0e6980c、高级展开Button b2d3f3a及冻结main590a4f9，全部production Swift与实现worktree一致，无剩余源码阻塞。SettingsDraft direct10组及正文/绑定/owner checks通过，main最终helper与完整UITest离线typecheck通过。只读协调者日志确认17个不同fixture测试（14首轮+3定向复测）均PASS，真实Desktop路由PASS；MCP/Skill UUID/hash由协调者另验证。已交付7e55a62/b62dd8a，未由本任务merge或操作设备/服务/身份。
 
 ## 未决问题、歧义与确认
 

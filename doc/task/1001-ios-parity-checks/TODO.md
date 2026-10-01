@@ -17,3 +17,8 @@
 - [x] 审查main原生Command-A helper小修改，Xcode15.4头文件支持、main实际UI源离线typecheckPASS。
 
 验收子任务完成。本任务没有运行sim/真实RPC；协调者负责v3 input smoke、完整fixture截图与live扩展资源/配置哈希，后续具体问题可再send。
+
+- [x] 追加review ae9b4cf NativeCodeEditor/clear的IME、selection、busy/readonly与delegate生命周期边界。
+- [x] 复查main b4f8fa2 helper及f93fac8正文搜索fixture，不修改协调者helper。
+- [x] 复查0e6980c drawer identity转场与b2d3f3a独立advanced按钮，冻结main590a4f9源码比对/UITest typecheck PASS。
+- [x] 只读fixture-final/retest日志，确认14+3合计17个不同fixture测试PASS；实际live哈希由协调者拥有。
