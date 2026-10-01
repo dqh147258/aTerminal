@@ -1,0 +1,9 @@
+{
+  "plan": "doc/task/1001-ios-parity-checks/PLAN.md",
+  "completed": ["reference comparison", "TEST_CONTRACT and MATRIX", "removed live auth/logout/identity-clear/secret-error-label assertions", "15 fixture UI tests and 2 opt-in preattached live tests", "direct production SettingsDraft 9-group harness", "R1-R3 fixes independently verified", "offline complete XCTest simulator-SDK typecheck", "ChatStore host checks, Python syntax and diff check"],
+  "next": ["receive final implementation worktree diff", "recheck R4-R8 and final UI IDs / fixture data", "report final independent review"],
+  "ready_for_integration": true,
+  "artifacts": ["doc/task/1001-ios-parity-checks/TEST_CONTRACT.md", "doc/task/1001-ios-parity-checks/MATRIX.md", "doc/task/1001-ios-parity-checks/REVIEW.md", "doc/task/1001-ios-parity-checks/HANDOFF.md", "apps/ios/UITests/WorkspaceUITests.swift", "apps/ios/Tests/AgentSettingsChecks.swift", "scripts/check-ios-settings.py"],
+  "verification": {"chat_store_host": "passed", "settings_direct_production": "9 groups passed", "production_settings_sha256": "358a057c1e6b5064ed8290452f8068dedba095c30fb98532fb5d4b74235ee264", "ui_swift_parse": "passed", "ui_simulator_sdk_typecheck": "passed; no simulator launched", "python_syntax": "passed", "git_diff_check": "passed", "simulator": "not run; coordinator owned", "real_rpc": "not run; opt-in preattached disposable session only"},
+  "constraints": ["no production Swift/pbx edits", "no simulator/service/account/Downloads operation", "no commit/merge"]
+}
