@@ -60,7 +60,7 @@ struct WorkspaceScreen: View {
                 if drawer && !model.preparingWorkspace {
                     Color.black.opacity(0.4).ignoresSafeArea().onTapGesture { drawer = false }.accessibilityHidden(true)
                     drawerView.frame(width: min(340, geometry.size.width - 28)).frame(maxHeight: .infinity)
-                        .background(WorkspaceStyle.surface).transition(.move(edge: .leading)).accessibilityAddTraits(.isModal)
+                        .background(WorkspaceStyle.surface).transition(.identity).accessibilityAddTraits(.isModal)
                 }
                 if let panel, !model.preparingWorkspace {
                     let height = panelHeight(panel, available: geometry.size.height)
