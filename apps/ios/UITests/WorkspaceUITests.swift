@@ -8,10 +8,18 @@ private enum UITestInput {
         field.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Input keyboard is unavailable", file: file, line: line)
         let existing = field.value as? String ?? ""
+        if existing == value { return }
         let hasExistingText = !existing.isEmpty && existing != field.placeholderValue
         if hasExistingText {
-            field.typeKey("a", modifierFlags: .command)
-            field.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
+            let clear = app.buttons[field.identifier + ".clear"]
+            if clear.exists {
+                if !clear.isHittable { app.scrollViews.firstMatch.swipeUp() }
+                clear.tap()
+                field.tap()
+            } else {
+                field.typeKey("a", modifierFlags: .command)
+                field.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
+            }
             let cleared = field.value as? String ?? ""
             if !cleared.isEmpty && cleared != field.placeholderValue {
                 let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
