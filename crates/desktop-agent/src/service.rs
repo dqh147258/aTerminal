@@ -1076,7 +1076,10 @@ fn handle_session(
             let signature = req.encode_to_vec();
             if !control.input(req.client, req.control_epoch, req.input_seq, &signature)? {
                 let bytes = encode_input(&req, engine)?;
-                let changed = !bytes.is_empty();
+                // Application-requested focus reports are protocol traffic, not manual input.
+                let focus_notification =
+                    engine.focus_reporting() && matches!(bytes.as_slice(), b"\x1b[I" | b"\x1b[O");
+                let changed = !bytes.is_empty() && !focus_notification;
                 pty.write(bytes)?;
                 if changed {
                     info.manual_revision += 1;
@@ -1223,6 +1226,302 @@ fn encode_input(request: &Request, engine: &Engine) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod service_tests {
     use super::*;
+
+    /// A fresh session actor and real PTY, with no listener or existing Desktop service.
+    #[cfg(unix)]
+    struct FocusSession {
+        actor: Actor,
+        worker: Option<thread::JoinHandle<()>>,
+        base: Request,
+    }
+
+    #[cfg(unix)]
+    impl FocusSession {
+        fn new(workload: &str) -> Self {
+            let command = [
+                OsString::from("/bin/sh"),
+                OsString::from("-c"),
+                OsString::from(workload),
+            ];
+            let pty = Session::spawn(&command, None, 24, 80).unwrap();
+            let engine = Engine::new(24, 80, 7).unwrap();
+            let (actor, rx) = mpsc::sync_channel(128);
+            let worker = thread::spawn(move || {
+                session_loop("focus-test".into(), PathBuf::new(), engine, pty, 1, rx)
+            });
+            let base = Request {
+                client: 1,
+                session_epoch: 7,
+                control_epoch: 1,
+                ..Default::default()
+            };
+            let session = Self {
+                actor,
+                worker: Some(worker),
+                base,
+            };
+            let attached = session.call(Request {
+                operation: Operation::AttachDesktop as i32,
+                ..session.base.clone()
+            });
+            assert!(attached.error.is_empty(), "{}", attached.error);
+            session.wait_for("READY");
+            session
+        }
+
+        fn call(&self, request: Request) -> Reply {
+            request_actor(&self.actor, request).unwrap()
+        }
+
+        fn agent(&self, request: Request, gate: Option<ExecutionGate>) -> Reply {
+            request_actor_guarded(&self.actor, request, gate).unwrap()
+        }
+
+        fn wait_for(&self, text: &str) -> Reply {
+            let until = Instant::now() + Duration::from_secs(5);
+            loop {
+                let reply = self.call(Request {
+                    operation: Operation::Poll as i32,
+                    ..self.base.clone()
+                });
+                assert!(reply.error.is_empty(), "{}", reply.error);
+                let frame = reply.snapshot.as_ref().unwrap();
+                let screen: String = frame.cells.iter().map(|cell| cell.text.as_str()).collect();
+                if screen.contains(text) {
+                    return reply;
+                }
+                assert!(Instant::now() < until, "missing {text:?}: {screen:?}");
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for FocusSession {
+        fn drop(&mut self) {
+            let _ = request_actor(
+                &self.actor,
+                Request {
+                    operation: Operation::Close as i32,
+                    ..self.base.clone()
+                },
+            );
+            let _ = self.worker.take().unwrap().join();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn focus_notifications_preserve_agent_fence_and_reach_real_pty() {
+        let session = FocusSession::new(
+            r"stty raw -echo; printf '\033[?1004hREADY'; dd bs=1 count=7 2>/dev/null | od -An -tx1; printf '\033[?1004lDONE'; exec cat",
+        );
+        let initial = session.wait_for("READY");
+        assert_ne!(initial.snapshot.unwrap().input_modes & 4, 0);
+        let initial = initial.info.unwrap();
+        let focus = Request {
+            operation: Operation::Input as i32,
+            input_seq: 1,
+            input: b"\x1b[I".to_vec(),
+            ..session.base.clone()
+        };
+        let gained = session.call(focus.clone());
+        assert!(gained.error.is_empty(), "{}", gained.error);
+        let gate = Arc::new(Mutex::new(true));
+        let agent = Request {
+            operation: Operation::AgentAcquire as i32,
+            manual_revision: initial.manual_revision,
+            ..session.base.clone()
+        };
+        let acquired = session.agent(agent.clone(), Some(gate.clone()));
+        assert_eq!(
+            gained.info.as_ref().unwrap().manual_revision,
+            initial.manual_revision,
+            "focus notification invalidated Agent fence: {}",
+            acquired.error
+        );
+        assert!(acquired.error.is_empty(), "{}", acquired.error);
+        assert_eq!(gained.accepted_input_seq, 1);
+        let info = gained.info.unwrap();
+        assert_eq!(info.next_input_seq, 2);
+        assert_eq!(info.control_epoch, initial.control_epoch);
+        assert_eq!(info.availability_epoch, initial.availability_epoch);
+        assert!(info.desktop_attached);
+        // An identical retry acknowledges the sequence without writing a second focus event.
+        let duplicate = session.call(focus.clone());
+        assert_eq!(duplicate.accepted_input_seq, 1);
+        assert_eq!(duplicate.info.unwrap().next_input_seq, 2);
+        let conflicting = session.call(Request {
+            input: b"\x1b[O".to_vec(),
+            ..focus
+        });
+        assert!(conflicting.error.contains("conflicting retry"));
+        let write = Request {
+            operation: Operation::AgentWrite as i32,
+            input: b"x".to_vec(),
+            ..agent.clone()
+        };
+        assert_eq!(
+            session.agent(write.clone(), None).error,
+            "internal_agent_permit_required"
+        );
+        assert_eq!(
+            session
+                .agent(write.clone(), Some(Arc::new(Mutex::new(false))))
+                .error,
+            "agent_cancelled"
+        );
+        assert!(session.agent(write, Some(gate.clone())).error.is_empty());
+        let lost = session.call(Request {
+            operation: Operation::Input as i32,
+            input_seq: 2,
+            input: b"\x1b[O".to_vec(),
+            ..session.base.clone()
+        });
+        assert!(lost.error.is_empty(), "{}", lost.error);
+        assert_eq!(lost.info.unwrap().manual_revision, initial.manual_revision);
+        // The workload reports bytes read from its PTY, including the guarded Agent write.
+        let done = session.wait_for("DONE");
+        let frame = done.snapshot.unwrap();
+        let screen: String = frame.cells.iter().map(|cell| cell.text.as_str()).collect();
+        let normalized = screen.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(normalized.contains("1b 5b 49 78 1b 5b 4f"), "{screen:?}");
+        assert_eq!(frame.input_modes & 4, 0);
+        for (index, bytes) in [b"\x1b[I".as_slice(), b"\x1b[O".as_slice()]
+            .into_iter()
+            .enumerate()
+        {
+            let reply = session.call(Request {
+                operation: Operation::Input as i32,
+                input_seq: 3 + index as u64,
+                input: bytes.to_vec(),
+                ..session.base.clone()
+            });
+            assert!(reply.error.is_empty(), "{}", reply.error);
+            assert_eq!(reply.info.unwrap().manual_revision, index as u64 + 1);
+            assert_eq!(
+                session.agent(agent.clone(), Some(gate.clone())).error,
+                "manual_input_preempted_agent"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn focus_notifications_keep_input_guards_and_manual_input_preemption() {
+        let session =
+            FocusSession::new(r"stty raw -echo; printf '\033[?1004h\033[?2004hREADY'; exec cat");
+        let focus = Request {
+            operation: Operation::Input as i32,
+            input_seq: 1,
+            input: b"\x1b[I".to_vec(),
+            ..session.base.clone()
+        };
+        for (request, expected) in [
+            (
+                Request {
+                    input_seq: 2,
+                    ..focus.clone()
+                },
+                "input sequence gap",
+            ),
+            (
+                Request {
+                    control_epoch: 2,
+                    ..focus.clone()
+                },
+                "input stream expired",
+            ),
+            (
+                Request {
+                    session_epoch: 8,
+                    ..focus.clone()
+                },
+                "stale session epoch",
+            ),
+            (
+                Request {
+                    client: 2,
+                    ..focus.clone()
+                },
+                "input stream expired",
+            ),
+        ] {
+            let rejected = session.call(request);
+            assert!(rejected.error.contains(expected), "{}", rejected.error);
+        }
+        let accepted = session.call(focus.clone());
+        assert!(accepted.error.is_empty(), "{}", accepted.error);
+        assert_eq!(accepted.info.unwrap().manual_revision, 0);
+
+        // No broad escape exemption: ordinary bytes, encoded paste, mouse, partial,
+        // malformed, mixed, and concatenated focus notifications remain manual input.
+        let mut inputs: Vec<Request> = [
+            b"x".as_slice(),
+            b"\x1b[200~pasted\x1b[201~",
+            b"\x1b[<0;1;1M",
+            b"\x1b[",
+            b"\x1b[1I",
+            b"\x1b[Ix",
+            b"\x1b[I\x1b[O",
+            b"\x1b[O\r",
+        ]
+        .into_iter()
+        .map(|bytes| Request {
+            input: bytes.to_vec(),
+            ..focus.clone()
+        })
+        .collect();
+        inputs.push(Request {
+            input_kind: 1,
+            text: "paste".into(),
+            input: Vec::new(),
+            ..focus.clone()
+        });
+        let gate = Arc::new(Mutex::new(true));
+        let agent = Request {
+            operation: Operation::AgentWrite as i32,
+            input: b"agent".to_vec(),
+            ..session.base.clone()
+        };
+        let count = inputs.len() as u64;
+        for (index, mut request) in inputs.into_iter().enumerate() {
+            request.input_seq = index as u64 + 2;
+            let accepted = session.call(request);
+            assert!(accepted.error.is_empty(), "{}", accepted.error);
+            assert_eq!(accepted.info.unwrap().manual_revision, index as u64 + 1);
+            assert_eq!(
+                session.agent(agent.clone(), Some(gate.clone())).error,
+                "manual_input_preempted_agent"
+            );
+        }
+        let resize = Request {
+            operation: Operation::Resize as i32,
+            rows: 24,
+            cols: 80,
+            ..session.base.clone()
+        };
+        assert_eq!(
+            session.call(resize.clone()).info.unwrap().manual_revision,
+            count
+        );
+        let resized = session.call(Request { cols: 81, ..resize });
+        assert!(resized.error.is_empty(), "{}", resized.error);
+        assert_eq!(resized.info.unwrap().manual_revision, count + 1);
+        assert_eq!(
+            session.agent(agent, Some(gate)).error,
+            "manual_input_preempted_agent"
+        );
+        session.call(Request {
+            operation: Operation::Detach as i32,
+            ..session.base.clone()
+        });
+        let detached = session.call(Request {
+            input_seq: count + 2,
+            ..focus
+        });
+        assert_eq!(detached.error, "Desktop is detached; terminal is read-only");
+    }
 
     fn test_host(dir: &Path, async_runtime: &tokio::runtime::Runtime) -> Arc<Host> {
         let state = dir.join("state");
