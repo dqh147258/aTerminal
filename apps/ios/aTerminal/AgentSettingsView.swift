@@ -270,7 +270,16 @@ struct AgentSettingsView: View {
             Picker("供应商", selection: Binding(get: { modelDraft.provider }, set: { modelDraft.provider = $0; modelDraft.resetCapabilities() })) { ForEach(store.items("providers").keys.sorted(), id: \.self) { Text($0).tag($0) } }.accessibilityIdentifier("model.provider")
             field("模型 ID / Azure deployment *", Binding(get: { modelDraft.model }, set: { modelDraft.model = $0; modelDraft.resetCapabilities() }))
             SettingsRow(title: "浏览模型目录", detail: "搜索供应商模型与能力声明", symbol: "magnifyingglass") { query = ""; catalog = []; cursor = nil; push(.catalog); discover(nil) }.accessibilityIdentifier("catalog.open")
-            DisclosureGroup("模型参数与能力", isExpanded: $modelDraft.advanced) {
+            Button { modelDraft.advanced.toggle() } label: {
+                HStack {
+                    Text("模型参数与能力")
+                    Spacer()
+                    Image(systemName: modelDraft.advanced ? "chevron.down" : "chevron.right").font(.caption.weight(.semibold))
+                }.frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+            }.buttonStyle(.plain).foregroundColor(WorkspaceStyle.accent)
+                .accessibilityLabel("模型参数与能力").accessibilityValue(modelDraft.advanced ? "已展开" : "已收起")
+                .accessibilityIdentifier("model.advanced")
+            if modelDraft.advanced {
                 VStack(alignment: .leading, spacing: 16) {
                     field("上下文窗口", $modelDraft.context, number: true); field("最大输出 tokens", $modelDraft.output, number: true)
                     field("温度（可留空）", $modelDraft.temperature, number: true); field("Top P（可留空）", $modelDraft.topP, number: true)
@@ -279,7 +288,7 @@ struct AgentSettingsView: View {
                     field("预算下限", $modelDraft.budgetMin, number: true); field("预算上限", $modelDraft.budgetMax, number: true)
                     Toggle("支持 adaptive", isOn: $modelDraft.adaptive).accessibilityIdentifier("model.adaptive"); Toggle("支持关闭思考", isOn: $modelDraft.disabled).accessibilityIdentifier("model.disabled")
                 }.padding(.top, 12)
-            }.accessibilityIdentifier("model.advanced")
+            }
             Picker("思考模式", selection: $modelDraft.mode) {
                 Text("供应商默认").tag("provider_default"); Text("等级").tag("level"); Text("预算").tag("budget"); Text("自适应").tag("adaptive"); Text("关闭").tag("disabled")
             }.accessibilityIdentifier("model.reasoningMode")
