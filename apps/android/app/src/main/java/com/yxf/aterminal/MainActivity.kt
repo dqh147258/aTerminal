@@ -623,14 +623,16 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             }); gap(16)
             addView(label("最近使用", 12f, Palette.muted)); addView(loading); addView(recent)
         }
-        val dialog = AlertDialog.Builder(this).setTitle("新建会话").setView(scroll(content))
+        val dialog = AlertDialog.Builder(this).setTitle("新建会话").setView(scroll(content).apply { isFillViewport = false })
             .setNegativeButton("取消", null).setPositiveButton("创建", null).create()
         fun current() = active && dialog.isShowing && generation == version && deviceId == desktop && connected
         createDialog = dialog
         dialog.setOnDismissListener { if (createDialog === dialog) createDialog = null }
         dialog.setOnShowListener {
             dialog.window?.setBackgroundDrawable(shape(Palette.surface, true))
-            dialog.window?.setLayout(-1, (resources.displayMetrics.heightPixels * 0.8).toInt())
+            // AlertDialog bounds its custom ScrollView after reserving title/buttons.
+            // WRAP_CONTENT avoids empty space for short lists and resizes above the IME.
+            dialog.window?.setLayout(-1, android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
             dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 if (!current() || submitting) return@setOnClickListener
