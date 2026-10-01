@@ -258,7 +258,7 @@ struct AgentSettingsView: View {
             field("供应商 ID *", $provider.id).disabled(editing)
             FieldShell(title: "连接协议", symbol: "network") {
                 Picker("连接协议", selection: $provider.protocolName) { ForEach(SettingsValidation.protocols, id: \.self) { Text($0).tag($0) } }
-                    .labelsHidden().frame(maxWidth: .infinity, alignment: .leading).accessibilityLabel("连接协议").accessibilityIdentifier("provider.protocol")
+                    .labelsHidden().frame(maxWidth: .infinity, alignment: .leading).accessibilityLabel("连接协议").accessibilityValue(provider.protocolName).accessibilityIdentifier("provider.protocol")
             }
             field("API 地址 *", $provider.endpoint)
             if provider.protocolName == "azure_openai" { field("Azure API version *", $provider.apiVersion) }
@@ -272,7 +272,7 @@ struct AgentSettingsView: View {
             field("配置 ID *", $modelDraft.id).disabled(editing)
             FieldShell(title: "供应商", symbol: "network") {
                 Picker("供应商", selection: Binding(get: { modelDraft.provider }, set: { modelDraft.provider = $0; modelDraft.resetCapabilities() })) { ForEach(store.items("providers").keys.sorted(), id: \.self) { Text($0).tag($0) } }
-                    .labelsHidden().frame(maxWidth: .infinity, alignment: .leading).accessibilityLabel("供应商").accessibilityIdentifier("model.provider")
+                    .labelsHidden().frame(maxWidth: .infinity, alignment: .leading).accessibilityLabel("供应商").accessibilityValue(modelDraft.provider).accessibilityIdentifier("model.provider")
             }
             field("模型 ID / Azure deployment *", Binding(get: { modelDraft.model }, set: { modelDraft.model = $0; modelDraft.resetCapabilities() }))
             SettingsRow(title: "浏览模型目录", detail: "搜索供应商模型与能力声明", symbol: "magnifyingglass") { query = ""; catalog = []; cursor = nil; push(.catalog); discover(nil) }.accessibilityIdentifier("catalog.open")
@@ -298,14 +298,14 @@ struct AgentSettingsView: View {
             FieldShell(title: "思考模式", symbol: "brain") {
                 Picker("思考模式", selection: $modelDraft.mode) {
                     Text("供应商默认").tag("provider_default"); Text("等级").tag("level"); Text("预算").tag("budget"); Text("自适应").tag("adaptive"); Text("关闭").tag("disabled")
-                }.labelsHidden().frame(maxWidth: .infinity, alignment: .leading).accessibilityLabel("思考模式").accessibilityIdentifier("model.reasoningMode")
+                }.labelsHidden().frame(maxWidth: .infinity, alignment: .leading).accessibilityLabel("思考模式").accessibilityValue(["provider_default": "供应商默认", "level": "等级", "budget": "预算", "adaptive": "自适应", "disabled": "关闭"][modelDraft.mode] ?? modelDraft.mode).accessibilityIdentifier("model.reasoningMode")
             }
             if modelDraft.mode == "level" || modelDraft.mode == "budget" { field(modelDraft.mode == "level" ? "思考等级" : "思考 tokens", $modelDraft.strength) }
             FieldShell(title: "默认绑定", symbol: "link") {
                 Picker("默认绑定", selection: $modelDraft.binding) {
                     Text("不改默认").tag(""); Text("Global 默认").tag("global"); Text("Session 默认").tag("session-default")
                     if let session = currentSession { Text("当前终端覆盖").tag("session/" + session) }
-                }.labelsHidden().frame(maxWidth: .infinity, alignment: .leading).accessibilityLabel("默认绑定").accessibilityIdentifier("model.defaultBinding")
+                }.labelsHidden().frame(maxWidth: .infinity, alignment: .leading).accessibilityLabel("默认绑定").accessibilityValue(["": "不改默认", "global": "Global 默认", "session-default": "Session 默认"][modelDraft.binding] ?? "当前终端覆盖").accessibilityIdentifier("model.defaultBinding")
             }
         }
     }
@@ -318,6 +318,7 @@ struct AgentSettingsView: View {
                     Text(scope.hasPrefix("session/") ? "继承 Session 默认" : "未绑定").tag("")
                     ForEach(store.items("models").keys.sorted(), id: \.self) { Text($0).tag($0) }
                 }.labelsHidden().frame(maxWidth: .infinity, alignment: .leading).accessibilityLabel(title)
+                    .accessibilityValue((bindings[scope] ?? "").isEmpty ? (scope.hasPrefix("session/") ? "继承 Session 默认" : "未绑定") : bindings[scope] ?? "")
                     .accessibilityIdentifier(scope == "global" ? "bindings.global" : scope == "session-default" ? "bindings.sessionDefault" : "bindings.current")
             }
         }
