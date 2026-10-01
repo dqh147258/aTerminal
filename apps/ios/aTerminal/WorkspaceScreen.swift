@@ -110,7 +110,13 @@ struct WorkspaceScreen: View {
             if let scope, scope == continueScope { continueScope = nil; panel = .chat }
         }
         .onChange(of: model.connected) { connected in if !connected { creating = false }; syncChat(); if connected && panel == .devices { panel = nil } }
-        .onChange(of: drawer) { value in if value { keysVisible = false; model.refreshSessions(); assistant.loadArchives() } }
+        .onChange(of: drawer) { value in
+            if value { keysVisible = false; model.refreshSessions(); assistant.loadArchives(); updateWorkspaceSearch() }
+            else { assistant.cancelHistorySearch() }
+        }
+        .onChange(of: search) { _ in updateWorkspaceSearch() }
+        .onChange(of: workspaceCandidates.map(\.id)) { _ in updateWorkspaceSearch() }
+        .onChange(of: assistant.historyCacheRevision) { _ in updateWorkspaceSearch(refresh: true) }
         .onChange(of: panel) { value in if value != .terminalHistory { model.closeHistory() }; assistant.setVisible(value == .chat, core: model.core); if value != nil { inputVisible = false; keysVisible = false } }
         .onChange(of: model.hasControl) { value in if !value { inputVisible = false; keysVisible = false } }
         .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
@@ -219,7 +225,17 @@ struct WorkspaceScreen: View {
         }.accessibilityHidden(drawer || panel != nil)
     }
 
+    private func updateWorkspaceSearch(refresh: Bool = false) {
+        guard drawer else { return }
+        assistant.searchCachedHistory(query: search, scopes: workspaceCandidates.map { $0.archive.scope }, refresh: refresh)
+    }
     private var workspaceEntries: [WorkspaceEntry] {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        return workspaceCandidates.filter { entry in
+            query.isEmpty || [entry.archive.title, entry.path, entry.archive.scope.session, entry.archive.deviceName].contains(where: { $0.localizedCaseInsensitiveContains(query) }) || assistant.cachedHistoryMatches(entry.archive.scope, query: query)
+        }
+    }
+    private var workspaceCandidates: [WorkspaceEntry] {
         let identity = model.identity ?? ChatIdentity(server: model.server, account: model.username)
         var entries: [String: WorkspaceEntry] = [:]
         for archive in assistant.archives where archive.scope.identity == identity && !archive.scope.session.isEmpty {
@@ -235,9 +251,7 @@ struct WorkspaceScreen: View {
                 entries[scope.key] = WorkspaceEntry(archive: archive, session: session, path: session.cwd)
             }
         }
-        return entries.values.filter { entry in
-            search.isEmpty || [entry.archive.title, entry.path, entry.archive.scope.session, entry.archive.deviceName].contains(where: { $0.localizedCaseInsensitiveContains(search) })
-        }.sorted {
+        return entries.values.sorted {
             let left = $0.archive.scope.device == model.deviceID && $0.session?.exited == false
             let right = $1.archive.scope.device == model.deviceID && $1.session?.exited == false
             if left != right { return left }
@@ -287,7 +301,7 @@ struct WorkspaceScreen: View {
                 ToolButton(symbol: "xmark.square", label: "关闭会话") { closing = true }.disabled(model.selected == nil || !model.connected || model.busy || model.sessionExited || !model.desktopAttached)
                 Spacer()
             }.padding(.horizontal, 12)
-            HStack { Image(systemName: "magnifyingglass"); TextField("终端名称、路径或设备", text: $search).accessibilityIdentifier("workspace.search").textInputAutocapitalization(.never).autocorrectionDisabled(); if !search.isEmpty { Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }.accessibilityLabel("清除搜索") } }.padding(12).background(WorkspaceStyle.control).cornerRadius(8).padding(.horizontal, 16)
+            HStack { Image(systemName: "magnifyingglass"); TextField("终端、路径或对话正文", text: $search).accessibilityIdentifier("workspace.search").textInputAutocapitalization(.never).autocorrectionDisabled(); if !search.isEmpty { Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }.accessibilityLabel("清除搜索") } }.padding(12).background(WorkspaceStyle.control).cornerRadius(8).padding(.horizontal, 16)
             Group {
                 HStack {
                     Button { drawer = false; panel = .devices } label: { Label(model.deviceID.isEmpty ? "选择设备" : model.deviceName, systemImage: "desktopcomputer").lineLimit(1) }
@@ -296,9 +310,11 @@ struct WorkspaceScreen: View {
                     ToolButton(symbol: "plus", label: "新建会话") { creating = true }.disabled(!model.connected || model.busy)
                 }.font(.subheadline).padding(.horizontal, 16)
             }
+            if assistant.historySearchBusy { ProgressView("正在搜索正文缓存…").font(.caption).padding(8).accessibilityIdentifier("workspace.search.busy") }
+            if !assistant.historySearchError.isEmpty { Text(assistant.historySearchError).font(.caption).foregroundColor(WorkspaceStyle.muted).padding(8).accessibilityIdentifier("workspace.search.error") }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    if workspaceEntries.isEmpty { EmptyWorkspace(symbol: "terminal", title: search.isEmpty ? "暂无终端会话" : "没有匹配的会话") }
+                    if workspaceEntries.isEmpty && !assistant.historySearchBusy { EmptyWorkspace(symbol: "terminal", title: search.isEmpty ? "暂无终端会话" : "没有匹配的会话") }
                     ForEach(workspaceEntries) { entry in workspaceRow(entry) }
                 }
             }.padding(.top, 8)

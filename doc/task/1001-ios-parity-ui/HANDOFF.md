@@ -54,3 +54,20 @@ DEBUG `--service-test --local-login-fixture` 从 container `Documents/local-logi
 ## 最终审查修复
 
 R1/R2/R3/R4：失败和conflict show前后identity屏障、Azure空白、纯空白key保留、fixture真实服务边界；独立9组检查通过。R5/R6：cancel执行前与Global每页/创建绑定connectionEpoch，pending集合按scope恢复submitting，allowInput提交中禁用。R7/R8：drawer真正合并sessions/各Desktop快照/正常Agent archive持久索引；关闭/离线历史有独立AI历史入口；Session缺失/退出/Desktop离开只读并显示原因。
+
+## 追加P2修复交付
+
+新增正常Agent正文缓存搜索：元数据与当前账号scope白名单正文结果合并；原AgentCache数据库只读、当前generation、包括首页已淘汰后保留的非首页缓存，不接旧归档、不联网。250ms限频、后台SQLite读取、query/identity/serial屏障、取消传播；每scope3页和每页1MiB与Rust缓存限制一致。损坏DB只给搜索错误并解除busy，元数据搜索继续可用。
+
+同批修复binding.reasoning：ModelDraft.candidate按新协议、能力、输出上限和采样验证每个指向当前模型的覆盖；兼容项保留，不兼容项只移除reasoning，其他字段/模型绑定保持。覆盖同ID目录与advanced能力编辑。
+
+新增源码AgentCacheSearch.swift及pbx引用；修改AssistantModel/WorkspaceScreen/SettingsDraft。可重复验证：
+
+```sh
+xcrun swiftc -parse-as-library -module-cache-path /private/tmp/aterminal-settings-macos-cache apps/ios/aTerminal/AgentCacheSearch.swift doc/task/1001-ios-parity-ui/AgentCacheSearchChecks.swift -o build/agent-cache-search-checks
+build/agent-cache-search-checks
+xcrun swiftc -parse-as-library -module-cache-path /private/tmp/aterminal-settings-macos-cache apps/ios/aTerminal/SettingsDraft.swift doc/task/1001-ios-parity-ui/BindingReasoningChecks.swift -o build/binding-reasoning-checks
+build/binding-reasoning-checks
+```
+
+两个新增生产direct检查通过；独立check-ios-settings.py更新后的10组通过（包括catalog cancel/read serial barrier）；x86_64 Debug App构建通过。fixture词与API见TEST_API.md，未运行sim。本轮按协调者授权追加[未Review]提交，不merge。

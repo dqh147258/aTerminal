@@ -76,15 +76,18 @@ struct ModelDraft {
         var reasoning: [String: Any] = ["mode": mode]
         if mode == "level" { reasoning["level"] = strength }
         if mode == "budget" { guard let number = Int(strength), number >= 0 else { throw SettingsFailure.message("请输入有效思考 token 预算") }; reasoning["tokens"] = number }
-        try SettingsValidation.reasoning((p["connection"] as? [String: Any])?["protocol"] as? String ?? "", reasoning, caps, output, !temperature.isEmpty || !topP.isEmpty)
-        let changed = item["model"] as? String != model || item["provider_id"] as? String != provider
+        let protocolName = (p["connection"] as? [String: Any])?["protocol"] as? String ?? ""
+        let sampling = !temperature.isEmpty || !topP.isEmpty
+        try SettingsValidation.reasoning(protocolName, reasoning, caps, output, sampling)
         item.merge(["provider_id": provider, "model": model, "context_window": context, "max_tokens": output, "capabilities": caps, "reasoning": reasoning, "read_only": !tools || (item["read_only"] as? Bool ?? false)]) { _, new in new }
         models[id] = item; candidate["models"] = models
         var bindings = config["bindings"] as? [String: Any] ?? [:]
-        if changed {
-            for key in Array(bindings.keys) {
-                if var value = bindings[key] as? [String: Any], value["model_id"] as? String == id { value.removeValue(forKey: "reasoning"); bindings[key] = value }
-            }
+        // A same-ID catalog selection or an advanced edit can invalidate scope overrides too.
+        for key in Array(bindings.keys) {
+            guard var value = bindings[key] as? [String: Any], value["model_id"] as? String == id,
+                  let override = value["reasoning"] as? [String: Any] else { continue }
+            do { try SettingsValidation.reasoning(protocolName, override, caps, output, sampling) }
+            catch { value.removeValue(forKey: "reasoning"); bindings[key] = value }
         }
         if !binding.isEmpty { var value = bindings[binding] as? [String: Any] ?? [:]; value["model_id"] = id; value["reasoning"] = reasoning; bindings[binding] = value }
         candidate["bindings"] = bindings; return candidate
@@ -283,7 +286,7 @@ enum SettingsFailure: LocalizedError {
         case "global_list": return ["conversations": [row], "cursor": NSNull()]
         case "global_create": return ["scope": ["agent": UUID().uuidString]]
         case "state": return ["available": true, "state": "idle", "history_generation": 1]
-        case "history": return ["generation": 1, "has_more": false, "items": [["id": "fixture-message", "sequence": 1, "kind": "assistant", "value": ["text": session?.hasPrefix("global:") == true ? "Global fixture 消息" : "Session fixture 消息"]]]]
+        case "history": return ["generation": 1, "has_more": false, "items": [["id": "fixture-message", "sequence": 1, "kind": "assistant", "value": ["text": session == "fixture-closed" ? "正文专有词 星河缓存检索 cedar-body-only-731" : session?.hasPrefix("global:") == true ? "Global fixture 消息" : "Session fixture 消息"]]]]
         case "list": return ["agents": [["scope": ["session": "fixture-session"]], ["scope": ["session": "fixture-closed"]]]]
         default: return [:]
         }
