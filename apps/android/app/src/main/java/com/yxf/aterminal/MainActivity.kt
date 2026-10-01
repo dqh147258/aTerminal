@@ -639,26 +639,63 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
             val decor = dialog.window!!.decorView
             val visible = android.graphics.Rect()
-            val decorPosition = IntArray(2); val contentPosition = IntArray(2); val buttonPosition = IntArray(2)
-            val fitContent = android.view.ViewTreeObserver.OnGlobalLayoutListener {
-                if (!dialog.isShowing || decor.height == 0 || viewport.width == 0 || content.height == 0) return@OnGlobalLayoutListener
-                decor.getWindowVisibleDisplayFrame(visible)
-                if (visible.height() <= 0) return@OnGlobalLayoutListener
-                decor.getLocationOnScreen(decorPosition); viewport.getLocationOnScreen(contentPosition)
-                // Native AlertDialog may reserve only the footer's minimum height during IME
-                // resize. Include complete button hit areas, even if they extend past decor.
-                var footerBottom = decorPosition[1] + decor.height
-                for (which in intArrayOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE)) {
-                    val button = dialog.getButton(which)
-                    button.getLocationOnScreen(buttonPosition)
-                    footerBottom = maxOf(footerBottom, buttonPosition[1] + button.height)
+            fun contains(parent: View, child: View): Boolean {
+                var node: View? = child
+                while (node != null) {
+                    if (node === parent) return true
+                    node = node.parent as? View
                 }
-                val titleHeight = (contentPosition[1] - decorPosition[1]).coerceAtLeast(0)
-                val footerHeight = (footerBottom - contentPosition[1] - viewport.height).coerceAtLeast(0)
-                val available = (visible.height() - titleHeight - footerHeight - dp(8)).coerceAtLeast(0)
-                // ScrollView measures its child at natural height: this also grows back after
-                // IME dismissal and shrinks to fit empty/short lists without a fixed window size.
-                val height = minOf(content.height + viewport.paddingTop + viewport.paddingBottom, available)
+                return false
+            }
+            fun verticalMargins(view: View): Int {
+                val params = view.layoutParams as? android.view.ViewGroup.MarginLayoutParams
+                return (params?.topMargin ?: 0) + (params?.bottomMargin ?: 0)
+            }
+            // Find the native title/custom/button stack without depending on private resource IDs.
+            var panels = viewport.parent as android.view.ViewGroup
+            while (!contains(panels, dialog.getButton(AlertDialog.BUTTON_POSITIVE)) ||
+                !contains(panels, dialog.getButton(AlertDialog.BUTTON_NEGATIVE))) {
+                panels = panels.parent as android.view.ViewGroup
+            }
+            val fixedPanels = (0 until panels.childCount).map { panels.getChildAt(it) }
+                .filterNot { contains(it, viewport) }
+            val fitContent = android.view.ViewTreeObserver.OnGlobalLayoutListener {
+                if (!dialog.isShowing || viewport.width == 0 || content.height == 0) return@OnGlobalLayoutListener
+                val visibleHeight = if (Build.VERSION.SDK_INT >= 30) {
+                    // Use task bounds, not the floating dialog's resized display frame.
+                    val metrics = windowManager.currentWindowMetrics
+                    val ime = android.view.WindowInsets.Type.ime()
+                    val imeVisible = decor.rootWindowInsets?.isVisible(ime) ?: metrics.windowInsets.isVisible(ime)
+                    val types = android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout() or
+                        (if (imeVisible) ime else 0)
+                    val insets = metrics.windowInsets.getInsets(types)
+                    metrics.bounds.height() - insets.top - insets.bottom
+                } else {
+                    // Older APIs: the full Activity window remains independent of this dialog's cap.
+                    this@MainActivity.window.decorView.getWindowVisibleDisplayFrame(visible)
+                    visible.height()
+                }
+                if (visibleHeight <= 0) return@OnGlobalLayoutListener
+                // Measure fixed siblings unconstrained vertically so a shrunken native footer
+                // cannot become our next height budget. Never count leftover decor space.
+                var reserved = 0
+                for (panel in fixedPanels) if (panel.visibility != View.GONE) {
+                    if (panel.width == 0) return@OnGlobalLayoutListener
+                    panel.measure(View.MeasureSpec.makeMeasureSpec(panel.width, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+                    reserved += panel.measuredHeight + verticalMargins(panel)
+                }
+                var node: View = viewport
+                while (node !== decor) {
+                    reserved += verticalMargins(node)
+                    val parent = node.parent as android.view.ViewGroup
+                    reserved += parent.paddingTop + parent.paddingBottom
+                    node = parent
+                }
+                val available = (visibleHeight - reserved - dp(8)).coerceAtLeast(0)
+                val naturalHeight = content.height + viewport.paddingTop + viewport.paddingBottom
+                // Remove the explicit cap when it is no longer needed, including after IME hide.
+                val height = if (naturalHeight <= available) android.view.ViewGroup.LayoutParams.WRAP_CONTENT else available
                 if (viewport.layoutParams.height != height) {
                     viewport.layoutParams = viewport.layoutParams.apply { this.height = height }
                 }
