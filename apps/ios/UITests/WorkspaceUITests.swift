@@ -208,6 +208,20 @@ final class WorkspaceUITests: XCTestCase {
         capture("fixture-04-provider-edit")
         app.buttons["settings.cancel"].tap()
     }
+    func testAgentBodySearchFindsClosedHistory() {
+        let app = launch(["--workspace-fixture", "--settings-fixture", "--show-drawer"])
+        replaceText(app.textFields["workspace.search"], with: "cedar-body-only-731")
+        let match = app.buttons["session.history.fixture-closed"]
+        let filtered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            match.exists && !app.buttons["session.select.fixture-session"].exists && !app.buttons["session.select.fixture-offline"].exists
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [filtered], timeout: 5), .completed)
+        capture("fixture-17-agent-body-search")
+        match.tap()
+        XCTAssertTrue(element(app, "chat.session").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "cedar-body-only-731")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["chat.send"].isEnabled)
+    }
     func testFailedSaveKeepsNonSensitiveDraftAndReleasesBusy() {
         let app = settingsFixture("save-failure"); addProvider(app)
         app.buttons["settings.save"].tap()
