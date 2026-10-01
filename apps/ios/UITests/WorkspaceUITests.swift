@@ -17,8 +17,11 @@ private enum UITestInput {
                 clear.tap()
                 field.tap()
             } else {
-                field.typeKey("a", modifierFlags: .command)
-                field.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
+                guard field.elementType == .textField || field.elementType == .secureTextField else {
+                    XCTFail("The code editor clear action is unavailable", file: file, line: line); return
+                }
+                field.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
+                field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.utf16.count))
             }
             let cleared = field.value as? String ?? ""
             if !cleared.isEmpty && cleared != field.placeholderValue {
