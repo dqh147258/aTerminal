@@ -256,7 +256,10 @@ struct AgentSettingsView: View {
     private func providerForm(editing: Bool) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             field("供应商 ID *", $provider.id).disabled(editing)
-            Picker("连接协议", selection: $provider.protocolName) { ForEach(SettingsValidation.protocols, id: \.self) { Text($0).tag($0) } }.accessibilityIdentifier("provider.protocol")
+            FieldShell(title: "连接协议", symbol: "network") {
+                Picker("连接协议", selection: $provider.protocolName) { ForEach(SettingsValidation.protocols, id: \.self) { Text($0).tag($0) } }
+                    .labelsHidden().frame(maxWidth: .infinity, alignment: .leading).accessibilityLabel("连接协议").accessibilityIdentifier("provider.protocol")
+            }
             field("API 地址 *", $provider.endpoint)
             if provider.protocolName == "azure_openai" { field("Azure API version *", $provider.apiVersion) }
             FieldShell(title: "API 密钥", symbol: "key") { SecureField("留空保留原凭据", text: $provider.key).accessibilityIdentifier("provider.key") }
@@ -267,7 +270,10 @@ struct AgentSettingsView: View {
     private func modelForm(editing: Bool) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             field("配置 ID *", $modelDraft.id).disabled(editing)
-            Picker("供应商", selection: Binding(get: { modelDraft.provider }, set: { modelDraft.provider = $0; modelDraft.resetCapabilities() })) { ForEach(store.items("providers").keys.sorted(), id: \.self) { Text($0).tag($0) } }.accessibilityIdentifier("model.provider")
+            FieldShell(title: "供应商", symbol: "network") {
+                Picker("供应商", selection: Binding(get: { modelDraft.provider }, set: { modelDraft.provider = $0; modelDraft.resetCapabilities() })) { ForEach(store.items("providers").keys.sorted(), id: \.self) { Text($0).tag($0) } }
+                    .labelsHidden().frame(maxWidth: .infinity, alignment: .leading).accessibilityLabel("供应商").accessibilityIdentifier("model.provider")
+            }
             field("模型 ID / Azure deployment *", Binding(get: { modelDraft.model }, set: { modelDraft.model = $0; modelDraft.resetCapabilities() }))
             SettingsRow(title: "浏览模型目录", detail: "搜索供应商模型与能力声明", symbol: "magnifyingglass") { query = ""; catalog = []; cursor = nil; push(.catalog); discover(nil) }.accessibilityIdentifier("catalog.open")
             Button { modelDraft.advanced.toggle() } label: {
@@ -289,13 +295,17 @@ struct AgentSettingsView: View {
                     Toggle("支持 adaptive", isOn: $modelDraft.adaptive).accessibilityIdentifier("model.adaptive"); Toggle("支持关闭思考", isOn: $modelDraft.disabled).accessibilityIdentifier("model.disabled")
                 }.padding(.top, 12)
             }
-            Picker("思考模式", selection: $modelDraft.mode) {
-                Text("供应商默认").tag("provider_default"); Text("等级").tag("level"); Text("预算").tag("budget"); Text("自适应").tag("adaptive"); Text("关闭").tag("disabled")
-            }.accessibilityIdentifier("model.reasoningMode")
+            FieldShell(title: "思考模式", symbol: "brain") {
+                Picker("思考模式", selection: $modelDraft.mode) {
+                    Text("供应商默认").tag("provider_default"); Text("等级").tag("level"); Text("预算").tag("budget"); Text("自适应").tag("adaptive"); Text("关闭").tag("disabled")
+                }.labelsHidden().frame(maxWidth: .infinity, alignment: .leading).accessibilityLabel("思考模式").accessibilityIdentifier("model.reasoningMode")
+            }
             if modelDraft.mode == "level" || modelDraft.mode == "budget" { field(modelDraft.mode == "level" ? "思考等级" : "思考 tokens", $modelDraft.strength) }
-            Picker("默认绑定", selection: $modelDraft.binding) {
-                Text("不改默认").tag(""); Text("Global 默认").tag("global"); Text("Session 默认").tag("session-default")
-                if let session = currentSession { Text("当前终端覆盖").tag("session/" + session) }
+            FieldShell(title: "默认绑定", symbol: "link") {
+                Picker("默认绑定", selection: $modelDraft.binding) {
+                    Text("不改默认").tag(""); Text("Global 默认").tag("global"); Text("Session 默认").tag("session-default")
+                    if let session = currentSession { Text("当前终端覆盖").tag("session/" + session) }
+                }.labelsHidden().frame(maxWidth: .infinity, alignment: .leading).accessibilityLabel("默认绑定").accessibilityIdentifier("model.defaultBinding")
             }
         }
     }
@@ -303,10 +313,13 @@ struct AgentSettingsView: View {
     private var scopes: [(String, String)] { [("global", "Global 默认"), ("session-default", "Session 默认")] + (currentSession.map { [("session/" + $0, "当前终端覆盖")] } ?? []) }
     private var bindingForm: some View {
         ForEach(scopes, id: \.0) { scope, title in
-            Picker(title, selection: Binding(get: { bindings[scope] ?? "" }, set: { bindings[scope] = $0 })) {
-                Text(scope.hasPrefix("session/") ? "继承 Session 默认" : "未绑定").tag("")
-                ForEach(store.items("models").keys.sorted(), id: \.self) { Text($0).tag($0) }
-            }.padding(12).background(WorkspaceStyle.surface).cornerRadius(8).accessibilityIdentifier(scope == "global" ? "bindings.global" : scope == "session-default" ? "bindings.sessionDefault" : "bindings.current")
+            FieldShell(title: title, symbol: "link") {
+                Picker(title, selection: Binding(get: { bindings[scope] ?? "" }, set: { bindings[scope] = $0 })) {
+                    Text(scope.hasPrefix("session/") ? "继承 Session 默认" : "未绑定").tag("")
+                    ForEach(store.items("models").keys.sorted(), id: \.self) { Text($0).tag($0) }
+                }.labelsHidden().frame(maxWidth: .infinity, alignment: .leading).accessibilityLabel(title)
+                    .accessibilityIdentifier(scope == "global" ? "bindings.global" : scope == "session-default" ? "bindings.sessionDefault" : "bindings.current")
+            }
         }
     }
     private var catalogForm: some View {
