@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 // A form owns its draft; the shared snapshot advances only after a confirmed RPC or conflict refresh.
@@ -71,6 +72,7 @@ struct AgentSettingsView: View {
     @State private var head = "10"
     @State private var tail = "20"
     @State private var text = ""
+    @State private var codeClearVersion = 0
     @State private var skillID = ""
     @State private var path = ""
     @State private var importing = false
@@ -224,13 +226,32 @@ struct AgentSettingsView: View {
     private func heading(_ value: String) -> some View { Text(value).font(.subheadline.weight(.semibold)).foregroundColor(WorkspaceStyle.muted).padding(.top, 8) }
     private func hint(_ value: String) -> some View { Text(value).font(.caption).foregroundColor(WorkspaceStyle.muted).fixedSize(horizontal: false, vertical: true) }
     private func field(_ title: String, _ value: Binding<String>, number: Bool = false) -> some View {
-        FieldShell(title: title, symbol: number ? "number" : "pencil") { TextField(title, text: value).keyboardType(number ? .numbersAndPunctuation : .default).accessibilityLabel(title).accessibilityIdentifier(fieldID(title)) }
+        FieldShell(title: title, symbol: number ? "number" : "pencil") {
+            TextField(title, text: value).keyboardType(number ? .numbersAndPunctuation : .default).accessibilityLabel(title).accessibilityIdentifier(fieldID(title))
+            if !value.wrappedValue.isEmpty {
+                Button { value.wrappedValue = "" } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundColor(WorkspaceStyle.muted).frame(width: 44, height: 44)
+                }.buttonStyle(.plain).accessibilityLabel("清空" + title).accessibilityIdentifier(fieldID(title) + ".clear")
+            }
+        }
     }
     private func fieldID(_ title: String) -> String {
         ["供应商 ID *": "provider.id", "API 地址 *": "provider.endpoint", "Azure API version *": "provider.apiVersion", "配置 ID *": "model.id", "模型 ID / Azure deployment *": "model.name", "上下文窗口": "model.context", "最大输出 tokens": "model.maxTokens", "温度（可留空）": "model.temperature", "Top P（可留空）": "model.topP", "思考等级（逗号分隔）": "model.levels", "预算下限": "model.budgetMin", "预算上限": "model.budgetMax", "思考等级": "model.reasoningValue", "思考 tokens": "model.reasoningValue", "搜索模型": "catalog.search", "首部保留行数（1–100）": "reading.head", "尾部保留行数（1–100）": "reading.tail", "Skill ID *": "skill.id", "Desktop 上的绝对目录 *": "skill.path"][title] ?? title
     }
     private func codeEditor(_ title: String) -> some View {
-        VStack(alignment: .leading) { heading(title); TextEditor(text: $text).font(.system(.body, design: .monospaced)).frame(minHeight: 300).accessibilityLabel(title).accessibilityIdentifier(title == "MCP JSON" ? "mcp.json" : "skill.body") }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                heading(title)
+                Spacer()
+                if !text.isEmpty {
+                    Button { text = ""; codeClearVersion += 1 } label: {
+                        Label("清空", systemImage: "xmark.circle").font(.subheadline).foregroundColor(WorkspaceStyle.muted).frame(minHeight: 44)
+                    }.buttonStyle(.plain).accessibilityLabel("清空" + title).accessibilityIdentifier((title == "MCP JSON" ? "mcp.json" : "skill.body") + ".clear")
+                }
+            }
+            CodeTextEditor(text: $text, label: title, identifier: title == "MCP JSON" ? "mcp.json" : "skill.body", clearVersion: codeClearVersion)
+                .frame(maxWidth: .infinity, minHeight: 300)
+        }
     }
     private func providerForm(editing: Bool) -> some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -397,5 +418,94 @@ struct AgentSettingsView: View {
             }
             return try await store.call(["action": "skill_upload_commit", "upload_id": token])
         }) { _ in self.folder = nil; finish() }
+    }
+}
+
+
+/// A native plain-text editor: UIKit owns focus, selection, editing menus and undo.
+/// Binding echoes never assign text again, so a native select-all/caret survives view updates.
+private struct CodeTextEditor: UIViewRepresentable {
+    @Binding var text: String
+    let label: String
+    let identifier: String
+    let clearVersion: Int
+
+    func makeCoordinator() -> Coordinator { Coordinator(text: $text, clearVersion: clearVersion) }
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView(frame: .zero)
+        view.text = text
+        view.delegate = context.coordinator
+        view.font = UIFontMetrics(forTextStyle: .body).scaledFont(for: .monospacedSystemFont(ofSize: 17, weight: .regular))
+        view.adjustsFontForContentSizeCategory = true
+        view.backgroundColor = UIColor(WorkspaceStyle.surface)
+        view.textColor = UIColor(WorkspaceStyle.foreground)
+        view.tintColor = UIColor(WorkspaceStyle.accent)
+        view.layer.cornerRadius = 8
+        view.layer.borderWidth = 1
+        view.layer.borderColor = UIColor(WorkspaceStyle.line).cgColor
+        view.textContainerInset = UIEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        view.textContainer.lineFragmentPadding = 0
+        view.contentInsetAdjustmentBehavior = .never
+        view.isScrollEnabled = true
+        view.keyboardType = .default
+        view.keyboardAppearance = .dark
+        view.autocapitalizationType = .none
+        view.autocorrectionType = .no
+        view.spellCheckingType = .no
+        view.smartQuotesType = .no
+        view.smartDashesType = .no
+        view.smartInsertDeleteType = .no
+        view.dataDetectorTypes = []
+        view.allowsEditingTextAttributes = false
+        view.isAccessibilityElement = true
+        view.accessibilityLabel = label
+        view.accessibilityIdentifier = identifier
+        view.isEditable = context.environment.isEnabled
+        view.isSelectable = context.environment.isEnabled
+        return view
+    }
+    func updateUIView(_ view: UITextView, context: Context) {
+        context.coordinator.text = $text
+        if view.accessibilityLabel != label { view.accessibilityLabel = label }
+        if view.accessibilityIdentifier != identifier { view.accessibilityIdentifier = identifier }
+        if view.isEditable != context.environment.isEnabled { view.isEditable = context.environment.isEnabled }
+        if view.isSelectable != context.environment.isEnabled { view.isSelectable = context.environment.isEnabled }
+        if context.coordinator.clearVersion != clearVersion {
+            context.coordinator.clearVersion = clearVersion
+            context.coordinator.applyingExternalText = true
+            view.unmarkText()
+            if view.text != text { view.text = text }
+            view.selectedRange = NSRange(location: 0, length: 0)
+            view.setContentOffset(.zero, animated: false)
+            context.coordinator.applyingExternalText = false
+            return
+        }
+        // Never replace an active IME composition, or rewrite an ordinary Binding echo.
+        if view.text != text && view.markedTextRange == nil {
+            let selection = view.selectedRange
+            let offset = view.contentOffset
+            context.coordinator.applyingExternalText = true
+            view.text = text
+            let count = (text as NSString).length
+            let location = min(selection.location, count)
+            view.selectedRange = NSRange(location: location, length: min(selection.length, count - location))
+            view.setContentOffset(offset, animated: false)
+            context.coordinator.applyingExternalText = false
+        }
+    }
+    static func dismantleUIView(_ view: UITextView, coordinator: Coordinator) {
+        view.delegate = nil
+        if view.isFirstResponder { view.resignFirstResponder() }
+    }
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var text: Binding<String>
+        var clearVersion: Int
+        var applyingExternalText = false
+        init(text: Binding<String>, clearVersion: Int) { self.text = text; self.clearVersion = clearVersion }
+        func textViewDidChange(_ textView: UITextView) {
+            guard !applyingExternalText else { return }
+            let value = textView.text ?? ""
+            if text.wrappedValue != value { text.wrappedValue = value }
+        }
     }
 }
