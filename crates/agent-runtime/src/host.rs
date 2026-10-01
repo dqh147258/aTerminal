@@ -1358,6 +1358,12 @@ impl AgentHost {
             }),
             _ => false,
         };
+        let lines = self.prepare_analysis_lines(
+            job,
+            &mut entries[index],
+            record,
+            call.function.name == "read_record",
+        )?;
         for attempt in 1..=2 {
             let request = job.snapshot.builder.build(entries, Some(record))?;
             let instruction = request.chat_history.last().unwrap().clone();
@@ -1427,6 +1433,7 @@ impl AgentHost {
                     .trim(),
             )
             .map_err(|_| anyhow::anyhow!("invalid_analysis_json"))
+            .and_then(|digest| lines.expand(digest))
             .and_then(|digest| {
                 self.store
                     .analyze_observation(&job.scope, record, digest, full_body)
@@ -1442,7 +1449,7 @@ impl AgentHost {
                         json!({"error":error.to_string().chars().take(256).collect::<String>()}),
                         &text,
                     )?;
-                    entries.push(entry(Origin::ObservationAnalysis,&job.root,Message::user(format!("Application analysis rejected: {error}. Return only the requested JSON. Every quote and fact evidence must be copied verbatim from record body text, never metadata or its JSON representation. Omit unsupported facts instead of inventing evidence; tui_lines must be an array of exact full body strings (empty if no TUI). Host supplies status and anchors."))));
+                    entries.push(entry(Origin::ObservationAnalysis,&job.root,Message::user(format!("Application analysis rejected: {error}. Return only the requested JSON. Prefer record_id + line_start/line_end references from the current analysis_lines table for quotes, fact evidence and tui_lines; never combine references with text. Host expands complete visible original lines exactly, preserving Unicode and whitespace. Legacy text must still be copied verbatim from body, never metadata or its JSON representation. Omit unsupported facts; use empty arrays when needed. Host supplies status and anchors."))));
                     continue;
                 }
             };
@@ -1487,6 +1494,58 @@ impl AgentHost {
             }
         }
         bail!("observation_analysis_pending")
+    }
+    fn prepare_analysis_lines(
+        &self,
+        job: &Job,
+        observation: &mut ContextEntry,
+        record: &str,
+        paged_record: bool,
+    ) -> Result<crate::analysis::LineTable> {
+        let (stored, original) = self.store.record_bytes(&job.scope, record)?;
+        let Message::User { content } = &mut observation.message else {
+            bail!("analysis_observation_required");
+        };
+        for part in content {
+            let UserContent::ToolResult(result) = part else {
+                continue;
+            };
+            for part in &mut result.content {
+                let ToolResultContent::Text(text) = part else {
+                    continue;
+                };
+                let mut value: Value = serde_json::from_str(&text.text)?;
+                if value["record_id"] != record {
+                    continue;
+                }
+                let lines = if matches!(stored.kind.as_str(), "png" | "image")
+                    || stored.metadata["binary"] == true
+                {
+                    crate::analysis::LineTable::empty(record)
+                } else {
+                    let offset = paged_record
+                        .then(|| value.get("offset"))
+                        .flatten()
+                        .map(|offset| {
+                            offset
+                                .as_u64()
+                                .and_then(|n| usize::try_from(n).ok())
+                                .context("invalid_observation_offset")
+                        })
+                        .transpose()?;
+                    crate::analysis::LineTable::visible(
+                        record,
+                        std::str::from_utf8(&original)?,
+                        value["body"].as_str().unwrap_or(""),
+                        offset,
+                    )
+                };
+                value["analysis_lines"] = serde_json::to_value(&lines)?;
+                text.text = value.to_string();
+                return Ok(lines);
+            }
+        }
+        bail!("analysis_observation_required")
     }
     // Diagnostics are associated evidence, not model instructions or pending observations.
     // Store only reply text and bounded tool names, never request/provider data or tool arguments.
@@ -2690,6 +2749,382 @@ mod runtime_contracts {
             1,
             "recovery must analyze the original observation"
         );
+    }
+    struct OriginalLinesModel {
+        calls: AtomicU32,
+        reject: bool,
+    }
+    fn pending_analysis(request: &rig_core::completion::CompletionRequest) -> Value {
+        request
+            .chat_history
+            .iter()
+            .rev()
+            .find_map(|message| {
+                let Message::User { content } = message else {
+                    return None;
+                };
+                content.iter().find_map(|part| {
+                    let UserContent::ToolResult(result) = part else {
+                        return None;
+                    };
+                    result.content.iter().find_map(|part| {
+                        let ToolResultContent::Text(text) = part else {
+                            return None;
+                        };
+                        let value: Value = serde_json::from_str(&text.text).ok()?;
+                        (value["analysis_pending"] == true).then_some(value)
+                    })
+                })
+            })
+            .unwrap()
+    }
+    impl Model for OriginalLinesModel {
+        fn stream(
+            &self,
+            request: rig_core::completion::CompletionRequest,
+        ) -> BackendFuture<'_, StreamingCompletionResponse> {
+            Box::pin(async move {
+                let n = self.calls.fetch_add(1, Ordering::AcqRel);
+                let choice = if n == 0 {
+                    Raw::ToolCall(RawStreamingToolCall::new(
+                        "read",
+                        "read_terminal".into(),
+                        json!({"mode":"screen"}),
+                    ))
+                } else if n == 1 || (self.reject && n == 2) {
+                    let observation = pending_analysis(&request);
+                    let record = &observation["record_id"];
+                    let table = &observation["analysis_lines"];
+                    assert_eq!(table["record_id"], *record);
+                    assert_eq!(table["lines"][0]["line_number"], 1);
+                    assert_eq!(
+                        table["lines"][0]["text"],
+                        crate::analysis::HAIR_SPACE_UPDATE
+                    );
+                    assert!(serde_json::to_vec(table).unwrap().len() <= 16 * 1024);
+                    let digest = if self.reject {
+                        let quote = if n == 1 {
+                            json!({"record_id":record,"line_start":1,"line_end":1,"text":"ambiguous rewritten text"})
+                        } else {
+                            json!({"record_id":record,"line_start":500,"line_end":500})
+                        };
+                        json!({"summary":"Invalid references","key_quotes":[quote],"tui_lines":[]})
+                    } else {
+                        json!({"summary":"Original TUI rows inspected","key_quotes":[{"record_id":record,"line_start":1,"line_end":2}],"facts":[{"claim":"Update banner is visible","evidence":{"record_id":record,"line_start":1,"line_end":1},"certainty":"observed"}],"tui_lines":[{"record_id":record,"line_start":1,"line_end":3}]})
+                    };
+                    Raw::Message(digest.to_string())
+                } else {
+                    Raw::Message("done".into())
+                };
+                Ok(StreamingCompletionResponse::stream(
+                    "test",
+                    Box::pin(futures_util::stream::iter(vec![
+                        Ok(choice),
+                        Ok(Raw::FinalResponse(StreamFinal::new(
+                            "test",
+                            Default::default(),
+                        ))),
+                    ])),
+                ))
+            })
+        }
+    }
+    fn original_tui_backend() -> Arc<Backend> {
+        Arc::new(Backend {
+            body: Some(
+                [
+                    crate::analysis::HAIR_SPACE_UPDATE,
+                    "  Shall we turn “huh?” into “aha!”?",
+                    "› Ask Codex to do anything",
+                ]
+                .join("\n"),
+            ),
+            ..Default::default()
+        })
+    }
+    #[tokio::test]
+    async fn original_line_references_complete_real_unicode_tui_analysis() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(&temp.path().join("history.db")).unwrap());
+        let scope = store.agent("owner", "desktop", Some("session")).unwrap();
+        let model = Arc::new(OriginalLinesModel {
+            calls: AtomicU32::new(0),
+            reject: false,
+        });
+        let backend = original_tui_backend();
+        let host = AgentHost::new(store.clone(), tokio::runtime::Handle::current());
+        host.submit(
+            scope.clone(),
+            "inspect",
+            "inspect original TUI",
+            json!({}),
+            false,
+            "",
+            || Ok(snapshot(model.clone(), backend.clone(), true)),
+        )
+        .unwrap();
+        assert_eq!(settle(&host, &scope).await["state"], "completed");
+        assert_eq!(model.calls.load(Ordering::Acquire), 3);
+        assert_eq!(backend.reads.load(Ordering::Acquire), 1);
+        let history = store.history(&scope, None).unwrap();
+        let observation = history
+            .items
+            .iter()
+            .filter_map(|item| item.value["records"].as_array())
+            .flatten()
+            .find(|record| record["kind"] == "text")
+            .unwrap()["record_id"]
+            .as_str()
+            .unwrap();
+        let summary = store
+            .record(&scope, observation, "summary", 0)
+            .unwrap()
+            .record
+            .summary
+            .unwrap();
+        assert_eq!(
+            summary["facts"][0]["evidence"]["text"],
+            crate::analysis::HAIR_SPACE_UPDATE
+        );
+        assert!(
+            summary["key_quotes"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains('\u{200a}')
+        );
+        assert_eq!(summary["search_anchor_status"], "unavailable_tui_only");
+        assert_eq!(summary["tui_lines"].as_array().unwrap().len(), 3);
+    }
+    #[tokio::test]
+    async fn invalid_line_references_keep_barrier_and_durable_rejection_diagnostics() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(&temp.path().join("history.db")).unwrap());
+        let scope = store.agent("owner", "desktop", Some("session")).unwrap();
+        let model = Arc::new(OriginalLinesModel {
+            calls: AtomicU32::new(0),
+            reject: true,
+        });
+        let backend = original_tui_backend();
+        let host = AgentHost::new(store.clone(), tokio::runtime::Handle::current());
+        host.submit(
+            scope.clone(),
+            "inspect",
+            "inspect original TUI",
+            json!({}),
+            false,
+            "",
+            || Ok(snapshot(model.clone(), backend.clone(), true)),
+        )
+        .unwrap();
+        let state = settle(&host, &scope).await;
+        assert_eq!(state["state"], "paused");
+        assert_eq!(state["error"], "observation_analysis_pending");
+        assert_eq!(model.calls.load(Ordering::Acquire), 3);
+        assert_eq!(backend.reads.load(Ordering::Acquire), 1);
+        let history = store.history(&scope, None).unwrap();
+        let attempts = history
+            .items
+            .iter()
+            .filter_map(|item| item.value["updates"].as_array())
+            .flatten()
+            .filter(|update| update["analysis_attempt"].is_number())
+            .collect::<Vec<_>>();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0]["error"], "ambiguous_analysis_line_reference");
+        assert_eq!(attempts[1]["error"], "analysis_line_reference_out_of_view");
+        for attempt in attempts {
+            let reply = store
+                .record_page(
+                    &scope,
+                    attempt["rejected_reply_record_id"].as_str().unwrap(),
+                    "body",
+                    None,
+                    12288,
+                )
+                .unwrap();
+            assert!(reply["body"].as_str().unwrap().contains("line_start"));
+            assert!(
+                store
+                    .record(&scope, attempt["record_id"].as_str().unwrap(), "summary", 0)
+                    .unwrap()
+                    .record
+                    .pending
+            );
+        }
+    }
+    #[tokio::test]
+    async fn host_line_tables_limit_partial_pages_and_disable_binary_references() {
+        struct PageBackend {
+            record: String,
+            visible: String,
+            offset: usize,
+            binary: bool,
+        }
+        impl TerminalBackend for PageBackend {
+            fn authorize(&self, _: bool) -> BackendFuture<'_, ()> {
+                Box::pin(async { Ok(()) })
+            }
+            fn invoke<'a>(
+                &'a self,
+                _: ToolContext,
+                _: &'a str,
+                _: Value,
+            ) -> BackendFuture<'a, ToolOutput> {
+                Box::pin(async move {
+                    use base64::Engine;
+                    Ok(ToolOutput {
+                        value: json!({"body":self.visible,"offset":self.offset,"partial":!self.binary}),
+                        observation: Some(Observation {
+                            kind: if self.binary { "png" } else { "text" }.into(),
+                            body: if self.binary {
+                                base64::engine::general_purpose::STANDARD.encode([0, 255, 128])
+                            } else {
+                                self.visible.clone()
+                            },
+                            metadata: json!({"binary":self.binary,"text":self.visible}),
+                            binary: self.binary,
+                            model_body: None,
+                            record_id: Some(self.record.clone()),
+                        }),
+                        outcome: None,
+                    })
+                })
+            }
+        }
+        struct PageModel {
+            calls: AtomicU32,
+            record: String,
+            binary: bool,
+            target: usize,
+        }
+        impl Model for PageModel {
+            fn stream(
+                &self,
+                request: rig_core::completion::CompletionRequest,
+            ) -> BackendFuture<'_, StreamingCompletionResponse> {
+                Box::pin(async move {
+                    let n = self.calls.fetch_add(1, Ordering::AcqRel);
+                    let choice = if n == 0 {
+                        Raw::ToolCall(RawStreamingToolCall::new(
+                            "page",
+                            "read_record".into(),
+                            json!({"record_id":self.record,"part":"body"}),
+                        ))
+                    } else if n == 1 || (self.target == 1 && n == 2) {
+                        let observation = pending_analysis(&request);
+                        let rows = observation["analysis_lines"]["lines"].as_array().unwrap();
+                        assert_eq!(
+                            rows.iter()
+                                .map(|row| row["line_number"].as_u64().unwrap())
+                                .collect::<Vec<_>>(),
+                            if self.binary { vec![] } else { vec![3, 4] }
+                        );
+                        Raw::Message(json!({"summary":"Visible original page","key_quotes":[{"record_id":self.record,"line_start":self.target,"line_end":self.target}],"tui_lines":[]}).to_string())
+                    } else {
+                        Raw::Message("done".into())
+                    };
+                    Ok(StreamingCompletionResponse::stream(
+                        "test",
+                        Box::pin(futures_util::stream::iter(vec![
+                            Ok(choice),
+                            Ok(Raw::FinalResponse(StreamFinal::new(
+                                "test",
+                                Default::default(),
+                            ))),
+                        ])),
+                    ))
+                })
+            }
+        }
+        for (binary, target) in [(false, 3), (false, 1), (true, 1)] {
+            let temp = tempfile::tempdir().unwrap();
+            let store = Arc::new(Store::open(&temp.path().join("history.db")).unwrap());
+            let scope = store.agent("owner", "desktop", Some("session")).unwrap();
+            let old = store
+                .accept_user_authorized(&scope, "original", "original", json!({}), None, false)
+                .unwrap();
+            let original = format!(
+                "hidden-before\npartial-start\n{}\n› Ask Codex to do anything\npartial-end\nhidden-after",
+                crate::analysis::HAIR_SPACE_UPDATE
+            );
+            let start = original.find("partial-start").unwrap() + 3;
+            let end = original.find("partial-end").unwrap() + 5;
+            let visible = if binary {
+                "associated image text".to_owned()
+            } else {
+                original[start..end].to_owned()
+            };
+            let bytes = if binary {
+                vec![0, 255, 128]
+            } else {
+                original.as_bytes().to_vec()
+            };
+            let record = store
+                .archive(
+                    &scope,
+                    &old.run_id,
+                    "original",
+                    if binary { "png" } else { "text" },
+                    json!({"binary":binary,"text":visible,"alternate_screen":false}),
+                    &bytes,
+                )
+                .unwrap();
+            store.finish_run(&scope, &old.run_id, "completed").unwrap();
+            let model = Arc::new(PageModel {
+                calls: AtomicU32::new(0),
+                record: record.id.clone(),
+                binary,
+                target,
+            });
+            let backend = Arc::new(PageBackend {
+                record: record.id.clone(),
+                visible,
+                offset: start,
+                binary,
+            });
+            let host = AgentHost::new(store.clone(), tokio::runtime::Handle::current());
+            host.submit(
+                scope.clone(),
+                "page",
+                "inspect page",
+                json!({}),
+                false,
+                "",
+                || Ok(snapshot(model, backend, true)),
+            )
+            .unwrap();
+            let state = settle(&host, &scope).await;
+            if target == 3 {
+                assert_eq!(state["state"], "completed");
+                let summary = store
+                    .record(&scope, &record.id, "summary", 0)
+                    .unwrap()
+                    .record
+                    .summary
+                    .unwrap();
+                assert_eq!(
+                    summary["key_quotes"][0]["text"],
+                    crate::analysis::HAIR_SPACE_UPDATE
+                );
+                assert_eq!(summary["tui_classification_complete"], false);
+            } else {
+                assert_eq!(state["state"], "paused");
+                let history = store.history(&scope, None).unwrap();
+                let failures = history
+                    .items
+                    .iter()
+                    .filter_map(|item| item.value["updates"].as_array())
+                    .flatten()
+                    .filter(|update| update["analysis_attempt"].is_number())
+                    .collect::<Vec<_>>();
+                assert_eq!(failures.len(), 2);
+                assert!(
+                    failures
+                        .iter()
+                        .all(|failure| failure["error"] == "analysis_line_reference_out_of_view")
+                );
+            }
+        }
     }
     #[tokio::test]
     async fn root_cancellation_stops_its_children_and_same_root_delegation_appends() {
