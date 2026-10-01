@@ -67,8 +67,18 @@ final class WorkspaceUITests: XCTestCase {
     }
     private func replaceText(_ field: XCUIElement, with value: String) {
         XCTAssertTrue(field.waitForExistence(timeout: 5)); field.tap()
-        let count = (field.value as? String ?? "").count
-        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: count) + value)
+        let current = field.value as? String ?? ""
+        if !current.isEmpty && current != field.placeholderValue {
+            field.press(forDuration: 1.1)
+            let app = XCUIApplication()
+            let choices = [app.menuItems["Select All"], app.menuItems["全选"], app.buttons["Select All"], app.buttons["全选"]]
+            guard let select = choices.first(where: { $0.exists && $0.isHittable }) else {
+                XCTFail("Select All is unavailable for the existing fixture input"); return
+            }
+            select.tap()
+        }
+        field.typeText(value)
+        XCTAssertEqual(field.value as? String, value, "Fixture replacement must replace the complete field")
     }
     private func settingsFixture(_ scenario: String? = nil) -> XCUIApplication {
         var arguments = ["--workspace-fixture", "--settings-fixture", "--show-settings"]
