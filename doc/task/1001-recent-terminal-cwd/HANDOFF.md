@@ -49,3 +49,15 @@ adb -s emulator-5586 shell am instrument -w -r -e class com.yxf.aterminal.Recent
 输出均在 App 私有 files 中：`recent-directory-results.json`，以及 `recent-directory-normal.png`、`recent-directory-ime.png`、`recent-directory-invalid-selected.png`、`recent-directory-rejected.png`、`recent-directory-selected-1.png` / `-2.png`、`recent-directory-success-1.png` / `-2.png`、`recent-directory-cancel-prepared.png`；失败时尽力补 `recent-directory-failed.png`。报告包含步骤判定、Desktop cwd、创建/清理 ID、保留会话 ID、错误、布局边界和截图文件列表，不包含凭据。
 
 本工作树验证：`:app:compileDebugAndroidTestKotlin`（同时编译生产 Kotlin）通过；`git diff --check` 通过。未执行 instrumentation、未操作模拟器/服务/宿主目录，截图与运行 report 由协调者正式执行后产生。`TerminalAgentWorkflowUiTest.kt` 未修改。
+
+## 本轮追加：IME 下标准按钮完整触摸区域被裁切
+
+授权与证据：协调者提供主 checkout `evidence/normal-final/results.json` 和 `recent-directory-failed.png`，真实 harness 明确失败于 `ime: create button clipped by screen/IME`；普通状态可见高度 2138、dialog 高度 1571，标准创建按钮 bounds 为 `[871,1830][1047,1979]`。IME 截图中文案仍可见，但完整触摸 rect 超出 visible frame；账号与已有 Session 已确认保留。不能把标签可见当作按钮可达。
+
+本轮仅改 `MainActivity.createSession()` 和本交接，按协调者本条授权直接作 `[未Review]` 提交用于 Git 测试同步；不改 `RecentDirectoriesUiTest.kt`（主 checkout 的连接等待、最近 content ScrollView 与 Account persist 修正由协调者保留）。
+
+实现：仍用 WrapContent 窗口、现有 AlertDialog title / 标准按钮及 Palette 圆角；保存原 custom ScrollView 引用，在 decor global-layout 回调读取当前 visible display frame，按布局坐标扣除标题和页脚区域。页脚测量包含两个标准按钮的完整 bounds，若超出 decor 也纳入预留，再留 8dp 可见边界间距；只把 custom ScrollView 高度设为“自然内容高度”和“剩余可见高度”的较小值。长内容保持滚动，短内容按需收缩；IME 收起或内容/宽度变化时重新计算，可恢复完整内容高度。只有目标高度不同才更新 layoutParams；dismiss 移除原 ViewTreeObserver listener 并清空闭包，避免挂留及无变化的 requestLayout 循环。没有重设固定百分比窗口，也没有把按钮移入滚动内容。
+
+自查/编译：本工作树 `:app:compileDebugKotlin` 与 `git diff --check` 通过。核对改动仅位于 createSession 的布局/解绑代码，创建 RPC、目录校验、身份保护及测试文件均不变。本轮未操作设备、模拟器、服务，也未宣称真实 UI 回归通过。
+
+协调者重测：使用你已修正的真实 harness，确认 IME 打开时两个按钮的完整 rect 都包含在 visible frame 内；长列表滚动到底仍有固定可达按钮；键盘收起后内容恢复；空/少项无大块底部空白。重复开关 IME/弹窗，检查高度稳定、没有持续重排。报告与截图仍由主 checkout 保存。
