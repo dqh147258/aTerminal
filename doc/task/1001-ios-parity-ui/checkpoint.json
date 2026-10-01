@@ -11,7 +11,8 @@
     "追加P2正常Agent缓存正文搜索：只读SQLite/250ms后台/identity-query屏障/fixture闭历史正文",
     "追加P2模型binding reasoning兼容性保留与清理",
     "首轮sim AX小修：移除ViewBuilder内容ID，实际根容器contain，leafID独立",
-    "R12：内存快照显式server/account owner、不同身份发布前清理、密码/self revoke解绑、旧owner写回屏障"
+    "R12：内存快照显式server/account owner、不同身份发布前清理、密码/self revoke解绑、旧owner写回屏障",
+    "原生UITextView MCP/Skill编辑器与field/header清空UX，保留AXIds/原生菜单/Binding选区"
   ],
   "next": "按授权追加[未Review]提交后冻结源码，由协调者merge和专用sim验收",
   "tests": [
@@ -26,7 +27,8 @@
     "AX小修x86_64 Debug构建与diff检查通过；AX运行时待协调者重跑",
     "SessionSnapshotOwnerChecks生产direct通过；持久历史保持",
     "既有ChatStoreChecks通过",
-    "R12 x86_64 Debug App构建通过无Swift警告"
+    "R12 x86_64 Debug App构建通过无Swift警告",
+    "原生editor+clear最终x86_64 Debug构建通过无警告；实际smoke待协调者"
   ],
   "blockers": [],
   "artifacts": [

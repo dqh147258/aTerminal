@@ -81,3 +81,9 @@ build/binding-reasoning-checks
 生产仅修改ChatStore.swift与aTerminalApp.swift：快照显式绑定server/account owner，getter不能把旧owner数据重新标成当前identity；loadDevices发布不同identity前清理旧快照和当前会话展示并推进generation；密码变更成功、自撤销成功、logout解绑owner。所有快照写入回调带请求owner屏障。持久Agent历史、缓存、草稿及最近目录不清理。
 
 可审查路径：OwnedSessionSnapshots类型；TerminalModel.sessionSnapshots getter；loadDevices、revoke、changePassword/logout；connectDevice/create/closeSelected/refreshSessions快照写入。新增SessionSnapshotOwnerChecks.swift直接链接生产ChatStore.swift，验证身份转换/旧回调/持久历史保留；既有ChatStoreChecks通过；x86_64 Debug App BUILD SUCCEEDED，无Swift警告。未执行真实密码更改/自撤销或sim。
+
+## 原生代码编辑器与清空UX阻塞修复
+
+根据协调者多设备smoke，Command-A/Delete自动化对SwiftUI文本输入存在系统差异。生产仅修改AgentSettingsView.swift：MCP/Skill改局部原生UITextView，正常编辑菜单保留，禁智能转换，Binding echo不反复赋值/不重置选区，支持IME；所有field helper右侧加入常规44pt清空X，代码标题栏加入清空操作，AXIds在TEST_API.md。均为正式UI，非测试专用路径，不修改TerminalView或测试helper。
+
+x86_64 Debug构建成功且无Swift警告，类型检查通过。未运行sim；协调者优先点击.clear、验空再输入进行下一轮smoke。源文件仅一个，按已有授权未Review提交后冻结。

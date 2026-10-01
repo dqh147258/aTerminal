@@ -10,3 +10,4 @@
 - [x] 追加搜索确定性检查、x86_64构建与[未Review]提交
 - [x] 同批修复binding.reasoning兼容性，直接生产回归检查
 - [x] R12：volatile快照owner绑定、身份切换/密码/self revoke清理、direct owner检查与既有ChatStoreChecks、x86_64构建
+- [x] 原生UITextView代码编辑器与正常清空UX、保留AX/Binding/选区/IME、x86_64构建；运行时smoke交协调者

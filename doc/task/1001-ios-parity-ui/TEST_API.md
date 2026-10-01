@@ -44,3 +44,12 @@
 - 生产 `ChatStore.swift` 新增 Foundation-only `OwnedSessionSnapshots<Session>`：`bind(to: ChatIdentity?)`、`record(_:device:owner:) -> Bool`、`snapshots(for:)`。owner包括server/account；不同owner读取为空，解绑/换owner清内存，旧owner回调写入被拒绝。
 - `TerminalModel.sessionSnapshots`仅提供当前identity的filtered getter。`loadDevices`发布新username/server前先bind新owner并清旧当前展示、推进generation；connect/create/close/refresh回调同时捕获并检查owner。密码变更成功/self revoke成功/logout绑定nil，仅清内存，不删除持久历史。
 - 直接生产检查：链接`apps/ios/aTerminal/ChatStore.swift`与本任务`SessionSnapshotOwnerChecks.swift`。覆盖同owner刷新保留、A→B、同名不同server、nil解绑、迟到旧owner写入、重登录不复活volatile snapshot，并验证临时持久ChatStore历史不变。既有ChatStoreChecks也通过。
+
+## 原生代码编辑器与常规清空控件
+
+- MCP/Skill代码区现在是原生UITextView（局部UIViewRepresentable），仍用`app.textViews["mcp.json"]` / `app.textViews["skill.body"]`。原生selectAll、长按菜单、复制/剪切/粘贴/撤销未覆盖；不自动becomeFirstResponder、不修改TerminalView。value是纯文本，无placeholder。
+- 标题栏普通清空按钮：`mcp.json.clear` / `skill.body.clear`；非空显示，空时消失，busy继承父禁用；显式清空结束IME组合并将光标移到0，防组合文本回填。
+- SettingsView.field的普通右侧44pt清空按钮为`字段ID + ".clear"`（如provider.endpoint.clear、model.name.clear、reading.head.clear）。非空显示，readonly/busy继承父禁用，颜色WorkspaceStyle.muted；并非DEBUG/test控件。SecureField provider.key不是field helper，本轮不新增其清空按钮。
+- 验空合同：UITextView清空value为空字符串；SwiftUI TextField空时AX value可能是placeholder，可结合对应.clear按钮消失及placeholderValue判定，再点击输入控件输入。测试helper仍由协调者维护。
+- UIKit仅在外部Binding文本不同且没有markedText时赋值，保留并按UTF16边界clamp selection；普通delegate输入只更新Binding，不回写UITextView。显式clear事件是唯一主动结束组合和重置选区的路径。禁止autocorrect、spellChecking、smartQuotes、smartDashes、smartInsertDelete；默认多语言键盘、动态等宽字体、蓝色主题surface/边框、12pt边距。
+- Swift类型检查与最终x86_64 Debug构建通过；原生编辑/清空实际smoke由协调者接手，尚未在本子任务实测sim。
