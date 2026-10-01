@@ -1,0 +1,24 @@
+{
+  "phase": "ready_for_integration",
+  "plan": "doc/task/1001-ios-parity-ui/PLAN.md",
+  "completed": [
+    "全屏蓝色设置与配置/目录/绑定/读取",
+    "MCP与完整Skill资源流程",
+    "独立Global与Session草稿/图片隔离",
+    "fixture与DEBUG私有登录入口",
+    "独立Foundation检查9/9通过",
+    "Review R1–R8修复：epoch/权限pending/统一历史/只读"
+  ],
+  "next": "按协调者授权提交[未Review]版本后冻结源码，由协调者Git集成和专用sim/真实RPC验收；本子任务不merge",
+  "tests": [
+    "独立生产逻辑9/9 PASS",
+    "Debug x86_64 Simulator Xcode BUILD SUCCEEDED，无Swift警告",
+    "Release全量Swift typecheck通过",
+    "git diff --check通过"
+  ],
+  "blockers": [],
+  "artifacts": [
+    "doc/task/1001-ios-parity-ui/HANDOFF.md",
+    "doc/task/1001-ios-parity-ui/TEST_API.md"
+  ]
+}

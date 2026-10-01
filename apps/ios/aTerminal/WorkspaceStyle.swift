@@ -1,15 +1,15 @@
 import SwiftUI
 
 enum WorkspaceStyle {
-    static let background = Color(red: 18/255, green: 20/255, blue: 22/255)
-    static let surface = Color(red: 26/255, green: 29/255, blue: 32/255)
-    static let control = Color(red: 36/255, green: 41/255, blue: 45/255)
-    static let foreground = Color(red: 237/255, green: 240/255, blue: 242/255)
-    static let muted = Color(red: 160/255, green: 168/255, blue: 174/255)
-    static let accent = Color(red: 165/255, green: 196/255, blue: 212/255)
+    static let background = Color(red: 9/255, green: 13/255, blue: 22/255)
+    static let surface = Color(red: 16/255, green: 22/255, blue: 35/255)
+    static let control = Color(red: 20/255, green: 28/255, blue: 44/255)
+    static let foreground = Color(red: 248/255, green: 250/255, blue: 252/255)
+    static let muted = Color(red: 131/255, green: 145/255, blue: 167/255)
+    static let accent = Color(red: 56/255, green: 189/255, blue: 248/255)
     static let success = Color(red: 162/255, green: 198/255, blue: 174/255)
     static let danger = Color(red: 228/255, green: 163/255, blue: 163/255)
-    static let line = Color(red: 48/255, green: 54/255, blue: 58/255)
+    static let line = Color(red: 34/255, green: 46/255, blue: 65/255)
 }
 
 struct ToolButton: View {
@@ -35,7 +35,7 @@ struct PrimaryButton: View {
         Button(action: action) {
             HStack(spacing: 12) { if busy { ProgressView().tint(WorkspaceStyle.background) }; Text(title).fontWeight(.semibold); Image(systemName: symbol) }
                 .frame(maxWidth: .infinity, minHeight: 52).foregroundColor(WorkspaceStyle.background)
-                .background(WorkspaceStyle.accent).cornerRadius(6)
+                .background(LinearGradient(colors: [WorkspaceStyle.accent, Color(red: 14/255, green: 165/255, blue: 233/255)], startPoint: .topLeading, endPoint: .bottomTrailing)).cornerRadius(8)
         }.buttonStyle(.plain)
     }
 }

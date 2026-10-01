@@ -15,7 +15,7 @@ struct LoginScreen: View {
                 VStack(alignment: .leading, spacing: 28) {
                     HStack(spacing: 12) {
                         Image(systemName: "terminal").font(.system(size: 22)).frame(width: 36, height: 36).background(WorkspaceStyle.accent).foregroundColor(WorkspaceStyle.background).cornerRadius(8)
-                        Text("AI").fontWeight(.semibold) + Text(" TERMINAL").foregroundColor(WorkspaceStyle.muted)
+                        Text("aTerminal").fontWeight(.semibold)
                         Spacer()
                     }.font(.subheadline)
                     VStack(alignment: .leading, spacing: 12) {

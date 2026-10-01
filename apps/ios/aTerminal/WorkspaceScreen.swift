@@ -1,19 +1,27 @@
 import SwiftUI
 import Combine
 
-private enum WorkspacePanel: String { case settings, chat, devices, account, terminalHistory, chatHistory }
+private enum WorkspacePanel: String { case settings, chat, globalList, devices, account, terminalHistory, chatHistory }
+
+private struct WorkspaceEntry: Identifiable {
+    let archive: ChatArchive
+    let session: RemoteSession?
+    let path: String
+    var id: String { archive.scope.key }
+}
 
 struct WorkspaceScreen: View {
     @StateObject private var model = TerminalModel()
     @StateObject private var assistant = AssistantModel()
     @Environment(\.scenePhase) private var phase
     @Environment(\.verticalSizeClass) private var verticalSizeClass
-    @AppStorage("terminal.fontSize") private var fontSize = 16.0
-    @AppStorage("terminal.overlayOpacity") private var opacity = 88.0
+    @AppStorage("terminal.fontSize", store: WorkspacePreferences.defaults) private var fontSize = 16.0
+    @AppStorage("terminal.overlayOpacity", store: WorkspacePreferences.defaults) private var opacity = 88.0
     @State private var drawer = false
-    @State private var historyTab = false
     @State private var search = ""
     @State private var panel: WorkspacePanel?
+    @State private var settingsSection: String?
+    @State private var accountFromSettings = false
     @State private var inputVisible = false
     @State private var keysVisible = false
     @State private var landscape = false
@@ -57,11 +65,11 @@ struct WorkspaceScreen: View {
                 if let panel, !model.preparingWorkspace {
                     let height = panelHeight(panel, available: geometry.size.height)
                     Color.black.opacity(0.08).ignoresSafeArea().onTapGesture { self.panel = nil }.accessibilityHidden(true)
-                    panelContent(panel, height: height).frame(maxWidth: panel == .chat ? .infinity : 620)
+                    panelContent(panel, height: height).frame(maxWidth: .infinity)
                         .frame(height: height)
                         .background(WorkspaceStyle.surface.opacity(min(100, max(0, opacity)) / 100))
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(WorkspaceStyle.line))
-                        .cornerRadius(panel == .chat ? 0 : 8).padding(panel == .chat ? 0 : 12).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                        .cornerRadius(0).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                         .accessibilityAddTraits(.isModal)
                 }
             }.frame(width: geometry.size.width, height: geometry.size.height)
@@ -70,6 +78,9 @@ struct WorkspaceScreen: View {
         }
         .statusBarHidden(landscape)
         .foregroundColor(WorkspaceStyle.foreground).tint(WorkspaceStyle.accent)
+        .fullScreenCover(isPresented: Binding(get: { settingsSection != nil }, set: { if !$0 { settingsSection = nil } })) {
+            if let settingsSection { AgentSettingsView(model: assistant, section: settingsSection) }
+        }
         .sheet(isPresented: $creating) {
             CreateTerminalSheet(model: model) { creating = false; drawer = false }
         }
@@ -85,7 +96,7 @@ struct WorkspaceScreen: View {
             Button("退出登录", role: .destructive) { panel = nil; drawer = false; assistant.stop(); model.logout(); syncChat() }
             Button("取消", role: .cancel) {}
         }
-        .onChange(of: model.generation) { _ in creating = false }
+        .onChange(of: model.generation) { _ in creating = false; syncChat() }
         .onChange(of: model.deviceID) { _ in creating = false }
         .onChange(of: model.identity) { _ in
             creating = false
@@ -99,12 +110,11 @@ struct WorkspaceScreen: View {
             if let scope, scope == continueScope { continueScope = nil; panel = .chat }
         }
         .onChange(of: model.connected) { connected in if !connected { creating = false }; syncChat(); if connected && panel == .devices { panel = nil } }
-        .onChange(of: drawer) { value in if value { keysVisible = false; if !historyTab { model.refreshSessions() } } }
-        .onChange(of: historyTab) { value in if !value && drawer { model.refreshSessions() } }
+        .onChange(of: drawer) { value in if value { keysVisible = false; model.refreshSessions(); assistant.loadArchives() } }
         .onChange(of: panel) { value in if value != .terminalHistory { model.closeHistory() }; assistant.setVisible(value == .chat, core: model.core); if value != nil { inputVisible = false; keysVisible = false } }
         .onChange(of: model.hasControl) { value in if !value { inputVisible = false; keysVisible = false } }
         .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
-            if drawer && !historyTab { model.refreshSessions() }
+            if drawer { model.refreshSessions(); assistant.loadArchives() }
         }
         .onReceive(Timer.publish(every: 10, on: .main, in: .common).autoconnect()) { _ in
             if phase == .active { model.heartbeat() }
@@ -135,7 +145,7 @@ struct WorkspaceScreen: View {
         landscape = bounds.width > bounds.height
     }
     private func panelHeight(_ panel: WorkspacePanel, available: CGFloat) -> CGFloat {
-        if panel == .chat { return available }
+        if [.chat, .globalList, .settings, .devices, .account].contains(panel) { return available }
         let fraction: CGFloat = panel == .settings ? 0.62 : 0.74
         return max(80, min(available * fraction, available - 56))
     }
@@ -191,10 +201,11 @@ struct WorkspaceScreen: View {
                             ToolButton(symbol: "desktopcomputer", label: "选择设备") { panel = .devices }
                         }
                         ToolButton(symbol: "slider.horizontal.3", label: "终端设置") { panel = .settings }.accessibilityIdentifier("workspace.settings")
-                        ToolButton(symbol: "bubble.left", label: "AI 对话") { panel = .chat }.accessibilityIdentifier("workspace.chat")
+                        ToolButton(symbol: "bubble.left", label: "AI 对话") { assistant.openSession(); panel = .chat }.disabled(model.selected == nil && !model.fixture).accessibilityIdentifier("workspace.chat")
+                        ToolButton(symbol: "sparkles", label: "全局AI助手") { panel = .globalList }.accessibilityIdentifier("workspace.global")
                         ToolButton(symbol: "keyboard", label: "特殊按键") { keysVisible.toggle() }.accessibilityIdentifier("workspace.keys")
                     }.padding(2).background(WorkspaceStyle.surface.opacity(opacity / 100)).cornerRadius(8)
-                }.frame(width: 48, height: min(landscape ? 234 : 142, max(44, region.size.height - 8))).padding(.trailing, 6).opacity(panel == nil && !drawer && !keysVisible ? 1 : 0)
+                }.frame(width: 48, height: min(landscape ? 280 : 188, max(44, region.size.height - 8))).padding(.trailing, 6).opacity(panel == nil && !drawer && !keysVisible ? 1 : 0)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
                 }
             }
@@ -208,9 +219,62 @@ struct WorkspaceScreen: View {
         }.accessibilityHidden(drawer || panel != nil)
     }
 
+    private var workspaceEntries: [WorkspaceEntry] {
+        let identity = model.identity ?? ChatIdentity(server: model.server, account: model.username)
+        var entries: [String: WorkspaceEntry] = [:]
+        for archive in assistant.archives where archive.scope.identity == identity && !archive.scope.session.isEmpty {
+            entries[archive.scope.key] = WorkspaceEntry(archive: archive, session: nil, path: archive.title)
+        }
+        var snapshots = model.sessionSnapshots
+        if !model.deviceID.isEmpty { snapshots[model.deviceID] = model.sessions }
+        for (device, sessions) in snapshots {
+            for session in sessions {
+                let scope = ChatScope(identity: identity, device: device, session: session.id)
+                let name = model.devices.first(where: { $0.id == device })?.name ?? entries[scope.key]?.archive.deviceName ?? "Desktop"
+                let archive = ChatArchive(scope: scope, title: session.displayName, deviceName: name)
+                entries[scope.key] = WorkspaceEntry(archive: archive, session: session, path: session.cwd)
+            }
+        }
+        return entries.values.filter { entry in
+            search.isEmpty || [entry.archive.title, entry.path, entry.archive.scope.session, entry.archive.deviceName].contains(where: { $0.localizedCaseInsensitiveContains(search) })
+        }.sorted {
+            let left = $0.archive.scope.device == model.deviceID && $0.session?.exited == false
+            let right = $1.archive.scope.device == model.deviceID && $1.session?.exited == false
+            if left != right { return left }
+            return $0.archive.title == $1.archive.title ? $0.id < $1.id : $0.archive.title < $1.archive.title
+        }
+    }
+    private func workspaceRow(_ entry: WorkspaceEntry) -> some View {
+        let currentDevice = entry.archive.scope.device == model.deviceID
+        let desktopOnline = model.connected || model.fixture
+        let available = currentDevice && model.connected && entry.session != nil
+        let state = !currentDevice || !desktopOnline ? "离线 · 只读" : entry.session == nil ? "已关闭 · 只读" : entry.session?.exited == true ? "已结束 · 只读" : entry.session?.desktopAttached == false ? "Desktop 已离开 · 只读" : "在线"
+        return HStack(spacing: 4) {
+            Button {
+                drawer = false
+                if available, let session = entry.session { model.select(session.id, control: !session.exited && session.desktopAttached) }
+                else { assistant.openHistory(entry.archive); panel = .chat }
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "terminal").foregroundColor(WorkspaceStyle.accent).padding(.top, 2)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(entry.archive.title).lineLimit(2)
+                        Text(entry.path).font(.system(size: 12, design: .monospaced)).foregroundColor(WorkspaceStyle.muted).lineLimit(2)
+                        Text(state + " · " + entry.archive.deviceName).font(.caption).foregroundColor(state == "在线" ? WorkspaceStyle.success : WorkspaceStyle.muted)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    if currentDevice && entry.archive.scope.session == model.selected { Image(systemName: "checkmark").foregroundColor(WorkspaceStyle.accent) }
+                }.padding(.vertical, 16).padding(.leading, 16)
+            }.buttonStyle(.plain).disabled(model.busy).accessibilityIdentifier("session.select." + entry.archive.scope.session)
+            ToolButton(symbol: "bubble.left", label: "AI 历史 · " + entry.archive.title) {
+                drawer = false; assistant.openHistory(entry.archive); panel = .chat
+            }.accessibilityIdentifier("session.history." + entry.archive.scope.session)
+        }.background(currentDevice && entry.archive.scope.session == model.selected ? WorkspaceStyle.control : Color.clear)
+            .overlay(alignment: .bottom) { WorkspaceStyle.line.frame(height: 1).padding(.horizontal, 16) }
+    }
+
     private var drawerView: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack { Text("工作空间").font(.title3.weight(.semibold)); Spacer(); ToolButton(symbol: "xmark", label: "关闭工作空间") { drawer = false } }.padding(.horizontal, 16).padding(.top, 8)
+            HStack { Text("工作空间").font(.title3.weight(.semibold)); Spacer(); ToolButton(symbol: "xmark", label: "关闭工作空间") { drawer = false }.accessibilityIdentifier("workspace.close") }.padding(.horizontal, 16).padding(.top, 8)
             if landscape {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(model.currentSession?.displayName ?? "aTerminal").font(.subheadline)
@@ -223,9 +287,8 @@ struct WorkspaceScreen: View {
                 ToolButton(symbol: "xmark.square", label: "关闭会话") { closing = true }.disabled(model.selected == nil || !model.connected || model.busy || model.sessionExited || !model.desktopAttached)
                 Spacer()
             }.padding(.horizontal, 12)
-            Picker("工作空间视图", selection: $historyTab) { Text("终端").tag(false); Text("AI 历史").tag(true) }.pickerStyle(.segmented).padding(16)
-            HStack { Image(systemName: "magnifyingglass"); TextField(historyTab ? "搜索对话内容" : "终端名称或路径", text: $search).textInputAutocapitalization(.never).autocorrectionDisabled(); if !search.isEmpty { Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }.accessibilityLabel("清除搜索") } }.padding(12).background(WorkspaceStyle.control).cornerRadius(8).padding(.horizontal, 16)
-            if !historyTab {
+            HStack { Image(systemName: "magnifyingglass"); TextField("终端名称、路径或设备", text: $search).accessibilityIdentifier("workspace.search").textInputAutocapitalization(.never).autocorrectionDisabled(); if !search.isEmpty { Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }.accessibilityLabel("清除搜索") } }.padding(12).background(WorkspaceStyle.control).cornerRadius(8).padding(.horizontal, 16)
+            Group {
                 HStack {
                     Button { drawer = false; panel = .devices } label: { Label(model.deviceID.isEmpty ? "选择设备" : model.deviceName, systemImage: "desktopcomputer").lineLimit(1) }
                     Spacer()
@@ -235,41 +298,8 @@ struct WorkspaceScreen: View {
             }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    if historyTab {
-                        let archives = assistant.archives.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.messages.contains { $0.content.localizedCaseInsensitiveContains(search) } }
-                        if archives.isEmpty { EmptyWorkspace(symbol: "bubble.left.and.bubble.right", title: search.isEmpty ? "暂无 AI 对话" : "没有匹配的对话") }
-                        ForEach(archives) { archive in
-                            Button {
-                                selectedHistory = archive; drawer = false; assistant.openHistory(archive); panel = .chat
-                            } label: {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    HStack { Image(systemName: "bubble.left"); Text(archive.title).fontWeight(.medium).lineLimit(2); Spacer(minLength: 0) }
-                                    Text(archive.messages.last?.content ?? archive.status).lineLimit(2).font(.caption).foregroundColor(WorkspaceStyle.muted)
-                                    HStack { Text(model.presence(archive.scope)); Spacer(); Text(archive.updated, style: .date) }.font(.caption2).foregroundColor(model.presence(archive.scope) == "在线" ? WorkspaceStyle.success : WorkspaceStyle.muted)
-                                }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                            }.buttonStyle(.plain)
-                            Divider().padding(.horizontal, 16)
-                        }
-                    } else {
-                        let sessions = model.sessions.filter { search.isEmpty || $0.cwd.localizedCaseInsensitiveContains(search) || $0.id.localizedCaseInsensitiveContains(search) }
-                        if sessions.isEmpty { EmptyWorkspace(symbol: "terminal", title: search.isEmpty ? "暂无终端会话" : "没有匹配的会话") }
-                        ForEach(sessions, id: \.id) { session in
-                            Button {
-                                model.select(session.id, control: true); drawer = false
-                            } label: {
-                                HStack(alignment: .top, spacing: 12) {
-                                    Image(systemName: "terminal").foregroundColor(session.id == model.selected ? WorkspaceStyle.accent : WorkspaceStyle.muted).padding(.top, 2)
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        Text(session.displayName).lineLimit(2)
-                                        Text(session.cwd).font(.system(size: 12, design: .monospaced)).foregroundColor(WorkspaceStyle.muted).lineLimit(2)
-                                        Text(session.exited ? "已结束 · 只读" : (model.connected ? (session.desktopAttached ? "在线" : "桌面已离开 · 只读") : "待确认")).font(.caption).foregroundColor(!session.exited && session.desktopAttached && model.connected ? WorkspaceStyle.success : WorkspaceStyle.muted)
-                                    }
-                                    Spacer(minLength: 0)
-                                    if session.id == model.selected { Image(systemName: "checkmark").foregroundColor(WorkspaceStyle.accent) }
-                                }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(session.id == model.selected ? WorkspaceStyle.control : Color.clear)
-                            }.buttonStyle(.plain).disabled(!model.connected || model.busy).accessibilityIdentifier("session.select." + session.id)
-                        }
-                    }
+                    if workspaceEntries.isEmpty { EmptyWorkspace(symbol: "terminal", title: search.isEmpty ? "暂无终端会话" : "没有匹配的会话") }
+                    ForEach(workspaceEntries) { entry in workspaceRow(entry) }
                 }
             }.padding(.top, 8)
             Divider()
@@ -288,16 +318,22 @@ struct WorkspaceScreen: View {
             HStack(spacing: 12) {
                 Image(systemName: panelSymbol(value)).foregroundColor(WorkspaceStyle.accent)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(panelTitle(value)).font(.system(size: 20, weight: .semibold))
+                    Text(panelTitle(value)).font(.system(size: 20, weight: .semibold)).accessibilityIdentifier(value == .chat && assistant.global ? "global.title" : "panel.title")
                     if value == .chat && height < 400 { Text(model.fixture ? "本地 UI 验证 · 未连接模型" : assistant.status).font(.caption2).foregroundColor(WorkspaceStyle.muted).lineLimit(1).accessibilityIdentifier("chat.status") }
                     else if verticalSizeClass != .compact && height >= 350 { Text(panelSubtitle(value)).font(.caption).foregroundColor(WorkspaceStyle.muted).lineLimit(2) }
                 }
                 Spacer(minLength: 4)
-                ToolButton(symbol: "xmark", label: "关闭\(panelTitle(value))") { panel = nil }
+                ToolButton(symbol: value == .chat && assistant.global ? "arrow.left" : "xmark", label: value == .chat && assistant.global ? "返回全局会话列表" : "关闭\(panelTitle(value))") {
+                    if value == .chat && assistant.global { panel = .globalList }
+                    else if accountFromSettings && value == .account { panel = .devices }
+                    else if accountFromSettings && value == .devices { accountFromSettings = false; panel = .settings }
+                    else { panel = nil }
+                }.accessibilityIdentifier(value == .settings ? "settings.close" : value == .globalList || value == .chat && assistant.global ? "global.back" : "panel.close")
             }.padding(.leading, 16).padding(.trailing, 4).padding(.vertical, height < 350 ? 0 : 6).background(WorkspaceStyle.surface)
             Divider().overlay(WorkspaceStyle.line)
             switch value {
             case .settings: settingsPanel
+            case .globalList: GlobalConversationList(model: assistant) { panel = .chat }
             case .chat: ChatPanel(model: assistant, core: model.core, fixture: model.fixture, compact: height < 400)
             case .devices: devicesPanel
             case .account: AccountPanel(model: model, logout: { logoutConfirm = true })
@@ -316,7 +352,7 @@ struct WorkspaceScreen: View {
                 if let archive = selectedHistory {
                     ChatMessages(messages: archive.messages)
                     HStack {
-                        ToolButton(symbol: "arrow.left", label: "返回 AI 历史") { panel = nil; historyTab = true; drawer = true }
+                        ToolButton(symbol: "arrow.left", label: "返回 AI 历史") { panel = nil; drawer = true }
                         PrimaryButton(title: "继续对话") {
                             continueScope = archive.scope
                             if model.chatScope == archive.scope { continueScope = nil; panel = .chat }
@@ -329,13 +365,13 @@ struct WorkspaceScreen: View {
         }
     }
     private func panelTitle(_ panel: WorkspacePanel) -> String {
-        switch panel { case .settings: return "终端设置"; case .chat: return "AI Agent"; case .devices: return "设备"; case .account: return "账号管理"; case .terminalHistory: return "终端历史"; case .chatHistory: return selectedHistory?.title ?? "对话记录" }
+        switch panel { case .settings: return "设置"; case .globalList: return "全局AI助手"; case .chat: return assistant.global ? assistant.globalTitle : "Session Agent"; case .devices: return accountFromSettings ? "账号与设备" : "设备"; case .account: return "账号管理"; case .terminalHistory: return "终端历史"; case .chatHistory: return selectedHistory?.title ?? "对话记录" }
     }
     private func panelSubtitle(_ panel: WorkspacePanel) -> String {
-        switch panel { case .settings: return "显示偏好"; case .chat: return model.currentSession?.displayName ?? "未选择终端"; case .devices: return model.server; case .account: return model.username; case .terminalHistory: return model.currentSession?.cwd ?? ""; case .chatHistory: return selectedHistory?.deviceName ?? "" }
+        switch panel { case .settings: return "显示与 Agent 配置"; case .globalList: return model.deviceName; case .chat: return assistant.contextLabel; case .devices: return model.server; case .account: return model.username; case .terminalHistory: return model.currentSession?.cwd ?? ""; case .chatHistory: return selectedHistory?.deviceName ?? "" }
     }
     private func panelSymbol(_ panel: WorkspacePanel) -> String {
-        switch panel { case .settings: return "slider.horizontal.3"; case .chat: return "sparkles"; case .devices: return "desktopcomputer"; case .account: return "person.crop.circle"; case .terminalHistory, .chatHistory: return "clock" }
+        switch panel { case .settings: return "slider.horizontal.3"; case .globalList: return "sparkles"; case .chat: return "sparkles"; case .devices: return "desktopcomputer"; case .account: return "person.crop.circle"; case .terminalHistory, .chatHistory: return "clock" }
     }
     private var settingsPanel: some View {
         VStack(spacing: 0) {
@@ -351,15 +387,27 @@ struct WorkspaceScreen: View {
                     Slider(value: $opacity, in: 0...100, step: 1).accessibilityLabel("浮窗不透明度").accessibilityValue("\(Int(opacity))%")
                     HStack { Text("通透").padding(.horizontal, 4).background(WorkspaceStyle.surface); Spacer(); Text("清晰").padding(.horizontal, 4).background(WorkspaceStyle.surface) }.font(.caption).foregroundColor(WorkspaceStyle.muted)
                 }
-            }.padding(24)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("AI 与扩展").font(.subheadline).foregroundColor(WorkspaceStyle.muted)
+                    SettingsRow(title: "LLM 大模型", detail: "供应商、模型与默认绑定", symbol: "cpu") { assistant.openSession(); settingsSection = "llm" }.accessibilityIdentifier("settings.llm")
+                    SettingsRow(title: "终端读取", detail: "首尾锚点与 TUI 过滤", symbol: "text.alignleft") { assistant.openSession(); settingsSection = "reading" }.accessibilityIdentifier("settings.reading")
+                    SettingsRow(title: "MCP", detail: "外部工具服务", symbol: "puzzlepiece.extension") { assistant.openSession(); settingsSection = "mcp" }.accessibilityIdentifier("settings.mcp")
+                    SettingsRow(title: "Skills", detail: "技能与完整资源", symbol: "book") { assistant.openSession(); settingsSection = "skills" }.accessibilityIdentifier("settings.skills")
+                    Text("账号").font(.subheadline).foregroundColor(WorkspaceStyle.muted).padding(.top, 12)
+                    SettingsRow(title: "账号与设备", detail: model.username.isEmpty ? "连接与账号管理" : model.username, symbol: "person.crop.circle") { accountFromSettings = true; panel = .devices; model.refreshDevices() }.accessibilityIdentifier("settings.account")
+                }
+            }.padding(20)
           }
           Divider()
-          HStack { Button { fontSize = 16; opacity = 88 } label: { Label("恢复默认", systemImage: "arrow.counterclockwise") }.frame(minHeight: 44); Spacer(); Text("自动保存").font(.caption).foregroundColor(WorkspaceStyle.muted) }.padding(.horizontal, 20).padding(.vertical, 8).background(WorkspaceStyle.surface)
-        }
+          HStack { Button { fontSize = 16; opacity = 88 } label: { Label("恢复默认", systemImage: "arrow.counterclockwise") }.accessibilityIdentifier("settings.reset").frame(minHeight: 44); Spacer(); Text("自动保存").font(.caption).foregroundColor(WorkspaceStyle.muted) }.padding(.horizontal, 20).padding(.vertical, 8).background(WorkspaceStyle.surface)
+        }.accessibilityIdentifier("settings.home")
     }
     private var devicesPanel: some View {
-        let onlineDevices = model.devices.filter { $0.online && !$0.current }
+        let onlineDevices = accountFromSettings ? model.devices : model.devices.filter { $0.online && !$0.current }
         return VStack(spacing: 0) {
+            if accountFromSettings {
+                SettingsRow(title: model.username.isEmpty ? "账号管理" : model.username, detail: model.server, symbol: "person.crop.circle") { panel = .account }.padding(16)
+            }
             HStack { Text(model.busy ? "正在连接" : "已登录设备").font(.subheadline).foregroundColor(WorkspaceStyle.muted); Spacer(); if model.busy { ProgressView() }; ToolButton(symbol: "arrow.clockwise", label: "刷新设备") { model.refreshDevices() }.disabled(model.busy) }.padding(.horizontal, 16)
             ScrollView {
                 LazyVStack(spacing: 0) {
@@ -373,10 +421,10 @@ struct WorkspaceScreen: View {
                             } label: {
                                 HStack(spacing: 12) {
                                     Image(systemName: device.platform == "desktop" ? "desktopcomputer" : "iphone").font(.title3).foregroundColor(WorkspaceStyle.accent)
-                                    VStack(alignment: .leading, spacing: 6) { Text(device.name).lineLimit(2); Text(device.current ? "本机" : "在线").font(.caption).foregroundColor(WorkspaceStyle.success) }
+                                    VStack(alignment: .leading, spacing: 6) { Text(device.name).lineLimit(2); Text(device.current ? "本机" : device.online ? "在线" : "离线").font(.caption).foregroundColor(WorkspaceStyle.success) }
                                     Spacer(minLength: 0)
                                 }.frame(maxWidth: .infinity, alignment: .leading).frame(minHeight: 56)
-                            }.buttonStyle(.plain).disabled(device.platform != "desktop" || model.busy).accessibilityIdentifier("device.connect." + device.id)
+                            }.buttonStyle(.plain).disabled(device.platform != "desktop" || !device.online || model.busy).accessibilityIdentifier("device.connect." + device.id)
                             ToolButton(symbol: "trash", label: "移除设备 \(device.name)") { revokeDevice = device }.disabled(model.busy)
                         }.padding(.horizontal, 20).padding(.vertical, 8)
                         Divider().padding(.leading, 20)

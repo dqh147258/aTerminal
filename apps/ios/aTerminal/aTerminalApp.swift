@@ -33,6 +33,10 @@ final class TerminalModel: ObservableObject {
     private var historyCursor: TerminalHistoryCursor?
     private var historyVersion = 0
     private let historyWorker = DispatchQueue(label: "terminal.history")
+    #if DEBUG
+    private var localTestCA: String?
+    private var localTestLogin = false
+    #endif
     private var accountBusy = false
     private var sessionsRefreshInFlight = false
     @Published private(set) var generation = 0
@@ -62,8 +66,11 @@ final class TerminalModel: ObservableObject {
     init() {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--login-fixture") { return }
-        if ProcessInfo.processInfo.arguments.contains("--workspace-fixture") {
+        if ProcessInfo.processInfo.arguments.contains("--workspace-fixture") || ProcessInfo.processInfo.arguments.contains("--settings-fixture") {
             fixture = true; status = "本地 UI 验证 · 未连接"
+            if ProcessInfo.processInfo.arguments.contains("--settings-fixture") {
+                server = "https://fixture.invalid"; username = "fixture"; deviceID = "fixture-desktop"; selected = "fixture-session"
+            }
             if ProcessInfo.processInfo.arguments.contains("--devices-fixture") {
                 devices = [AccountDevice(id: "online", name: "Online Desktop", platform: "desktop", online: true, current: false),
                            AccountDevice(id: "offline", name: "Old iPhone", platform: "ios", online: false, current: false)]
@@ -89,6 +96,18 @@ final class TerminalModel: ObservableObject {
            let url = Bundle.main.url(forResource: "screen", withExtension: "pb"), let data = try? Data(contentsOf: url) {
             let replica = TerminalReplica()
             if (try? replica.applySnapshot(bytes: data)) != nil { screen = try? replica.frame(); status = "本地画面验证"; if let screen { TerminalBenchmark.run(screen) }; return }
+        }
+        if WorkspacePreferences.serviceTest && ProcessInfo.processInfo.arguments.contains("--local-login-fixture") {
+            localTestLogin = true
+            do {
+                let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("local-login-fixture.json")
+                let data = try Data(contentsOf: url)
+                guard let value = try JSONSerialization.jsonObject(with: data) as? [String: String],
+                      let server = value["server"], let username = value["username"], let password = value["password"] else { throw ChatFailure.message("专用测试登录文件格式无效") }
+                localTestCA = value["ca_pem"] ?? value["ca"]
+                login(server: server, username: username, password: password)
+            } catch { self.error = "专用测试登录文件读取失败"; status = "专用测试登录文件读取失败" }
+            return
         }
         if let path = ProcessInfo.processInfo.environment["AI_TERMINAL_TEST_ACCOUNT_FILE"], let data = try? Data(contentsOf: URL(fileURLWithPath: path)), let config = (try? JSONSerialization.jsonObject(with: data)) as? [String: String], let server = config["server"], let username = config["username"], let password = config["password"], let session = config["session"] {
             let epoch = accountPersistence.epoch
@@ -119,12 +138,14 @@ final class TerminalModel: ObservableObject {
         }
     }
     nonisolated private func persist(_ epoch: Int) throws {
+        guard !WorkspacePreferences.fixture else { return }
         let value = try account.export()
         try accountPersistence.commit(epoch) {
             if value.isEmpty { try PairingStore.clearAccount() } else { try PairingStore.saveAccount(value) }
         }
     }
     nonisolated private func loadDevices(_ epoch: Int) throws {
+        guard !WorkspacePreferences.fixture else { return }
         guard accountPersistence.epoch == epoch else { return }
         defer { do { try persist(epoch) } catch { failed(error) } }
         let name = account.username()
@@ -163,25 +184,34 @@ final class TerminalModel: ObservableObject {
         }
     }
     func login(server: String, username: String, password: String) {
+        guard !WorkspacePreferences.fixture else { error = "UI fixture 不连接真实服务"; return }
         guard !busy else { return }; busy = true; accountBusy = true; error = nil; status = "正在登录并连接终端…"
         let deviceName = UIDevice.current.name
+        #if DEBUG
+        let privateCA = localTestCA; let privateLogin = localTestLogin
+        #endif
         let epoch = accountPersistence.epoch
         worker.async { [weak self] in
             guard let self else { return }
             do {
                 #if DEBUG
-                let testCA = WorkspacePreferences.serviceTest ? ProcessInfo.processInfo.environment["AI_TERMINAL_TEST_CA_PEM"] : nil
+                let testCA = WorkspacePreferences.serviceTest ? (privateCA ?? ProcessInfo.processInfo.environment["AI_TERMINAL_TEST_CA_PEM"]) : nil
                 #else
                 let testCA: String? = nil
                 #endif
                 let ca = testCA ?? (Bundle.main.url(forResource: "server-ca", withExtension: "pem").flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? WorkspacePreferences.serverCA)
                 try self.account.login(server: server, username: username, password: password, name: deviceName, platform: "ios", caPem: ca)
                 try self.persist(epoch); try self.loadDevices(epoch)
-            } catch { self.failed(error) }
+            } catch {
+                #if DEBUG
+                if privateLogin { self.failed(ChatFailure.message("专用测试登录或连接失败")); return }
+                #endif
+                self.failed(error)
+            }
         }
     }
-    func refreshDevices() { guard !busy else { return }; busy = true; accountBusy = true; let epoch = accountPersistence.epoch; worker.async { [weak self] in do { try self?.loadDevices(epoch) } catch { self?.failed(error) } } }
-    func resume() { foreground = true; if !username.isEmpty, !connected, !busy { preparingWorkspace = true; refreshDevices() } }
+    func refreshDevices() { guard !WorkspacePreferences.fixture, !busy else { return }; busy = true; accountBusy = true; let epoch = accountPersistence.epoch; worker.async { [weak self] in do { try self?.loadDevices(epoch) } catch { self?.failed(error) } } }
+    func resume() { foreground = true; if !fixture, !username.isEmpty, !connected, !busy { preparingWorkspace = true; refreshDevices() } }
     func suspend() { foreground = false; pause(); preparingWorkspace = !username.isEmpty }
     func heartbeat() {
         guard foreground, !username.isEmpty, !fixture, !busy, !heartbeatBusy, !preparingWorkspace else { return }
@@ -217,6 +247,7 @@ final class TerminalModel: ObservableObject {
         return "待确认"
     }
     func connectDevice(_ id: String, sessionID: String? = nil) {
+        guard !WorkspacePreferences.fixture else { return }
         guard !busy else { return }; busy = true; preparingWorkspace = true; error = nil; connected = false; deviceID = id; sessions = []
         generation += 1; let version = generation; selected = nil; screen = nil; hasControl = false; desktopAttached = false; sessionExited = false; status = "连接中…"
         let epoch = accountPersistence.epoch
@@ -244,11 +275,13 @@ final class TerminalModel: ObservableObject {
         }
     }
     func revoke(_ id: String) {
+        guard !WorkspacePreferences.fixture else { return }
         guard !busy else { return }; pause(); busy = true; accountBusy = true
         let epoch = accountPersistence.epoch
         worker.async { [weak self] in guard let self else { return }; defer { do { try self.persist(epoch) } catch { self.failed(error) } }; do { try self.account.revoke(deviceId: id); if self.account.username().isEmpty { DispatchQueue.main.async { self.username = ""; self.server = ""; self.devices = []; self.sessions = []; self.deviceID = ""; self.accountBusy = false; self.busy = false } } else { try self.loadDevices(epoch) } } catch { self.failed(error) } }
     }
     func logout() {
+        guard !WorkspacePreferences.fixture else { return }
         guard !busy else { return }
         do { try accountPersistence.clear() } catch { failed(error); return }
         pause(); preparingWorkspace = false; busy = true; accountBusy = true; username = ""; server = ""; devices = []; sessions = []; sessionSnapshots = [:]; deviceID = ""
@@ -258,11 +291,13 @@ final class TerminalModel: ObservableObject {
         }
     }
     func changePassword(current: String, next: String) {
+        guard !WorkspacePreferences.fixture else { return }
         guard !busy else { return }; pause(); busy = true; accountBusy = true
         let epoch = accountPersistence.epoch
         worker.async { [weak self] in guard let self else { return }; defer { do { try self.persist(epoch) } catch { self.failed(error) } }; do { try self.account.changePassword(current: current, newPassword: next); DispatchQueue.main.async { self.username = ""; self.server = ""; self.devices = []; self.sessions = []; self.accountBusy = false; self.busy = false; self.status = "密码已更新，请重新登录" } } catch { self.failed(error) } }
     }
     func legacyConnect(_ invitation: String) {
+        guard !WorkspacePreferences.fixture else { return }
         guard !busy else { return }; busy = true; error = nil
         generation += 1; let version = generation; selected = nil; hasControl = false; desktopAttached = false; sessionExited = false
         worker.async { [weak self] in guard let self else { return }
@@ -284,6 +319,7 @@ final class TerminalModel: ObservableObject {
         }
     }
     func select(_ id: String, control: Bool) {
+        guard !WorkspacePreferences.fixture else { return }
         closeHistory()
         guard !busy else { return }; busy = true; preparingWorkspace = true; error = nil
         generation += 1; let version = generation; selected = nil; hasControl = false; desktopAttached = false; sessionExited = false; screen = nil; history = ""
@@ -436,6 +472,7 @@ final class TerminalModel: ObservableObject {
     }
 
     func agent(scope: ChatScope, json: String, configuration: Bool = false) async throws -> String {
+        guard !WorkspacePreferences.fixture else { throw ChatFailure.message("UI fixture 禁止真实 RPC") }
         guard connected, identity == scope.identity, deviceID == scope.device else { throw ChatFailure.message("账号或设备连接已变化") }
         return try await withCheckedThrowingContinuation { continuation in
             worker.async { [weak self] in
@@ -452,6 +489,7 @@ final class TerminalModel: ObservableObject {
         }
     }
     func assistant(scope: ChatScope, json: String) async throws -> AssistantResponse {
+        guard !WorkspacePreferences.fixture else { throw ChatFailure.message("UI fixture 禁止真实 RPC") }
         guard connected, chatScope == scope else { throw ChatFailure.message("终端连接已变化") }
         return try await withCheckedThrowingContinuation { continuation in
             worker.async { [weak self] in

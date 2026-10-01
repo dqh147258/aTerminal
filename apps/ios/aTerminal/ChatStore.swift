@@ -2,6 +2,13 @@ import Foundation
 import CryptoKit
 
 enum WorkspacePreferences {
+    static var fixture: Bool {
+        #if DEBUG
+        return ProcessInfo.processInfo.arguments.contains("--workspace-fixture") || ProcessInfo.processInfo.arguments.contains("--login-fixture") || ProcessInfo.processInfo.arguments.contains("--settings-fixture")
+        #else
+        return false
+        #endif
+    }
     static var defaultServer: String { Bundle.main.object(forInfoDictionaryKey: "ATerminalServerURL") as? String ?? "" }
     static var serverCA: String {
         let encoded = Bundle.main.object(forInfoDictionaryKey: "ATerminalServerCABase64") as? String ?? ""
@@ -16,14 +23,19 @@ enum WorkspacePreferences {
         #endif
     }
     static var defaults: UserDefaults {
-        if serviceTest { return UserDefaults(suiteName: "dev.aiterminal.integration")! }
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--workspace-fixture") || ProcessInfo.processInfo.arguments.contains("--login-fixture") { return UserDefaults(suiteName: "dev.aiterminal.ui-fixtures")! }
+        if fixture { return UserDefaults(suiteName: "dev.aiterminal.ui-fixtures")! }
         #endif
+        if serviceTest { return UserDefaults(suiteName: "dev.aiterminal.integration")! }
         return .standard
     }
     static var historyDirectory: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        #if DEBUG
+        if fixture {
+            return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("FixtureAssistantHistory", isDirectory: true)
+        }
+        #endif
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(serviceTest ? "IntegrationAssistantHistory" : "AssistantHistory", isDirectory: true)
     }
 }
