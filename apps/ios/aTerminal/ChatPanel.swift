@@ -107,7 +107,7 @@ struct ChatPanel: View {
                 TextField("发送任务或追加消息", text: $model.draft).accessibilityIdentifier("chat.draft").disabled(model.submitting)
                 Button("发送") { model.send(core) }.disabled(!model.canSend).accessibilityIdentifier("chat.send")
             }.padding(compact ? 6 : 10).background(WorkspaceStyle.control).cornerRadius(8)
-        }.padding(compact ? 6 : 12).accessibilityIdentifier(model.global ? "chat.global" : "chat.session")
+        }.padding(compact ? 6 : 12).accessibilityElement(children: .contain).accessibilityIdentifier(model.global ? "chat.global" : "chat.session")
         .onChange(of: model.items.last?.id) { _ in if latestBottomVisible { model.markGlobalRead() } }
         .fileImporter(isPresented: $importingImages, allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
             switch result { case .success(let urls): if imageDestination == model.target { model.addImages(urls) }; case .failure(let error): model.status = error.localizedDescription }
@@ -144,7 +144,7 @@ struct GlobalConversationList: View {
                 }.padding(16)
             }
             if !model.globalError.isEmpty { Text(model.globalError).font(.caption).foregroundColor(WorkspaceStyle.danger).padding(12) }
-        }.accessibilityIdentifier("global.list").onAppear { active = true }.onDisappear { active = false }
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("global.list").onAppear { active = true }.onDisappear { active = false }
             .task { while !Task.isCancelled { model.refreshGlobals(); try? await Task.sleep(nanoseconds: 1_500_000_000) } }
     }
 }

@@ -71,3 +71,7 @@ build/binding-reasoning-checks
 ```
 
 两个新增生产direct检查通过；独立check-ios-settings.py更新后的10组通过（包括catalog cancel/read serial barrier）；x86_64 Debug App构建通过。fixture词与API见TEST_API.md，未运行sim。本轮按协调者授权追加[未Review]提交，不merge。
+
+## 首轮sim AX标识小修
+
+只读main `build/ios-parity-fixture-first.log`确认LLM root leaf IDs缺失，以及global.list存在但global.create缺失。移除ViewBuilder内容层identifier，设置/设置首页/聊天/Global实际根容器显式contain；保留顶级settings.page和所有leaf IDs。源代码仅3个Swift文件5行插入/4行替换，未改变表单/聊天输入类型或业务。x86_64 Debug构建及diff检查通过，无Swift警告。AX实际验证由协调者重跑，补丁按授权未Review提交。

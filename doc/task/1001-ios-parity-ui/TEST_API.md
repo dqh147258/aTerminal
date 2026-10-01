@@ -34,3 +34,7 @@
 - UI仍用 `workspace.search`，增加 `workspace.search.busy/error`。fixture `--workspace-fixture --settings-fixture --show-drawer` 输入 `cedar-body-only-731`（也可 `星河缓存检索`），只应命中 `session.history.fixture-closed` / `session.select.fixture-closed`；标题、路径、device均不含该词。打开闭历史后正文也包含该词。快速换成无命中词/清空/关drawer，不应被旧结果覆盖。
 - 模型candidate每次验证所有指向当前模型的binding.reasoning，按新protocol/caps/output/sampling保留兼容override，只删除不兼容reasoning，保留unknown binding字段和其他模型绑定。
 - 直接生产回归：`AgentCacheSearchChecks.swift`（scope、generation、非首页缓存、Unicode/大小写、无legacy、损坏DB、debounce、late query/identity、cancel/活动失败）；`BindingReasoningChecks.swift`（同ID目录、advanced等级、兼容high保留、无效low移除、未知字段、其他模型、协议、budget/output）。文件在本任务目录，可由checks子任务直接引用生产helper复用断言。
+
+## 首轮sim AX标识小修
+
+已移除`@ViewBuilder content`上的`settings.<section>.page/settings.form`中间标识，保留实际顶级容器`settings.page`与所有leaf IDs。设置顶级、设置首页、聊天和Global列表实际VStack均显式`accessibilityElement(children: .contain)`，不合并子控件；`provider.add/model.select.<id>/bindings.open/global.create/chat.draft/settings.reset`仍直接标在控件上。`chat.draft`仍为普通单行TextField，无axis改变。x86_64 App构建通过；运行时AX由协调者重跑确认，未在本子任务操作sim。

@@ -9,7 +9,8 @@
     "独立Foundation检查9/9通过",
     "Review R1–R8修复：epoch/权限pending/统一历史/只读",
     "追加P2正常Agent缓存正文搜索：只读SQLite/250ms后台/identity-query屏障/fixture闭历史正文",
-    "追加P2模型binding reasoning兼容性保留与清理"
+    "追加P2模型binding reasoning兼容性保留与清理",
+    "首轮sim AX小修：移除ViewBuilder内容ID，实际根容器contain，leafID独立"
   ],
   "next": "按授权追加[未Review]提交后冻结源码，由协调者merge和专用sim验收",
   "tests": [
@@ -20,7 +21,8 @@
     "AgentCacheSearchChecks direct通过（损坏DB、scope/generation/late/cancel）",
     "BindingReasoningChecks direct通过",
     "独立设置检查更新至10/10 PASS",
-    "追加修复x86_64 Debug构建通过"
+    "追加修复x86_64 Debug构建通过",
+    "AX小修x86_64 Debug构建与diff检查通过；AX运行时待协调者重跑"
   ],
   "blockers": [],
   "artifacts": [

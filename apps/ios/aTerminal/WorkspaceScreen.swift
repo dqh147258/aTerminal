@@ -416,7 +416,7 @@ struct WorkspaceScreen: View {
           }
           Divider()
           HStack { Button { fontSize = 16; opacity = 88 } label: { Label("恢复默认", systemImage: "arrow.counterclockwise") }.accessibilityIdentifier("settings.reset").frame(minHeight: 44); Spacer(); Text("自动保存").font(.caption).foregroundColor(WorkspaceStyle.muted) }.padding(.horizontal, 20).padding(.vertical, 8).background(WorkspaceStyle.surface)
-        }.accessibilityIdentifier("settings.home")
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("settings.home")
     }
     private var devicesPanel: some View {
         let onlineDevices = accountFromSettings ? model.devices : model.devices.filter { $0.online && !$0.current }

@@ -112,7 +112,7 @@ struct AgentSettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     Text(store.model.destinationLabel).font(.caption).foregroundColor(WorkspaceStyle.muted)
-                    if store.loaded { content.accessibilityIdentifier(page == .root ? "settings." + section + ".page" : "settings.form") }
+                    if store.loaded { content }
                     else if store.busy { ProgressView("正在读取 Desktop 设置…") }
                     else { Button("重新读取设置") { store.load() } }
                 }.padding(16).disabled(store.busy)
@@ -126,6 +126,7 @@ struct AgentSettingsView: View {
             } else { Text("修改在下次任务生效").font(.caption).foregroundColor(WorkspaceStyle.muted).padding(12) }
         }.background(WorkspaceStyle.background).foregroundColor(WorkspaceStyle.foreground).tint(WorkspaceStyle.accent)
             .textInputAutocapitalization(.never).autocorrectionDisabled().interactiveDismissDisabled(store.busy)
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("settings.page").accessibilityValue(title)
             .onAppear { store.load() }.onDisappear { provider.key = ""; store.close() }
             .onChange(of: store.loaded) { loaded in if loaded { readDefaults() } }
