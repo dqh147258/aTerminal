@@ -178,14 +178,19 @@ class TerminalAgentWorkflowUiTest {
         val call = evidence.getJSONObject("call")
         if (call.optString("name") != "input_text" || !sameSession(call) || !accepted(evidence)) return null
         if (call.getJSONObject("arguments").optBoolean("submit")) return evidence
-        // A draft qualifies only when the next write to this terminal is an accepted, plain Enter.
+        // An explicitly unexecuted write cannot change the draft. Any other write must be the
+        // accepted, plain Enter that submits it; an uncertain receipt cannot be skipped.
         val next = ordered.drop(index + 1).firstOrNull {
             val candidate = it.getJSONObject("call")
-            candidate.optString("name") in setOf("input_text", "send_keys") && sameSession(candidate)
+            candidate.optString("name") in setOf("input_text", "send_keys") && sameSession(candidate) &&
+                it.optJSONObject("result")?.opt("executed") != false
         } ?: return null
         val nextCall = next.getJSONObject("call")
         val keys = nextCall.getJSONObject("arguments")
-        return next.takeIf { nextCall.optString("name") == "send_keys" && accepted(next) &&
+        if (!accepted(next)) return null
+        if (nextCall.optString("name") == "input_text")
+            return next.takeIf { keys.has("text") && keys.getString("text").isEmpty() && keys.optBoolean("submit") }
+        return next.takeIf { nextCall.optString("name") == "send_keys" &&
             keys.optString("key").lowercase() == "enter" && (keys.optJSONArray("modifiers")?.length() ?: 0) == 0 &&
             keys.optInt("repeat", 1) == 1 }
     }
@@ -501,6 +506,53 @@ class TerminalAgentWorkflowUiTest {
     }
 
     private fun JSONObject.copyJsonSequence(sequence: Long) = JSONObject(toString()).put("sequence", sequence)
+
+    @Test fun codexDraftSubmissionAcceptsEmptyInputEnterAfterExplicitlyUnexecutedWrites() {
+        // Mirrors initial-attempt: bracketed-pasted codex\n remains a draft; return is unsupported;
+        // the accepted empty input_text with submit=true sends the Enter that actually launches it.
+        val draft = fixtureCall("input_text", JSONObject().put("text", "codex\n"))
+        val wait = fixtureCall("wait", JSONObject().put("duration_ms", 4000), JSONObject().put("elapsed_ms", 4002), 2)
+        val read = fixtureCall("read_terminal", JSONObject().put("mode", "screen"), result = null, sequence = 3)
+        val rejected = fixtureCall("send_keys", JSONObject().put("key", "return"),
+            JSONObject().put("error", "unsupported_key").put("executed", false), 4)
+        val enter = fixtureCall("input_text", JSONObject().put("text", "").put("submit", true), sequence = 5)
+        val ordered = listOf(draft, wait, read, rejected, enter)
+        assertEquals("The empty-input receipt submits the unchanged launch draft", "call-5", submission(ordered, 0)!!.getString("record_id"))
+        val taskDraft = fixtureCall("input_text", JSONObject().put("text", "Create and run the animation"), sequence = 7)
+        val taskRejected = fixtureCall("input_text", JSONObject().put("text", " unwanted change"),
+            JSONObject().put("error", "lease_lost").put("executed", false), 8)
+        val taskEnter = fixtureCall("input_text", JSONObject().put("text", "").put("submit", true), sequence = 9)
+        val output = listOf(TerminalEvidence("tui", 6, ">_ OpenAI Codex (v0.159.2)\n"),
+            TerminalEvidence("echo", 10, "› Create and run the animation\n"))
+        val verified = verifiedLaunch(ordered + listOf(taskDraft, taskRejected, taskEnter), output, CodexMode.INTERACTIVE)
+        assertNotNull("Both interactive launch and prompt support empty-input Enter", verified)
+        assertEquals("call-5", verified!!.getString("submission_record_id"))
+        assertEquals("call-9", verified.getString("prompt_submission_record_id"))
+        val execDraft = fixtureCall("input_text", JSONObject().put("text", "codex exec task\n"))
+        assertNotNull("Exec compatibility includes the same Enter encoding", verifiedLaunch(listOf(execDraft, rejected, enter),
+            listOf(TerminalEvidence("exec-output", 6, "OpenAI Codex (v0.159.2)\n"))))
+        val keyEnter = fixtureCall("send_keys", JSONObject().put("key", "enter"), sequence = 5)
+        assertEquals("Plain send_keys Enter still works after an unexecuted rejection", "call-5",
+            submission(listOf(draft, rejected, keyEnter), 0)!!.getString("record_id"))
+    }
+
+    @Test fun codexDraftSubmissionDoesNotSkipChangedDraftsOtherKeysOrUncertainWrites() {
+        val draft = fixtureCall("input_text", JSONObject().put("text", "codex"))
+        val enter = fixtureCall("input_text", JSONObject().put("text", "").put("submit", true), sequence = 3)
+        val interfering = listOf(
+            fixtureCall("input_text", JSONObject().put("text", " --version"), sequence = 2),
+            fixtureCall("input_text", JSONObject().put("text", " ").put("submit", true), sequence = 2),
+            fixtureCall("input_text", JSONObject().put("text", "").put("submit", false), sequence = 2),
+            fixtureCall("send_keys", JSONObject().put("key", "escape"), sequence = 2),
+            fixtureCall("send_keys", JSONObject().put("key", "return"), JSONObject().put("error", "unsupported_key"), 2),
+            fixtureCall("input_text", JSONObject().put("text", " changed"), result = null, sequence = 2),
+            fixtureCall("input_text", JSONObject().put("text", " changed"), JSONObject().put("accepted", false), 2))
+        for (write in interfering) assertNull("Only explicitly unexecuted writes may be skipped: $write",
+            submission(listOf(draft, write, enter), 0))
+        val rejectedEnter = fixtureCall("input_text", JSONObject().put("text", "").put("submit", true),
+            JSONObject().put("error", "lease_lost").put("executed", false), 3)
+        assertNull("A rejected empty-input Enter alone does not submit the draft", submission(listOf(draft, rejectedEnter), 0))
+    }
 
     @Test fun pausedWorkflowDiagnosticsKeepRawCallsResultsAndTerminalBodies() {
         val pause = "Run paused: tool_timeout_outcome_unknown"
