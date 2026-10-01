@@ -22,3 +22,6 @@
 - [x] 复查main b4f8fa2 helper及f93fac8正文搜索fixture，不修改协调者helper。
 - [x] 复查0e6980c drawer identity转场与b2d3f3a独立advanced按钮，冻结main590a4f9源码比对/UITest typecheck PASS。
 - [x] 只读fixture-final/retest日志，确认14+3合计17个不同fixture测试PASS；实际live哈希由协调者拥有。
+- [x] 最后review6dcec6b可见Picker标题与10ecef6当前accessibilityValue语义，保留业务/ID/断言。
+- [x] 只读核验live11revision/2version资源与无关config SHA一致、UUID已删/errors=0；keyboard-final PASS/0skip、SE2项PASS、arm64 Release成功。
+- [x] 最终HANDOFF分开fixture/host/真实RPC/build，明确真实LLM消息和系统folder选择等未测边界；只修改文档收尾。
