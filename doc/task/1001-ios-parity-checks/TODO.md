@@ -12,5 +12,13 @@
 - [x] 新增UUID opt-in MCP/Skill生产表单round-trip，完整UI离线typecheck通过。
 - [x] 复核1035586的R9/R10修复；R10direct回归/R9正文fixture检查已补。
 - [x] 根据协调者smoke证据修正共用Select All输入helper，无生产draft改动。
-- [ ] 第二提交并报告hash，协调者重跑输入helper与live测试。
-- [ ] 独立复核R12身份快照修复并更新最终结论。
+- [x] 第二提交b62dd8a并报告hash；协调者main拥有后续helper修正，未再修改helper。
+- [x] 独立复核4400898 R12及main10f2add整合，owner snapshot实际检查PASS，无剩余源码审查阻塞。
+- [x] 审查main原生Command-A helper小修改，Xcode15.4头文件支持、main实际UI源离线typecheckPASS。
+
+验收子任务完成。本任务没有运行sim/真实RPC；协调者负责v3 input smoke、完整fixture截图与live扩展资源/配置哈希，后续具体问题可再send。
+
+- [x] 追加review ae9b4cf NativeCodeEditor/clear的IME、selection、busy/readonly与delegate生命周期边界。
+- [x] 复查main b4f8fa2 helper及f93fac8正文搜索fixture，不修改协调者helper。
+- [x] 复查0e6980c drawer identity转场与b2d3f3a独立advanced按钮，冻结main590a4f9源码比对/UITest typecheck PASS。
+- [x] 只读fixture-final/retest日志，确认14+3合计17个不同fixture测试PASS；实际live哈希由协调者拥有。

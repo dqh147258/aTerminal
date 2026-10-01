@@ -1,6 +1,6 @@
 # iOS 独立差异审查与验收支持
 
-- Status: In progress
+- Status: Completed
 - Updated: 2026-10-01
 
 ## 目标与范围
@@ -27,7 +27,7 @@
 
 ## 风险与回退
 
-无生产编辑。生产Foundation SettingsDraft直接链接10组检查通过，UI XCTest simulator SDK离线typecheck通过。已独立review生产89fc011，R1–R8修正确认；R9正文搜索遗漏、R10同ID能力改变后binding推理override不兼容已给具体行号并转实现者。测试可集成跑UI，生产完整parity应继续修正这两项P2；未执行simulator/真实RPC。
+无生产编辑。追加review原生editor/clear ae9b4cf、identity drawer 0e6980c、高级展开Button b2d3f3a及冻结main590a4f9，全部production Swift与实现worktree一致，无剩余源码阻塞。SettingsDraft direct10组及正文/绑定/owner checks通过，main最终helper与完整UITest离线typecheck通过。只读协调者日志确认17个不同fixture测试（14首轮+3定向复测）均PASS，真实Desktop路由PASS；MCP/Skill UUID/hash由协调者另验证。已交付7e55a62/b62dd8a，未由本任务merge或操作设备/服务/身份。
 
 ## 未决问题、歧义与确认
 
