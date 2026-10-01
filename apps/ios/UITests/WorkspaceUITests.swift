@@ -9,18 +9,7 @@ private enum UITestInput {
         let existing = field.value as? String ?? ""
         let hasExistingText = !existing.isEmpty && existing != field.placeholderValue
         if hasExistingText {
-            field.press(forDuration: 1.1)
-            func selectAll() -> XCUIElement? {
-                for label in ["Select All", "全选"] {
-                    for element in [app.menuItems[label], app.buttons[label]] where element.exists && element.isHittable { return element }
-                }
-                return nil
-            }
-            if selectAll() == nil { field.doubleTap() }
-            guard let selection = selectAll() else {
-                XCTFail("Select All is unavailable for the focused input", file: file, line: line); return
-            }
-            selection.tap()
+            field.typeKey("a", modifierFlags: .command)
         }
         if !value.isEmpty { field.typeText(value) }
         else if hasExistingText { field.typeText(XCUIKeyboardKey.delete.rawValue) }
