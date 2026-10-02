@@ -3,6 +3,7 @@
 import argparse
 import json
 from pathlib import Path
+import re
 import shutil
 import signal
 import sqlite3
@@ -16,9 +17,24 @@ parser.add_argument('--serial', required=True)
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--adb', default=shutil.which('adb') or str(Path.home() / 'Library/Android/sdk/platform-tools/adb'))
 parser.add_argument('--authorization', action='store_true', help='Run the authorization UI workflow and independently verify PTY marker files')
+parser.add_argument('--package', help='Target application ID; authorization defaults to the isolated authorizationfixture package')
+parser.add_argument('--aapt', help='aapt executable used to verify APK package IDs before installation')
 args = parser.parse_args()
 args.output.mkdir(parents=True, exist_ok=True)
-package = 'com.yxf.aterminal'
+package = args.package or ('com.yxf.aterminal.authorizationfixture' if args.authorization else 'com.yxf.aterminal')
+assert re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+', package), 'Invalid application ID'
+if args.authorization:
+    assert package != 'com.yxf.aterminal', 'Authorization acceptance requires a separate application ID'
+    candidates = sorted((Path.home()/'Library/Android/sdk/build-tools').glob('*/aapt'), reverse=True)
+    aapt = args.aapt or shutil.which('aapt') or (str(candidates[0]) if candidates else None)
+    assert aapt, 'aapt is required to verify the isolated APK before installation'
+    for apk, expected_package in [
+        (ROOT/'apps/android/app/build/outputs/apk/debug/app-debug.apk', package),
+        (ROOT/'apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk', package+'.test'),
+    ]:
+        badging = subprocess.check_output([aapt, 'dump', 'badging', str(apk)], text=True)
+        declared = re.search(r"^package: name='([^']+)'", badging, re.MULTILINE)
+        assert declared and declared.group(1) == expected_package, f'Build APKs with -PauthorizationUiFixture=true before installation: {apk}'
 
 def adb(*command, **kwargs):
     return subprocess.run([args.adb, '-s', args.serial, *map(str, command)], check=True, **kwargs)
@@ -49,7 +65,7 @@ with tempfile.TemporaryDirectory(prefix='aterminal-agent-ui-') as directory:
         adb('shell', 'input', 'keyevent', 'KEYCODE_WAKEUP', capture_output=True)
         adb('shell', 'wm', 'dismiss-keyguard', capture_output=True)
         with (args.output/'instrumentation.log').open('wb') as log:
-            test_class = 'com.yxf.aterminal.AgentAuthorizationUiTest' if args.authorization else 'com.yxf.aterminal.AgentReadingUiTest'
+            test_class = 'com.yxf.aterminal.AgentAuthorizationRpcUiTest' if args.authorization else 'com.yxf.aterminal.AgentReadingUiTest'
             adb('shell', 'am', 'instrument', '-w', '-r', '-e', 'class', test_class, package+'.test/androidx.test.runner.AndroidJUnitRunner', stdout=log, stderr=subprocess.STDOUT, timeout=360 if args.authorization else 180)
         transcript = (args.output/'instrumentation.log').read_text()
         report_name = 'authorization-ui-results.json' if args.authorization else 'agent-ui-results.json'

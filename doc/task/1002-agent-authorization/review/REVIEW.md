@@ -52,6 +52,24 @@
 
 基线 hooks 只有 phase/cwd/exit_code，不能把上次 prompt exit_code 或“accepted”当作完成。新 command_id 必须与提交时输入版本、执行序列和精确文本关联；人工插入、旧 hook、并发冲突、重启、过期、无 hooks 保持 unknown。后台子进程存活不改变已完成 Shell 命令的范围，TUI 不可假装提供通用完成证据。
 
+### R9：撤销后重新永久授权会产生不可撤销规则（高，待修）
+
+2026-10-02 独立读取 runtime 未提交的 `store/authorization.rs::consume_pending` 发现：先 always(P1)，revoke(P1)，同指纹再 always(P2)，SQL conflict 仅更新 revoked/value，数据库规则 ID 仍是 P1，而公开 value.id 为 P2。rules 返回 P2，revoke(P2) 找不到记录。已通过 subtask message 通知协调者。需令存储 ID 和公开 ID 一致，并做真实再授权/再撤销回归；最终集成时重新核对修复。
+
+### R10：第一个程序的 hash 不能固定完整执行身份（高，待修）
+
+runtime 未提交的 `action_descriptor` 仅 hash 第一个绝对路径 token，policy `can_always` 只判断 identity 非空，因而 `/bin/bash /tmp/mutable.sh`、`/usr/bin/env mutableProgram`、`/bin/printf ok; /tmp/mutableProgram` 都可能永久匹配，但未固定实际脚本/后续程序版本。精确参数文本相同仍不足以固定这些可变执行对象。已通知协调者，建议未知解释器脚本、wrapper、compound 只支持 once，直到有完整的执行身份材料。
+
+### R11：自动安全命令必须约束 Shell 程序解析（高，协调者已报修）
+
+裸 `ls` 等名字可以解析为 Shell alias/function 或 PATH 中自定义程序。仅严格 lexer + prompt/input proof 不足以判 Safe。需要 Host 提供可信程序解析，或采用等效的明确路径执行语言，覆盖实际安全命令可用性与 alias/function 攻击；不能通过将所有命令判 unknown 来宣称解决。
+
+当前合同采用 `inspect_command` 原生固定只读程序/字面 argv，实际 cwd 不受 Shell alias/function/PATH/draft 影响；正常读取的自动安全验收通过该入口进行。普通 run_command 保持 PTY Shell 语义，证明不足时审批。
+
+### R12：审批内容必须足以理解动作（高，协调者已报修）
+
+policy 初版 `5eb063c` 把所有普通 operands、文本、路径和未知 MCP 参数隐藏。例如 `rm /tmp/a` 与 `rm /tmp/b` 的预览相同，用户无法理解批准对象。协调者已否决并安排可读 preview followup；普通命令、参数、路径应可读，仅敏感 key/flag/known secret 脱敏。过长动作的新 `approval_details` 分页和完整详情 ack 必须在服务端、CLI、Android、iOS 同时生效；未读齐不能 once/always，deny/stop 应仍可达。
+
 ## 阶段 2 必要验收矩阵
 
 每项要记录测试名、被测 commit、行为证据与结果；下列均为待执行。
@@ -76,6 +94,9 @@
 | A16 | Android/iOS/CLI | 一次/永久/拒绝/问答/full/revoke 真 RPC 改变真实执行；切 scope 不误投；只读设备无操作；旧 Desktop 明确能力缺失 |
 | A17 | 授权管理自升级 | 模型通过受控工具尝试 CLI/配置入口在 ask/full/规则命中下均不能启用或持久化授权 |
 | A18 | full 与并发 pending | 开启 full 释放有效 approval 等待，question 仍需真实答案；full/deny/once 竞态只执行一次，关闭后重新门控；can_mutate 来自真实设备 grant |
+| A19 | 再授权后撤销 | always/revoke/always 后公开 rule ID 仍可撤销，随后同命令再出现审批且没有自动副作用 |
+| A20 | 可变执行目标 | 解释器脚本、wrapper、compound 不因首个绝对程序 hash 获得不完整的永久匹配；身份未固定时 can_always=false |
+| A21 | 可读详情与 ack | 普通危险操作的实际目标和参数可辨认；敏感值脱敏；分页读齐且ack绑定确切pending才能once/always，过期/错scope/错fingerprint不接受 |
 
 ## 验收设施和证据边界
 
@@ -85,6 +106,7 @@
 - 加密 RPC 使用临时 server/账号/配对设备/RemoteTerminal；模型和 MCP 仅 loopback/本地进程。每个 fixture 生命周期只清理自己的临时目录和进程。
 - Android `emulator-5586` 是共享资源，执行前与协调者及 Android 执行者约定窗口。iOS 真 RPC 由 iOS 执行者协同提供结果。
 - 阶段 1 已完成源码审查、攻击输入、通用确定性模型与 Android marker 验证 runner。初步通过 `cargo +stable check -p ai-terminal --example account_demo`、fmt、Python AST/JSON 校验与 diff check；这些只证明设施可构建，尚无授权行为/加密 RPC/模拟器通过证据。物理设备和线上供应商不计划验证。
+- 故障恢复后沿用同分支，管理 run 更新为 `b2967528-01b4-4381-a7d1-454474ad4c69`。按协调者指定合并 toolset `c29f404` / `fe8d656` 与 policy 初版 `5eb063c` 用于提前审查；policy 可读预览 `900d1f2` 和最终 runtime 尚未合入。独立加密 RPC test 草稿已完成六个场景并 compile-check 通过；未运行这些授权行为测试。
 
 ## 恢复入口
 
