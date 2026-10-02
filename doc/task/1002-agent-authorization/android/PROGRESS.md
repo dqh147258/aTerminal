@@ -21,3 +21,17 @@ Android 源码已实现：
 - 模拟器是原 emulator-5586；重启后经 android-emulator-control 恢复，status 核对 boot_completed。测试包 `com.yxf.aterminal.authorizationfixture`，构建 `-PauthorizationUiFixture=true`，正常账号/应用/终端数据隔离。不调用付费模型、不测试物理设备。
 
 日志保存在 `apps/android/authorization-build-final.log` / `authorization-regression-final.log`（忽略生成物）。最终可复核摘要、提交号和真实 RPC 限制由本说明更新及 worktree checkpoint 报告。
+
+## 2026-10-03 后端最终 Review 接管
+
+当前 run：c0ea835a-41c8-447a-a34c-fd46b0befc01。后端最终 Runtime/Review 主线已完成，由 Android 接管 R20/R21。原先 `/bin/echo` PTY 永久场景已过时：最终 PTY only once/full；永久真实场景改为 `run_program {program:"/usr/bin/tee",args:["-a","auth-review-always.log"],stdin:"always\n"}`，精确三行对应首次、规则自动放行、撤销后再授；第二次撤销后同参数 deny，不产生第四行。
+
+源码修复与必要新增验收（尚未运行）：
+
+- R20：响应 ID/撤销结果确认后清本次 operation nonce；丢 ACK 继续同 nonce。local UI 先丢 ACK 重试，再同 ID 再授/撤销新 nonce；真实 UI/RPC 两次撤销均 rules 为空、新 nonce，后续同 Native 参数再次审批且无多余 marker。
+- R21：移除 `MainActivity.writeReason` 对 closed/exited/detached 的管理/任务门控。连接/账号/Desktop/scope 与真实 `can_mutate` 继续限制；PT​​Y writes 最终由 Host 检查。local Session UI 终端 unavailable 下 read_only 任务、回答、设置、停止仍可达；真实 fixture关闭后 query/ask_user/设置，full 下 PTY write 仍由服务器拒绝且无 marker。
+- 本地永久审批桩改 Native 普通 program/args/stdin 形态。长详情、CAS、失效scope、旧Desktop、只读设备和输入恢复仍保留。
+- runner 复用主线 Review 已确认 envelope，增加显式 `--cli` / `--example`，保存运行二进制 SHA256、核验独立 APK package。无需重新 Cargo；复用 Review 最终二进制。600秒验收窗口只启动隔离fixture，不使用用户服务。
+- MobilePrototype 可选截图辅助函数重试并记录缺图，行为断言继续必需。此前14授权/其他原回归25项过，2项因可选截图null而中断，最新最终行为结果仍待。
+
+当前大型构建窗口归 iOS，Android 静态准备/提交，不运行 Gradle/模拟器。协调者释放后按 jobs=2 / parallel=false 构建，并在独立包/原模拟器执行必要本地及真实 RPC 验收，不能把旧桩结果宣称 Native 永久已实测。

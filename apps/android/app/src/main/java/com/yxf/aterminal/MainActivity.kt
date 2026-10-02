@@ -1165,16 +1165,6 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 if (global != null) deviceName.ifEmpty { "Desktop" }
                 else if (history != null && history.sessionId != selected) history.title
                 else currentTerminalPath ?: if (selected == null) "未选择终端" else "路径不可用"
-            }, writeReason = { target ->
-                when {
-                    (!connected || deviceId != device) -> "设备离线 · 只读缓存"
-                    global != null -> null
-                    target.isEmpty() -> null
-                    sessions.none { it.id == target } -> "会话已关闭 · 只读"
-                    sessions.first { it.id == target }.exited -> "会话已结束 · 只读"
-                    !sessions.first { it.id == target }.desktopAttached -> "Desktop 已离开 · 只读"
-                    else -> null
-                }
             }, pickImages = { callback ->
                 imagePicker = callback
                 val picker = if (Build.VERSION.SDK_INT >= 33) android.content.Intent(android.provider.MediaStore.ACTION_PICK_IMAGES).putExtra(android.provider.MediaStore.EXTRA_PICK_IMAGES_MAX, 4)
