@@ -1,4 +1,6 @@
 //! Ephemeral account + Desktop fixture for native-app integration; secrets go to a private file.
+#[path = "account_demo_authorization/mod.rs"]
+mod authorization;
 use ai_terminal_agent::Client;
 use ai_terminal_protocol::local::{Operation, Request};
 use ai_terminal_security::account::DesktopAccountCommand;
@@ -24,7 +26,8 @@ async fn main() -> Result<()> {
     builder.create(&dir)?;
     let password = ai_terminal_security::random_secret()?;
     let assistant_test = args.iter().any(|value| value == "--assistant-test");
-    let agent_test = args.iter().any(|value| value == "--agent-test");
+    let authorization_test = args.iter().any(|value| value == "--authorization-test");
+    let agent_test = authorization_test || args.iter().any(|value| value == "--agent-test");
     let db = dir.join("demo.db");
     ai_terminal_server::account::manage_user(&db, "demo", &password, false)?;
     let mut router = ai_terminal_server::router(&db, &ai_terminal_security::random_secret()?)?;
@@ -51,6 +54,13 @@ async fn main() -> Result<()> {
             let task_dir = task_dir.clone();
             async move{
             use serde_json::{Value,json};
+            if authorization_test {
+                match authorization::respond(&body, &task_dir) {
+                    Ok(Some(response)) => return response,
+                    Err(error) => return fixture_sse(json!({"content":format!("AUTH_REVIEW_FIXTURE_ERROR: {error:#}")})),
+                    Ok(None) => {},
+                }
+            }
             match task_result_fixture(&body, &task_dir).await {
                 Ok(Some(response)) => return response,
                 Err(error) => return fixture_sse(json!({"content":format!("TASK_RESULTS_FIXTURE_ERROR: {error:#}")})),
@@ -123,7 +133,9 @@ async fn main() -> Result<()> {
             } else {
                 String::new()
             },
-            command: if cfg!(unix) && agent_test {
+            command: if cfg!(unix) && authorization_test {
+                vec!["/bin/bash".into(), "-i".into()]
+            } else if cfg!(unix) && agent_test {
                 let lines = (0..60)
                     .map(|i| format!("UI_LOG_{i:03}"))
                     .collect::<Vec<_>>()
@@ -140,6 +152,7 @@ async fn main() -> Result<()> {
             },
             rows: 24,
             cols: 120,
+            shell_integration: authorization_test,
             ..Request::default()
         })?
         .info
@@ -221,7 +234,7 @@ async fn main() -> Result<()> {
     let file = options.open(dir.join("account-fixture.json"))?;
     serde_json::to_writer(
         file,
-        &serde_json::json!({"server":url,"username":"demo","password":password,"session":info.id,"benchmarks":benchmarks,"assistant_test":assistant_test,"agent_test":agent_test}),
+        &serde_json::json!({"server":url,"username":"demo","password":password,"session":info.id,"benchmarks":benchmarks,"assistant_test":assistant_test,"agent_test":agent_test,"authorization_test":authorization_test}),
     )?;
     println!("Account fixture ready; credentials written to private fixture file");
     if agent_test {
