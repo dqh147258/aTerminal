@@ -677,6 +677,11 @@ final class AuthorizationUITests: XCTestCase {
         XCTAssertFalse(always.isEnabled)
         tap("authorization.resolve.deny", app)
         tap("authorization.stop", app)
+        wait { !app.buttons["chat.stop"].isEnabled && !app.buttons["authorization.question.open"].exists }
+        for _ in 0..<5 {
+            if app.staticTexts["Fixture result: cancelled"].exists { break }
+            app.scrollViews["chat.timeline"].swipeDown(velocity: .slow)
+        }
         wait { app.staticTexts["Fixture result: cancelled"].exists }
         let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); screenshot.lifetime = .keepAlways; add(screenshot)
     }
