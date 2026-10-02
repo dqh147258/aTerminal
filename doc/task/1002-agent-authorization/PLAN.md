@@ -1,6 +1,6 @@
 # Agent 操作授权与工具补齐
 
-- 状态：Approved；协调者完成方案后直接执行，无需用户 Review。
+- 状态：In progress；协调者完成方案后直接执行，无需用户 Review。
 - 日期：2026-10-02，Asia/Singapore。
 - 起点：`main` / `f56461eb9b6d7a5cb3ba19cf698779208a81f7ee`；工作树原本干净，AGENTS.md 为空。
 - 用户授权：补充权限和此前建议的六类工具；允许协调者自行决定实现细节、通过 worktree-tasks 分工。用户明确“计划我不Review, 你看着处理”。
@@ -47,7 +47,7 @@
 
 通过指定 skill CLI 启动独立 iTerm Codex worktree；协调者维护本计划、接口决定、集成、Review 和最终验证。子任务不擅自修改其他组件或启动下一层代理。
 
-1. `authorization-policy`：新增纯策略模块、精确指纹/脱敏/命令分类与攻击用例；先提供稳定 API。通常局部明确工作，按 skill 策略使用 `gpt-6.1-sol / xhigh`。
+1. `authorization-policy`：新增纯策略模块、精确指纹/脱敏/命令分类与攻击用例；先提供稳定 API。安全分类与绕过判断需要设计，按 skill 策略使用 `gpt-6-astra / high`。
 2. `authorization-runtime`：审批/问答持久化与恢复、对话模式、Host 执行接入、Broker、远程授权和 CLI；依赖策略模块与工具 helper，负责共享文件最终接线。跨模块复杂任务，使用 `gpt-6-astra / high`。
 3. `agent-toolset`：新增 helper 模块实现六类工具、命令关联与 Shell hooks；优先新增 `host/tools.rs`、`store/tools.rs`、`service/runtime/tools.rs`，由 runtime 子任务接入父模块，减少同时编辑同一文件。使用 `gpt-6-astra / high`。
 4. `android-authorization`：Android 模式开关、审批/问答卡片、规则查看撤销、协议和 UI 回归；不改 Rust。使用 `gpt-6-astra / high`。
@@ -78,7 +78,7 @@
 - [x] 核对现有权限/工具/移动端/CLI 调用链，确认用户三个范围选择及无需 Review 的授权。
 - [x] 读取规划、worktree-tasks、依赖 worktree-flow 与模型策略；创建顶层管理任务。
 - [x] 编写主计划与统一接口合同；由协调者自审后执行。
-- [ ] 启动并记录五个实现子任务与各自 worktree/分支/SessionID。
+- [x] 启动并记录五个实现子任务与各自 worktree/分支/SessionID，见 [WORKTREES.json](WORKTREES.json)。均从 `main / 3f8ebe0` 创建，无复制旧凭据或运行状态。
 - [ ] 策略、运行时和工具 helper 交付并互相接线。
 - [ ] Android/iOS/CLI 同步并完成各端验证。
 - [ ] 独立 Review、必要修复、最终 main 集成测试。

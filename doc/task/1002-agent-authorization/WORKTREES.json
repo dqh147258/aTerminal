@@ -1,0 +1,73 @@
+[
+  {
+    "name": "20261002-181016-878-authorization-policy",
+    "task": "20261002-180220-295-agent-authorization",
+    "current_run": "f34ccc7b-386b-49fb-b071-e48dc8a08603",
+    "worktree": "/Volumes/Code/public-worktree/aTerminal/1002-authorization-policy",
+    "feature": "authorization-policy",
+    "branch": "worktree/1002-authorization-policy",
+    "iterm_session_id": "w0t1p2:7C54721B-DF7C-4329-9264-FA11182AE227",
+    "model": "gpt-6-astra",
+    "reasoning_effort": "high",
+    "handshake_timeout": null
+  },
+  {
+    "name": "20261002-181021-572-authorization-runtime",
+    "task": "20261002-180220-295-agent-authorization",
+    "current_run": "042fc24b-ad90-4ba7-a6e4-4a4321435954",
+    "worktree": "/Volumes/Code/public-worktree/aTerminal/1002-authorization-runtime",
+    "feature": "authorization-runtime",
+    "branch": "worktree/1002-authorization-runtime",
+    "iterm_session_id": "w0t1p4:861FBEBD-6CA0-4E82-85CE-ABF335F7BEEF",
+    "model": "gpt-6-astra",
+    "reasoning_effort": "high",
+    "handshake_timeout": null
+  },
+  {
+    "name": "20261002-181025-555-agent-toolset",
+    "task": "20261002-180220-295-agent-authorization",
+    "current_run": "0a94b6ad-dcee-4b4c-a0aa-b7606f048931",
+    "worktree": "/Volumes/Code/public-worktree/aTerminal/1002-agent-toolset",
+    "feature": "agent-toolset",
+    "branch": "worktree/1002-agent-toolset",
+    "iterm_session_id": "w0t1p6:89114747-0900-426B-9F20-AC71D6DD2B12",
+    "model": "gpt-6-astra",
+    "reasoning_effort": "high",
+    "handshake_timeout": null
+  },
+  {
+    "name": "20261002-181029-626-android-authorization",
+    "task": "20261002-180220-295-agent-authorization",
+    "current_run": "3bd79794-718b-42a1-95d1-5468d90f56f3",
+    "worktree": "/Volumes/Code/public-worktree/aTerminal/1002-android-authorization",
+    "feature": "android-authorization",
+    "branch": "worktree/1002-android-authorization",
+    "iterm_session_id": "w0t1p8:C8FD2A8A-DEB6-405E-AED5-2543AB9AA61E",
+    "model": "gpt-6-astra",
+    "reasoning_effort": "high",
+    "handshake_timeout": null
+  },
+  {
+    "name": "20261002-181033-557-ios-authorization",
+    "task": "20261002-180220-295-agent-authorization",
+    "current_run": "6b0883a9-9c4c-44a4-adcd-7a4b113e3f7d",
+    "worktree": "/Volumes/Code/public-worktree/aTerminal/1002-ios-authorization",
+    "feature": "ios-authorization",
+    "branch": "worktree/1002-ios-authorization",
+    "iterm_session_id": "w0t1p10:9C123C80-C36D-4EF1-8466-6A2000E581E1",
+    "model": "gpt-6-astra",
+    "reasoning_effort": "high",
+    "handshake_timeout": null
+  },
+  {
+    "name": "20261002-181315-577-authorization-review",
+    "task": "20261002-180220-295-agent-authorization",
+    "current_run": "13d7a888-2027-46db-a504-aa40d239b616",
+    "worktree": "/Volumes/Code/public-worktree/aTerminal/1002-authorization-review",
+    "feature": "authorization-review",
+    "branch": "worktree/1002-authorization-review",
+    "iterm_session_id": "w0t1p12:699F017A-3B68-4637-8735-CFD14D3CEF87",
+    "model": "gpt-6-astra",
+    "reasoning_effort": "high"
+  }
+]
