@@ -104,6 +104,7 @@ async fn queried_and_waited_results_survive_cleaning_until_the_parent_finishes()
             budget: Arc::new(Budget::new(30, 10, 10000, global.clone())),
             cancel: receiver,
             execution_gate: Arc::new(Mutex::new(true)),
+            authorization_check: None,
         };
         let output = if waiting {
             host.wait_agent_task(&context, json!({"task_id":task.run_id,"timeout_ms":30000}))
