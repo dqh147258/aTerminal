@@ -45,6 +45,8 @@
 
 独立审阅确认：实际 Shell 的别名/函数/PATH 不能通过当前观测可靠证明程序身份；普通读取增加 `inspect_command` 正向固定程序/参数入口，在实际 cwd 以原生子进程运行并提供证据（不经 Shell，不改 PTY draft/目录），确保安全读取无需逐项审批。run_command 保持原 PTY 交互语义，未知输入仍审批。此为用户授权范围内的实现细化，不增加 OS/cwd 沙箱；详情及精确永久语言边界见合同。
 
+2026-10-02 23:52：Review实测Bash/Zsh可用同绝对路径Shell function替换实际程序，早期固定字符串规划仍不能安全承载PTY永久规则。协调者自审采用独立 `run_program(program,args,stdin?)` 原生执行入口：可靠leaf程序hash/完整literal参数/当前cwd可精确永久，unknown程序once/full；原PTY输入once/full，can_always=false，不静默改变终端语义。策略namespace升级v3废止旧宽松规则；改动留在已批准权限/工具范围，runtime接管所需已关闭policy/helper文件的最小接线，review准备真实native授权/覆盖回归，不恢复第三个执行者。
+
 已安装的 MCP/Skill 可执行能力由用户管理。MCP annotations 仅供显示，不能自行扩大自动放行范围；当前保持所有实际用户 MCP 调用/脚本进入审批或精确规则。`mcp_tools` 会惰性启动已启用服务，此生命周期属于用户配置的既有扩展能力；能力界面明确说明，不把 catalog 查询宣传为 OS 沙箱。
 
 ## 执行分工与依赖

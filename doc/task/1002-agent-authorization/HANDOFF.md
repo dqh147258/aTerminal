@@ -23,4 +23,6 @@
 
 大型Cargo窗口现在归runtime，jobs2/tests2；root和review只读审阅/准备测试，不并发大型build。runtime已实际通过R13真实Broker/Actor插入draft竞态（本地HTTP模型桩+临时PTY），CLI真实非TTY、动态Skillcwd、两lib/clippy最终回归仍待。review先合main8a1d18f审最终安全/接口；runtime完成关闭后名额可恢复iOS，review拿Cargo窗口做独立加密验收。源码scope不变；review需评估同Run deny后显式full仍命中拒绝缓存的行为。
 
+最新自审方案（23:52，待实现）：真实Bash/Zsh slashfunction可覆盖绝对程序，因此PTY永久规则停止使用；新增独立run_program(program绝对,args数组,stdin?≤16000UTF8)直接nativeexec/env_clear/OScwd，source=native_program，可靠leaf/hash支持always，unknown/interp仅once/full。所有PTY仅once/full不改语义。v3指纹废止v2。runtime获最小policy/helper/process/builtin文档接线权限（不唤醒关闭的toolset/policy）；review改独立always用run_program tee -a +精确stdin计数，Android/iOS恢复后也需改对应RPC测试。用户已授权自由设计、无需Review，root已向两当前执行者确认此方案。deny旧动作不重放，后设full的新toolcall绕过旧拒绝缓存，runtime已加回归继续测试。主线当前仍为早期PTY规则阶段，不可宣称最终完成。
+
 下一步：持续接收子任务早期API/设计问题并同步。策略/API稳定后通过Git合并接入runtime，工具helper同时接线；各端完成后集成main，由独立review做最终diff审阅与隔离真实RPC验收，执行计划High必要检查。用于集成源码提交保留worktree skill Pending Review前缀；Review通过需如实记录。完成后仅满足完整整合/主线测试/工作树干净等条件才清理新子任务资源，不能把完成状态当作自动清理授权的全部条件。
