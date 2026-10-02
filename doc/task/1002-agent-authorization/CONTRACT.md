@@ -56,7 +56,7 @@ fn assess(action: &ActionDescriptor) -> Assessment;
 
 已确定的 Rust 字段：`ActionDescriptor { account_id, desktop_id, tool, source: ToolSource, source_id, tool_version: Option<String>, target, cwd: Option<String>, arguments: Value, execution_identity: Option<String>, shell_proof: Option<ShellProof>, permission_management: bool }`；字符串字段默认 String。`ToolSource = Builtin|Mcp|Skill|Unknown`，`ShellDialect = Bash|Zsh`；`ShellProof { dialect, at_prompt, input_buffer_empty, observed_revision, current_revision }` 只由 Host 的可信状态构造。`Assessment { risk, reason, fingerprint, redacted_preview, can_always }`，提供 `assess`、`stable_fingerprint`、`redacted_preview`。指纹不包含瞬时 revision，但最终动作执行必须再次检查 proof/fence。原始 `input_text`/`send_keys` 无可靠完整输入上下文时不提供永久授权；结构化命令才能形成可复验的永久规则。已识别的权限管理模型动作使用 Forbidden，full 也不能代替真实用户更改授权。
 
-策略最终接口已以 `5b89a2d` 源码冻结：`InspectCommand { program:String, args:Vec<String> }`、`inspect_command_plan(&str)->Option<InspectCommand>`；`permanent_command_program(&str)->Option<String>`；丰富规划 `FixedCommand { program:String, argv:Vec<String>, redirects:Vec<Redirect> }` / `fixed_command(&str)` 可供需要完整语法结构的调用者使用。`run_command` 始终 RequiresApproval；inspect 的有效固定原生计划 Safe，无效语法 Forbidden（不得 fallback Shell）。永久规则还要求完整输入边界及真实程序/配置 identity。指纹 namespace 为 `v2:`，旧 v1 规则失配，避免宽松旧语义沿用。
+策略阶段接口 `5b89a2d`：`InspectCommand { program:String, args:Vec<String> }`、`inspect_command_plan(&str)->Option<InspectCommand>`；`permanent_command_program(&str)` / `fixed_command(&str)` 提供早期字面 Shell 规划。**独立Review实际Bash/Zsh slash函数复现后，早期规划不再足以授予PTY永久权限**：最终新增run_program原生工具承载精确永久授权，run_command/input/keys只提供once/full。指纹namespace升为 `v3:`，v1/v2旧规则失配；原始完整参数、目录、目标与真正程序身份继续绑定。原生工具最终 API/策略由runtime更新后写入源码交接。
 
 接线：Host 暴露 `AgentHost::ask_user(&ToolContext, Value) async -> Result<ToolOutput>`；工具 helper 的 `definitions(global)` 注册新工具；父文件通过 `#[path="host/tools.rs"] pub mod tools`、`#[path="store/tools.rs"] mod tools`、runtime 的 `#[path="runtime/tools.rs"] mod tools` 引入子模块。Broker 调用 `Backend::invoke_added(context,name,args) -> Result<Option<ToolOutput>>`，命令缓存 `tools::CommandTracker` 由父 Backend 构造。命令 ID 对 scope 和已归档结果的关联必须可持久恢复，缓存不能成为唯一结果来源。
 
@@ -68,7 +68,7 @@ PTY 写入是异步队列，单独 prompt.mtime > 输入时间也不能排除排
 
 实际 Shell 的 aliases/functions/PATH 不能仅凭名字证明安全。为保证常规安全读取确实无需授权，新增 `inspect_command`：策略严格正向语法转换为固定绝对只读程序和字面 argv，Broker 在身份复核的当前 cwd 启动原生子进程（不经过 Shell、不改变 PTY draft/目录），归档 stdout/stderr/exit_code 并明确 source=sidecar_read。未知语法拒绝该读取工具，模型可改用正常 run_command 申请授权。这没有目录/OS 沙箱；它是可确定的读取执行入口。run_command 仍在原 PTY，不能用 command/builtin 字符串包装宣称解决任意用户函数覆盖。
 
-永久规则的 execution_identity 必须覆盖整个实际执行语言：仅 hash 第一个绝对程序不足以放行解释器脚本、env wrapper、compound 或动态环境表达式。初版仅为可固定的单个程序、字面 argv 和必要固定字面重定向生成稳定规则；外部脚本/解释器/复合或可变目标无法证明时 can_always=false。同字面命令但程序/配置版本改变仍重新审批。
+永久规则的 execution_identity 必须覆盖实际执行入口。仅hash绝对文件仍无法证明用户Shell没有同路径function/alias，**PTY动作一律can_always=false**，绝不把原PTY命令静默换成native。独立 `run_program` 直接原生exec绝对程序和literal argv，未知/解释器/wrapper程序仍可once/full，但只有可靠固定leaf程序、真实程序hash/目录/来源版本可always。同参数但程序/目录/版本改变重新审批；原生stdin作为精确参数的一部分。
 
 runtime 执行者负责 `lib.rs` 导出、Store persistence、Host gate、RPC、远程授权与 CLI；策略执行者仅新增自己的模块/测试，不编辑这些共享文件。工具执行者新增 helper 模块并尽早报告父模块要接的少量 hook；runtime 执行者负责接线，避免两个工作树全面覆盖父文件。
 
@@ -79,6 +79,7 @@ runtime 执行者负责 `lib.rs` 导出、Store persistence、Host gate、RPC、
 | 工具 | 参数概要 | 角色与行为 |
 | --- | --- | --- |
 | `inspect_command` | `command`, Global 必填 `session_id` | 两者；严格固定程序的常规安全读取，在 Session 实际 cwd 原生执行，无 Shell 解析，返回归档 stdout/stderr/exit_code；不改终端输入/目录 |
+| `run_program` | `program` 绝对路径、`args` 字面数组、可选 `stdin`，Global 必填 `session_id` | 两者；明确的原生程序执行，不经过Shell、不改PTY输入/目录；副作用经过once/always/full，固定leaf及真实hash可永久，真实stdout/stderr/exit归档，source=native_program |
 | `run_command` | `command`, Global 必填 `session_id` | 两者；在现有 PTY 提交完整命令，绑定输入状态和授权，返回 `command_id`/accepted，不能凭 accepted 宣称完成 |
 | `get_command_result` | `command_id` | 两者；同账号/Desktop，Session 限自身；返回 shell 命令状态、退出码、cwd 和证据来源/引用；无关联证据为 unknown |
 | `wait_command` | `command_id`, `timeout_ms` 1–30000 | 两者；取消/共享时限感知；超时不停止程序 |
@@ -95,6 +96,10 @@ runtime 执行者负责 `lib.rs` 导出、Store persistence、Host gate、RPC、
 凡 Global 面向终端的 schema 都要求 session_id；Session schema 不提供切换目标参数，兼容旧 Session 参数时必须等于绑定目标。工具数量以最终实际注册为准，新增别名必须有用途。
 
 命令结果通过 Host 提交记录与会话 Shell hooks 的命令序列/文本证据关联，不能把下一次 prompt 或上一个退出码误配给新命令。命令结束不代表其后台子进程或应用任务结束。无 Shell hooks、相关证据过期、人工插入命令、关联冲突、仅进程存在等情况保持 unknown。初版实现可靠 Shell 命令关联；任意 TUI 的 application_task 保持 unknown，不伪造通用应用完成适配器。
+
+`run_program` args最多64项/有界总字节数，stdin可选最多16000 UTF-8字节（默认EOF），env_clear并用固定程序/真实cwd直接spawn；不使用model提供的safe字段或Shell解析，取消/总预算杀进程组，有界输出明确truncated/timeout及证据边界。可靠leaf包含实际系统touch/mkdir/rm/cp/mv/printf/tee等明确原生程序；unknown程序不作为稳定永久入口，full仍可执行而非受到目录/OS沙箱限制。`tee -a`+精确stdin可用于一次/永久实际追加marker计数，不以幂等touch/cp掩盖重放。
+
+用户同Run已deny的旧动作保持拒绝终态；随后显式开启full时新的toolcall按当前full执行，不能因同指纹拒绝缓存继续阻塞，也不自动重放旧动作。Forbidden/身份/只读/fence/取消检查仍优先。
 
 ## 跨端与恢复
 
