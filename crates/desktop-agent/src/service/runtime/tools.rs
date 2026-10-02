@@ -290,7 +290,7 @@ impl Backend {
             let session = self.session(&args)?;
             let info = self.info(&session)?.info.context("session_unavailable")?;
             let hooks = shell(&info);
-            json!({"session_id":session,"desktop_attached":info.desktop_attached,"shell_hooks":{"available":hooks["evidence_source"]=="session_shell_hook","dialect":hooks["dialect"],"command_association":hooks["command_association"]==true,"evidence_source":hooks["evidence_source"],"trusted_for_authorization":false},"application_task_adapter":null,"application_completion":false})
+            json!({"session_id":session,"desktop_attached":info.desktop_attached,"shell_foreground_proven":crate::process::shell_foreground(&info),"shell_hooks":{"available":hooks["evidence_source"]=="session_shell_hook","dialect":hooks["dialect"],"command_association":hooks["command_association"]==true,"evidence_source":hooks["evidence_source"],"trusted_for_authorization":false},"application_task_adapter":null,"application_completion":false})
         } else {
             Value::Null
         };
