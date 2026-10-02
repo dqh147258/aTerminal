@@ -27,7 +27,7 @@
     "handshake_timeout": null,
     "codex_thread_id": "01a0fc17-fb59-7cb0-abd0-057c534f4125",
     "recovered_at": "2026-10-02 20:59:31",
-    "schedule_state": "running",
+    "schedule_state": "closed_completed",
     "binding_mode": "trusted_attach"
   },
   {
@@ -49,32 +49,32 @@
   {
     "name": "20261002-181029-626-android-authorization",
     "task": "20261002-180220-295-agent-authorization",
-    "current_run": "8dc5141e-1c4c-4837-82d3-5cb0d4522827",
+    "current_run": "c0ea835a-41c8-447a-a34c-fd46b0befc01",
     "worktree": "/Volumes/Code/public-worktree/aTerminal/1002-android-authorization",
     "feature": "android-authorization",
     "branch": "worktree/1002-android-authorization",
-    "iterm_session_id": "w1t1p8:2DC0EC00-2F23-43D6-8C48-07BB031FEE97",
+    "iterm_session_id": "w1t0p4:885022C3-8932-4132-A18E-F8E0B4923031",
     "model": "gpt-6.1-sol",
     "reasoning_effort": "high",
     "handshake_timeout": null,
     "codex_thread_id": "01a0fc18-1a04-7701-890b-6d4e53d93864",
     "recovered_at": "2026-10-02 19:57:33",
-    "schedule_state": "queued"
+    "schedule_state": "running"
   },
   {
     "name": "20261002-181033-557-ios-authorization",
     "task": "20261002-180220-295-agent-authorization",
-    "current_run": "325f17b0-b06b-451e-9d8d-ea5363dce627",
+    "current_run": "9668ea3b-fde7-44b0-903e-ead1fbf05cb1",
     "worktree": "/Volumes/Code/public-worktree/aTerminal/1002-ios-authorization",
     "feature": "ios-authorization",
     "branch": "worktree/1002-ios-authorization",
-    "iterm_session_id": "w1t1p10:3618E136-0BCD-4320-9359-44F6E0160EC4",
+    "iterm_session_id": "w1t0p4:D675D179-ADA9-4B9B-BF84-38825627731E",
     "model": "gpt-6.1-sol",
     "reasoning_effort": "high",
     "handshake_timeout": null,
     "codex_thread_id": "01a0fc18-28ca-70e0-aeef-e31c9186faf5",
     "recovered_at": "2026-10-02 19:57:38",
-    "schedule_state": "queued"
+    "schedule_state": "running"
   },
   {
     "name": "20261002-181315-577-authorization-review",
@@ -89,6 +89,6 @@
     "codex_thread_id": "01a0fc1a-a796-74e2-8543-7dc9163afbe5",
     "recovered_at": "2026-10-02 19:57:43",
     "handshake_timeout": null,
-    "schedule_state": "running"
+    "schedule_state": "closed_completed"
   }
 ]

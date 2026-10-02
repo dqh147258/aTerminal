@@ -1,6 +1,18 @@
 # 当前恢复摘要
 
-2026-10-02 23:40：最多两个活跃执行者约束继续生效，当前 runtime + review，均 `gpt-6.1-sol / high`。policy/toolset 已完成且终端关闭；Android/iOS 排队。toolset完成22/22+strictclippy并合final doc0ee30d1，关闭后才恢复review。用户已授权全部实现且不 Review 计划，主计划 In progress。
+2026-10-03 02:38：当前两个执行者是iOS + Android，均Sol/high。policy/toolset/runtime/review已完成对应阶段并关闭终端；Review最终287b7e4实际18/18加密0ignored+strictclippy通过并合main，客户端必要事项仍open transferred_required。iOS获系统独占窗口，最新build-for-testing和7/7本地原生XCTest通过，真实RPC正在跑；Android只静态修R20/R21和native永久测试，待iOS释放后才Gradle/模拟器。任务仍In progress，不是整体完成。
+
+有效恢复摘要：main已合runtime45ab2d4（含06b4c9d/fa29899/ad5bd37）、Review18场景ca3661e及Android92de04e。run_program独立nativeexec/env_clear/实际cwd/参数+stdin精确规则v3已落地，PTY仅once/full；native结果不被PTY失效或Shellcorrelate，持久run_id/重启unknown/immutable stdout档案。整Skill注册包文件actualhash末端复核，generic脚本依赖不稳定所以always=false，仍once/full。Native叶子永久真实CLI闭环已通过。
+
+当前ID：Android=c0ea835a-41c8-447a-a34c-fd46b0befc01；iOS=9668ea3b-fde7-44b0-903e-ead1fbf05cb1；准确Session/thread见WORKTREES.json。inbox已消费237（另receiver53620结果236已读完，不留双waiter）。taskCLI仍aTerminal/20261002-180220-295-agent-authorization，禁止全量恢复；完成并关闭才可恢复下一项。大型构建互斥。
+
+iOS独立服务由root启动、config_ready=true：/var/folders/85/nscyc5g90sn18qw0_2l1qnt40000gn/T/aterminal-ios-auth-final-ohadryvi，pid55669，源码无凭据记录ios/SERVICE.json。用review/target/debug/aTerminal和examples/account_demo（通过18验收版本）。iOS只用此服务，自己重复fixture已SIGINT。服务保持至iOS实际RPC/重跑完成，root只关闭自己该临时fixture/daemon，不影响用户账号/终端。runner最初误把Session当UUID已改真实16hex；源码followup尚待合入。
+
+Android恢复必修：R20成功revoke后clear该operation持久nonce，失败/丢ACK复用，新grant同RuleID第二次revoke新UUID；R21管理/readonly发送/问答/stop只由connection+accountscope+实际can_mutate约束，不把Terminaldetached/closed/lease当用户设备权限，真实writes由Hostfence最终控制。实际always改run_program tee-a+exactstdin，rawPTYonce/full仍验。MobilePrototype可选截图null回归helper待提交，不放宽行为断言。notes位于/private/tmp/aterminal-agent-authorization-limited/android-next.txt和android-final-notes.txt，重启可能清空，以上文档为持久恢复来源。
+
+本地最终runtime99/Desktop57、Host11、CLI2+3闭环曾过；后续Store6/native并发get-wait1/helper-only版本1/动态cwd1及strictclippy/fmt通过。独立加密18例、最终main aggregate、iOS/Android真实UI/RPC尚未执行完，不能当整体验收。iOS已保存未提交源/XCTest/runner，恢复后永久场景必须用run_program tee-a+精确stdin（不是旧PTYecho/bash-c），已在prompt确认。iOS完成关闭后恢复Android，保持Sol/high。
+
+以下保留旧阶段历史，旧“待实现/当前runtime运行/未提交”等描述均由以上有效摘要和CONTRACT取代，不是继续工作的现行要求。
 
 - 任务：`aTerminal / 20261002-180220-295-agent-authorization`。
 - 任务 CLI：`python3 /Users/carl/.codex/skills/worktree-tasks/scripts/worktree_tasks.py`。
