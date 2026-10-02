@@ -11,8 +11,8 @@ aTerminal models set-default PROFILE --scope global
 aTerminal models set-default PROFILE --scope session-default
 aTerminal models set-default PROFILE --session SESSION_ID
 aTerminal models discover --provider PROVIDER
-aTerminal agents send --session SESSION_ID --message '读取最新输出并解释'
-aTerminal agents send --message '检查各终端状态' --allow-input
+aTerminal agents send --session SESSION_ID --message '读取最新输出并解释' --permission-mode ask
+aTerminal agents send --message '检查各终端状态' --permission-mode ask
 aTerminal agents show --session SESSION_ID
 aTerminal agents stop --session SESSION_ID
 ```
@@ -27,15 +27,59 @@ aTerminal agents stop --session SESSION_ID
 
 ## 执行与停止
 
-每个账号/Desktop 有一个全局 Agent，每个终端最多一个活动 Session Agent。真实用户消息可以启动 Run 或追加到当前 Run；委托沿用同一用户根、时间/调用/读取预算。PTY 状态、子任务回报、历史浏览、配置更新、重连和重启不会独立唤醒模型。
+全局对话按账号/Desktop 隔离，每个终端最多一个活动 Session Agent。真实用户消息可以启动 Run 或追加到当前 Run；委托沿用同一用户根、时间/调用/读取预算。PTY 状态、子任务回报、历史浏览、配置更新、重连和重启不会独立唤醒模型。
 
-“允许操作”允许本次任务调用有副作用的终端和用户扩展工具。终端写入仍要求 Desktop 附着、当前授权和人工版本检查。人工输入/resize 抢占旧 Agent；取消优先于尚未入队的动作。停止编排不发送 Ctrl-C，不回滚已经写入的字符，也不自动重放结果未知的动作。关闭 App/网络断开不会取消 Desktop 已接受的任务；账号或设备撤权会停止调用。
+新版请求默认使用 `ask`：内置观察和严格支持的原生只读命令自动执行，其余动作显示具体操作、目标终端、实际 cwd 和参数，由用户选择“授权一次 / 永久授权 / 拒绝”。`read_only` 禁止写动作。旧请求的 `allow_input=false` 保持只读，`allow_input=true` 映射为 ask；旧“允许操作”不能升级成完全授权。旧客户端无法回答审批时，需要新版客户端或 CLI 响应。
+
+“完全授权”是当前 Agent 对话的显式开关，持续到用户手动关闭，覆盖该对话后续 Run 和本次委托链；独立 Session 对话保留自己的设置。开启会释放该来源仍有效的操作审批，问答仍等待真实答复。关闭后下一次动作重新核对权限。模型、终端文字、MCP 输出和 Skill 不能开启它。
+
+一次授权只消费确切 pending/action；重复提交同一答复幂等。永久规则按账号/Desktop、命令/参数、实际 cwd、来源与执行版本精确匹配，并可撤销。未知目录、无法固定完整执行语言、原始键盘/TUI 输入等情况不提供永久授权；程序、目录、配置或脚本版本改变后重新审批。解释器、env wrapper 和复合命令不会仅凭首个程序名沿用规则。长操作必须查看完整脱敏详情；命令、路径和普通参数可读，秘密值隐藏。
+
+完全授权、一次授权和永久规则都保留身份、账号/设备、Session、取消、执行预算与人工版本检查。终端写入还要求 Desktop 附着和控制 fence。人工输入/resize 抢占旧 Agent；取消优先于尚未入队的动作。停止编排不发送 Ctrl-C，不回滚已经写入的字符，也不自动重放结果未知的动作。关闭 App/网络断开不会取消 Desktop 已接受的任务；账号或设备撤权会停止调用。没有新增 OS 或工作目录沙箱，真实 `cd` 后在新 cwd 重新评估授权。
+
+CLI 提供相同管理入口；先读取 revision，再修改当前对话。发生 `permission_revision_conflict` 时重新读取。以下 `REVISION`、pending/rule ID 和 fingerprint 均来自实际响应：
+
+```sh
+aTerminal agents permissions --session SESSION_ID
+aTerminal agents permissions --session SESSION_ID --permission-mode ask --expected-revision REVISION
+aTerminal agents permissions --session SESSION_ID --full-authorization true --expected-revision REVISION
+aTerminal agents permissions --session SESSION_ID --full-authorization false --expected-revision REVISION
+aTerminal agents pending --session SESSION_ID
+aTerminal agents approval-details PENDING_ID --session SESSION_ID
+aTerminal agents resolve PENDING_ID --session SESSION_ID --decision once
+aTerminal agents resolve PENDING_ID --session SESSION_ID --decision always
+aTerminal agents resolve PENDING_ID --session SESSION_ID --decision deny
+aTerminal agents resolve PENDING_ID --session SESSION_ID --answer '用户答复'
+aTerminal agents rules
+aTerminal agents revoke-rule RULE_ID
+```
+
+需完整详情的 once/always 还须带 `--details-ack --fingerprint FINGERPRINT`；拒绝始终可用。`--json` 和非 TTY 不隐式询问或批准。用户问答以 `ask_user` 请求，答复作为输入返回，不授予额外操作权限。人类等待持久化在 Desktop，取消可解除等待；整棵共享执行树都因人类等待而不能运行时暂停活跃计时，仍有其他活跃子任务时继续计时。Desktop 重启中断旧 pending，不自动恢复或重放旧动作。
 
 Global Agent 用 `send_agent_message({"session_id":"…","message":"…"})` 异步委托 Session Agent，返回的 `task_id` 是该子 Run 的 ID；同一根任务向仍活动的子 Run 追加消息会复用这个 ID。只读工具 `get_agent_task({"task_id":"…"})` 按指定任务返回 `state`、`done`、`result_text`、`result_record_id` 与 `error`，不受该 Session 后续 Run 影响。`wait_agent_task({"task_id":"…","timeout_ms":30000})` 等待该任务结束或本次等待超时；`timeout_ms` 必须显式提供整数 1–30000。`timed_out=true` 表示任务仍未结束，不会取消子任务，可以继续等待；当前 Run 的取消或共享总时限会中止工具。两种工具仅查询同账号、同 Desktop 的委托任务。
 
 `done=true` 表示 Agent Run 已结束，需检查 `state`（`completed` / `cancelled` / `paused` / `failed` / `orphaned`）和 `error`，不能据此推断终端内应用任务成功。结果正文有界，`result_truncated=true` 时可通过 `read_record` 分页读取 `result_record_id`。返回的答复与完成报告受到当前 Global Run 的保留保护，Run 结束后释放。错误诊断最多 2048 个 UTF-8 字节，超出时 `error_truncated=true`，不会阻止任务终态保存。结果和错误沿用历史保留规则；历史被清理或旧版本未保存结果引用时，`result_available` / `outcome_available` 明确反映可用性。`get_agent_state(session_id)` 仍查询 Session 当前/最近 Run。
 
+Global Agent 还提供 `list_agent_tasks`、`get_agent_tasks`、`wait_agent_tasks` 与 `cancel_agent_task`。批量 ID 数组最多 32 项，`mode=any|all` 等待固定集合中任一或全部 Run 结束；超时不取消。取消精确旧 task 不会停止该 Session 后来启动的新 Run，也不发 Ctrl-C。所有查询按同账号/Desktop 隔离，Session Agent 不提供这些全局编排工具。
+
 用户 MCP 与 Skill 脚本拥有 Desktop 用户进程权限，不是 OS 沙箱。只有用户在设置或 CLI 中安装/启用；工具输出、终端文字和 Skill 资源不能创建新的用户授权。
+
+## 原生读取与命令结果
+
+`inspect_command({"command":"ls -la"})` 将严格支持的读取语法转换为固定绝对程序和字面 argv，在身份复核的实际 Session cwd 原生执行；Global 必须同时传 `session_id`。当前支持正向限制的 pwd、ls、cat、head、tail、wc；未知语法明确拒绝，不能悄悄回退到 Shell。原生读取清空注入环境、stdin 关闭，stdout/stderr 和运行时间有界；结果归档包含退出码及 truncation，来源为 `sidecar_read`。它不改变 PTY 输入或 cwd，也不使用当前 Shell 的 aliases/functions/PATH；Unix cwd 身份无法证明或平台不支持时返回不可用。
+
+`run_command({"command":"完整命令"})` 在原 PTY 提交，沿用风险审批、取消和人工 fence。返回的 `accepted` 与 `command_id` 只表示提交，随后用 `get_command_result` 或 `wait_command({"command_id":"…","timeout_ms":30000})` 收集结果。完成要求 Host 提交与下一条 Shell 序号、完整命令和 prompt 退出码准确对应；输入边界未知、人工/其他 Agent 插入、缺少 hook、序号冲突或证据失效均返回 `unknown`。命令结果按账号/Desktop/Session 持久保存，后续 Run 可查，直到历史保留删除。
+
+Shell 命令结束不代表后台进程或终端应用任务结束。当前没有通用 Codex/TUI 完成适配器，`application_task` 保持 unknown；静默、提示符和前台进程存在都不能代替完成证据。
+
+| 读取/能力工具 | 使用与边界 |
+| --- | --- |
+| `wait_terminal` | 带 `after_revision` 和 1–30000 的 `timeout_ms`；等待前已经发生的更新立即返回 changed，超时不停止程序；Global 必填 session_id |
+| `read_terminal` 的 delta | 带 after_revision 和之前的 view_id；同 revision 返回 unchanged，屏幕/TUI 改写、尺寸变化或过期要求 refetch，不把覆盖的网格拼成追加日志 |
+| `search_history` | 查询保留的 Agent 事件/记录文本，可按 Session、类型和时间过滤；返回精确 event/record ID 与有界片段，cursor 绑定过滤、scope、保留 generation 和首屏水位 |
+| `get_capabilities` | 返回实际角色/注册工具、视觉模型支持、观察性 Shell hooks、应用适配器、来源对话授权与共享剩余预算；未知能力保持未知 |
+
+历史搜索按有界块遍历完整文本；空页带 cursor 和 `scan_incomplete=true` 时须继续分页，不能据此声称没有匹配。
 
 ## 读取、图片与记忆
 
@@ -68,7 +112,7 @@ aTerminal skills disable user/SKILL_ID
 aTerminal skills remove user/SKILL_ID
 ```
 
-内置 Terminal MCP 和五个内置 Skills 由二进制发布，`builtin/` 镜像不能覆盖运行时实现。用户 MCP 支持 stdio / Streamable HTTP，按 Run 惰性连接、固定目录，禁止会话过期后自动重发副作用调用；不接受 sampling。目录/输出/诊断/超时均有界，诊断对注入环境值脱敏。
+内置 Terminal MCP 和内置 Skills 由二进制发布，`builtin/` 镜像不能覆盖运行时实现。用户 MCP 支持 stdio / Streamable HTTP，按 Run 惰性连接、固定目录，禁止会话过期后自动重发副作用调用；不接受 sampling。目录/输出/诊断/超时均有界，诊断对注入环境值脱敏。
 
 全局和 Session Agent 均提供只读内置 MCP `wait`，例如 `wait({"duration_ms":1000})`。`duration_ms` 必须明确提供整数 1–30000；缺失、类型错误或越界会报错，不自动截断。它只异步延时并返回实际 `elapsed_ms`，不查询或操作 Terminal，也不表示任务完成；取消与 Run 总时限会中止等待。Terminal 任务可能耗时，可按 `wait` → `get_terminal_state` / `read_terminal` → 未完成继续等待回读的顺序循环，直到取得可靠完成证据、被取消或 Run 预算耗尽。不能根据静默或提示符猜测完成。现有 `skill_action` 的 `builtin/wait-terminal` / `wait` 仍等待 Terminal revision 变化或超时，返回 `changed` / `state`。
 
@@ -80,7 +124,7 @@ aTerminal skills remove user/SKILL_ID
 aTerminal --shell-integration -- /bin/zsh
 ```
 
-支持 bash/zsh/PowerShell 的独立启动配置，保留用户 rc/profile 和现有钩子，不修改全局 rc。bash 遇到已有 DEBUG trap 时保留它。没有 hook 或应用适配器时，程序任务完成状态仍为 unknown；静默、提示符或前台进程存在不证明应用任务完成。当前 OS cwd 观察在 Unix 校验 PID 启动身份，Windows 不可用字段保持未知。
+支持 bash/zsh/PowerShell 的独立启动配置，保留用户 rc/profile 和现有钩子，不修改全局 rc。bash 遇到已有 DEBUG trap 时保留它，命令关联会标为不可用；zsh 保留原 precmd/preexec，PowerShell 保留原 prompt。只对准确匹配的 Shell 命令提供退出结果；PowerShell 的复杂/动态命令保持 unknown，避免复用上一条 native 退出码。没有 hook 或应用适配器时，程序任务完成状态仍为 unknown；静默、提示符或前台进程存在不证明应用任务完成。当前 OS cwd 观察在 Unix 校验 PID 启动身份，Windows 不可用字段保持未知。
 
 ## 历史维护
 
