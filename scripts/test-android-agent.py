@@ -9,6 +9,7 @@ import signal
 import sqlite3
 import subprocess
 import tempfile
+import hashlib
 import time
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -19,8 +20,14 @@ parser.add_argument('--adb', default=shutil.which('adb') or str(Path.home() / 'L
 parser.add_argument('--authorization', action='store_true', help='Run the authorization UI workflow and independently verify PTY marker files')
 parser.add_argument('--package', help='Target application ID; authorization defaults to the isolated authorizationfixture package')
 parser.add_argument('--aapt', help='aapt executable used to verify APK package IDs before installation')
+parser.add_argument('--cli', type=Path, default=ROOT/'target/debug/aTerminal', help='Exact tested Desktop CLI binary')
+parser.add_argument('--example', type=Path, default=ROOT/'target/debug/examples/account_demo', help='Matching deterministic fixture binary')
+parser.add_argument('--test-timeout', type=int, default=600, help='Authorization instrumentation deadline in seconds')
 args = parser.parse_args()
 args.output.mkdir(parents=True, exist_ok=True)
+for executable in [args.cli, args.example]:
+    assert executable.is_file(), f'Missing fixture binary: {executable}'
+(args.output/'runtime-binaries.json').write_text(json.dumps({str(path.resolve()): hashlib.sha256(path.read_bytes()).hexdigest() for path in [args.cli, args.example]}, indent=2))
 package = args.package or ('com.yxf.aterminal.authorizationfixture' if args.authorization else 'com.yxf.aterminal')
 assert re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+', package), 'Invalid application ID'
 if args.authorization:
@@ -44,7 +51,7 @@ with tempfile.TemporaryDirectory(prefix='aterminal-agent-ui-') as directory:
     fixture = None
     reverse = None
     with (args.output / 'fixture.log').open('wb') as log:
-        fixture = subprocess.Popen([str(ROOT/'target/debug/examples/account_demo'), str(state), str(ROOT/'target/debug/aTerminal'), '--authorization-test' if args.authorization else '--agent-test'], stdout=log, stderr=log, start_new_session=True)
+        fixture = subprocess.Popen([str(args.example), str(state), str(args.cli), '--authorization-test' if args.authorization else '--agent-test'], stdout=log, stderr=log, start_new_session=True)
     try:
         deadline = time.monotonic() + 30
         while not (state/'account-fixture.json').exists():
@@ -66,7 +73,7 @@ with tempfile.TemporaryDirectory(prefix='aterminal-agent-ui-') as directory:
         adb('shell', 'wm', 'dismiss-keyguard', capture_output=True)
         with (args.output/'instrumentation.log').open('wb') as log:
             test_class = 'com.yxf.aterminal.AgentAuthorizationRpcUiTest' if args.authorization else 'com.yxf.aterminal.AgentReadingUiTest'
-            adb('shell', 'am', 'instrument', '-w', '-r', '-e', 'class', test_class, package+'.test/androidx.test.runner.AndroidJUnitRunner', stdout=log, stderr=subprocess.STDOUT, timeout=360 if args.authorization else 180)
+            adb('shell', 'am', 'instrument', '-w', '-r', '-e', 'class', test_class, package+'.test/androidx.test.runner.AndroidJUnitRunner', stdout=log, stderr=subprocess.STDOUT, timeout=args.test_timeout if args.authorization else 180)
         transcript = (args.output/'instrumentation.log').read_text()
         report_name = 'authorization-ui-results.json' if args.authorization else 'agent-ui-results.json'
         report = adb('exec-out', 'run-as', package, 'cat', f'files/{report_name}', capture_output=True).stdout
@@ -87,7 +94,7 @@ with tempfile.TemporaryDirectory(prefix='aterminal-agent-ui-') as directory:
             (args.output/'authorization-pty-markers.json').write_text(json.dumps(observed, indent=2))
             print('PASS: native authorization UI, encrypted RPC, and independently observed PTY side effects:', args.output/'results.json')
         else:
-            saved = subprocess.check_output([str(ROOT/'target/debug/aTerminal'), '--state-dir', str(state), 'config', 'terminal-reading', '--json'], text=True)
+            saved = subprocess.check_output([str(args.cli), '--state-dir', str(state), 'config', 'terminal-reading', '--json'], text=True)
             reading = json.loads(saved)['result']['terminal_reading']
             assert reading == {'head_lines': 7, 'tail_lines': 31}, reading
             (args.output/'desktop-reading.json').write_text(saved)
@@ -119,4 +126,4 @@ with tempfile.TemporaryDirectory(prefix='aterminal-agent-ui-') as directory:
             except subprocess.TimeoutExpired:
                 fixture.terminate()
                 fixture.wait(timeout=5)
-        subprocess.run([str(ROOT/'target/debug/aTerminal'), '--state-dir', str(state), 'daemon', 'stop'], capture_output=True, timeout=10)
+        subprocess.run([str(args.cli), '--state-dir', str(state), 'daemon', 'stop'], capture_output=True, timeout=10)

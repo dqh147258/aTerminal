@@ -66,6 +66,18 @@ class AgentAuthorizationRpcUiTest {
         }
         waitFor("task acknowledged $id") { main { (views().first { it.contentDescription == "发送任务或追加消息" } as EditText).text.isEmpty() } }
     }
+    private fun nativeTask(id: String, file: String = "auth-review-always.log", input: String = "always\n") = task(id, steps = JSONArray().put(JSONObject()
+        .put("tool", "run_program").put("arguments", JSONObject().put("program", "/usr/bin/tee").put("args", JSONArray(listOf("-a", file))).put("stdin", input))))
+    private fun revoke(ruleId: String) {
+        permissionsDialog()
+        main { tagged("authorization-rules").performClick() }
+        waitFor("rule rendered") { main { views().any { it.tag == "revoke:$ruleId" && it.isEnabled } } }
+        screenshot("authorization-rules"); main { tagged("revoke:$ruleId").performClick() }
+        waitFor("rule revoked") { request("rules").getJSONArray("items").length() == 0 }
+        waitFor("UI rule removal") { main { views().filterIsInstance<TextView>().any { it.text == "没有永久授权规则" } } }
+        main { dialog()!!.dismiss() }
+    }
+
     private fun activePending(kind: String = "approval"): JSONObject? {
         val page = request("pending").getJSONArray("items")
         return (0 until page.length()).map { page.getJSONObject(it) }.firstOrNull { it.optString("kind") == kind && it.optString("state") == "pending" }
@@ -114,8 +126,9 @@ class AgentAuthorizationRpcUiTest {
         val primaryConnection = context.getSharedPreferences("connection", 0).all.toMap()
         val cache = context.cacheDir.resolve("authorization-wire-${UUID.randomUUID()}.sqlite3")
         val expected = JSONObject().put("auth-review-once.log", JSONArray(listOf("once")))
-            .put("auth-review-always.log", JSONArray(listOf("always", "always")))
-            .put("auth-review-long.log", JSONArray(listOf("long")))
+            .put("auth-review-always.log", JSONArray(listOf("always", "always", "always")))
+            .put("auth-review-long.log", JSONArray(listOf(" ".repeat(6000) + "long")))
+            .put("auth-review-closed-write.log", JSONObject.NULL)
             .put("auth-review-cancelled.log", JSONObject.NULL)
             .put("auth-review-denied.log", JSONObject.NULL).put("auth-review-full.log", JSONArray(listOf("full", "full")))
             .put("auth-review-full-off.log", JSONArray(listOf("after-off")))
@@ -150,17 +163,16 @@ class AgentAuthorizationRpcUiTest {
             val duplicate = JSONObject(remote.agent(original.first, original.second)); assertTrue(duplicate.getBoolean("duplicate"))
             report.put("once_and_idempotent_replay", true)
 
-            task("long-details", "/usr/bin/printf 'long\\n'" + " ".repeat(5000) + " >> auth-review-long.log")
+            nativeTask("long-details", "auth-review-long.log", " ".repeat(6000) + "long\n")
             val long = pending(); val longId = long.getString("id")
             assertTrue(long.getBoolean("requires_details"))
             main { assertFalse(tagged("once:$longId").isEnabled); assertFalse(tagged("always:$longId").isEnabled); assertTrue(tagged("deny:$longId").isEnabled); tagged("details:$longId").performClick() }
             waitFor("complete approval detail rendered") { main { views().filterIsInstance<TextView>().any { it.tag == "approval-details:$longId" && it.text.contains("auth-review-long.log") } && tagged("once:$longId").isEnabled } }
             decision(long, "once"); completed("long-details"); report.put("long_details_before_approval", true)
 
-            val exact = "/bin/echo always >> auth-review-always.log"
-            task("always-first", exact); val always = pending(); assertTrue("Fixture should have stable cwd/version: $always", always.getBoolean("can_always"))
+            nativeTask("always-first"); val always = pending(); assertTrue("Fixture should have stable cwd/version: $always", always.getBoolean("can_always"))
             decision(always, "always"); completed("always-first")
-            task("always-second", exact); completed("always-second"); assertNull(activePending())
+            nativeTask("always-second"); completed("always-second"); assertNull(activePending())
             report.put("exact_rule_across_runs", true)
 
             task("denied", "printf 'denied\\n' >> auth-review-denied.log", waitCommand = false)
@@ -187,7 +199,7 @@ class AgentAuthorizationRpcUiTest {
             task("cwd-create", "/bin/mkdir auth-review-subdir"); decision(pending(), "once"); completed("cwd-create")
             task("cwd-change", "cd auth-review-subdir"); decision(pending(), "once"); completed("cwd-change")
             waitFor("observed cwd changed") { request("context").optString("cwd") == "$initialCwd/auth-review-subdir" }
-            task("always-different-cwd", exact)
+            nativeTask("always-different-cwd")
             val changedCwd = pending(); assertEquals("$initialCwd/auth-review-subdir", changedCwd.getString("cwd")); assertNotEquals(always.optString("fingerprint"), changedCwd.optString("fingerprint"))
             decision(changedCwd, "once"); completed("always-different-cwd")
             task("cwd-back", "cd .."); decision(pending(), "once"); completed("cwd-back")
@@ -195,16 +207,18 @@ class AgentAuthorizationRpcUiTest {
             task("cwd-proof", "printf 'cwd\\n' >> auth-review-cwd.log"); decision(pending(), "once"); completed("cwd-proof")
             report.put("cwd_reassessed_exact_rule", true)
 
-            permissionsDialog()
             val rulePage = request("rules").getJSONArray("items")
             val ruleId = (0 until rulePage.length()).map { rulePage.getJSONObject(it) }.first { it.opt("arguments_preview")?.toString().orEmpty().contains("auth-review-always.log") }.getString("id")
-            main { tagged("authorization-rules").performClick() }
-            waitFor("rule rendered") { main { views().any { it.tag == "revoke:$ruleId" && it.isEnabled } } }
-            screenshot("authorization-rules"); main { tagged("revoke:$ruleId").performClick() }
-            waitFor("rule revoked") { val a = request("rules").getJSONArray("items"); (0 until a.length()).none { a.getJSONObject(it).optString("id") == ruleId } }
-            main { dialog()!!.dismiss() }
-            task("rule-revoked", exact, waitCommand = false); decision(pending(), "deny"); completed("rule-revoked")
-            report.put("revocation_requires_new_approval", true)
+            revoke(ruleId)
+            nativeTask("rule-regrant"); decision(pending(), "always"); completed("rule-regrant")
+            val regranted = request("rules").getJSONArray("items")
+            assertEquals(1, regranted.length()); assertEquals(ruleId, regranted.getJSONObject(0).getString("id"))
+            revoke(ruleId)
+            val revokes = sent.filter { JSONObject(it.second).optString("action") == "revoke_rule" }.map { JSONObject(it.second).getString("request_id") }
+            assertEquals(2, revokes.size); assertNotEquals(revokes[0], revokes[1])
+            nativeTask("rule-revoked"); decision(pending(), "deny"); completed("rule-revoked")
+            assertEquals(0, request("rules").getJSONArray("items").length())
+            report.put("regrant_second_revoke_new_nonce", true).put("revocation_requires_new_approval", true)
 
             task("cancel-wait", "printf 'cancelled\\n' >> auth-review-cancelled.log", waitCommand = false)
             pending()
@@ -223,9 +237,32 @@ class AgentAuthorizationRpcUiTest {
             main { dialog()!!.dismiss() }
             report.put("read_only_uses_desktop_mode", true)
 
+            // Close only the disposable fixture PTY. Scope history, device grant and management remain usable.
+            remote.closeSelected()
+            waitFor("fixture terminal closed") { remote.sessions().none { it.id == session } }
+            permissionsDialog()
+            main { tagged("mode:read_only").performClick() }
+            waitFor("closed scope readonly setting") { request("permissions").optString("permission_mode") == "read_only" }
+            main { dialog()!!.dismiss() }
+            task("closed-query", steps = JSONArray().put(JSONObject().put("tool", "get_capabilities").put("arguments", JSONObject())))
+            completed("closed-query")
+            task("closed-question", steps = JSONArray().put(JSONObject().put("tool", "ask_user").put("arguments", JSONObject().put("question", "终端已关闭，仍需补充说明？"))))
+            val closedQuestion = pending("question").getString("id")
+            main { (tagged("answer:$closedQuestion") as EditText).setText("可以回答"); tagged("answer-submit:$closedQuestion").performClick() }
+            completed("closed-question")
+            main { authorization!!.entry.performClick() }
+            waitFor("closed scope can change setting") { main { tagged("mode:ask").isEnabled } }
+            main { tagged("mode:ask").performClick() }
+            waitFor("closed scope ask restored") { request("permissions").optString("permission_mode") == "ask" }
+            main { dialog()!!.dismiss() }
+            full(true)
+            task("closed-write", "printf 'unexpected\\n' >> auth-review-closed-write.log", waitCommand = false)
+            completed("closed-write")
+            report.put("closed_scope_queries_questions_settings", true).put("closed_write_denied_by_host", true)
+
             assertEquals(primaryAccount, context.getSharedPreferences("account", 0).all)
             assertEquals(primaryConnection, context.getSharedPreferences("connection", 0).all)
-            assertTrue(sent.filter { JSONObject(it.second).optString("action") == "send" }.all { JSONObject(it.second).optString("permission_mode") == "ask" && !JSONObject(it.second).has("allow_input") })
+            assertTrue(sent.filter { JSONObject(it.second).optString("action") == "send" }.all { JSONObject(it.second).optString("permission_mode") in setOf("ask", "read_only") && !JSONObject(it.second).has("allow_input") })
             report.put("primary_preferences_unchanged", true).put("passed", true)
         } catch (error: Throwable) { report.put("passed", false).put("error", error.toString()); throw error }
         finally {

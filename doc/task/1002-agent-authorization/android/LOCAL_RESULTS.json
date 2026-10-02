@@ -1,0 +1,43 @@
+{
+  "source_commit": "92de04e7562ce49b57eea5b1aa69ff92df33e275",
+  "build": [
+    "assembleDebug",
+    "assembleDebugAndroidTest",
+    "lintDebug"
+  ],
+  "emulator": "emulator-5586",
+  "package": "com.yxf.aterminal.authorizationfixture",
+  "passed_in_previous_run": [
+    "com.yxf.aterminal.AgentAuthorizationUiTest#decisionsShowScopeDisableUnstableRulesAndRevoke",
+    "com.yxf.aterminal.AgentAuthorizationUiTest#lostResponseRetriesSameIdAndQuestionSurvivesReopening",
+    "com.yxf.aterminal.AgentAuthorizationUiTest#pendingAnswerFocusSurvivesOtherRunsHistoryUpdates",
+    "com.yxf.aterminal.AgentAuthorizationUiTest#endedPendingIsVisibleButCannotBeApprovedOrCalledCompleted",
+    "com.yxf.aterminal.AgentAuthorizationUiTest#invalidatedScopeDropsQueuedMutation",
+    "com.yxf.aterminal.AgentAuthorizationUiTest#missingDeviceGrantDisablesControlsAndCachedFullIsNeverRestored",
+    "com.yxf.aterminal.AgentAuthorizationUiTest#mismatchedDetailsCannotEnableApprovalButDenialStillWorks",
+    "com.yxf.aterminal.AgentAuthorizationUiTest#globalDelegatedApprovalAndWaitingRunCanStopAndSendExplicitAsk",
+    "com.yxf.aterminal.AgentAuthorizationUiTest#pendingPaginationAndMalformedRefreshKeepPreviousCards",
+    "com.yxf.aterminal.AgentAuthorizationUiTest#oldDesktopCannotSilentlyFallBackToAllowInput",
+    "com.yxf.aterminal.AgentAuthorizationUiTest#truncatedApprovalNeedsCompleteMatchingDetailsBeforeApproval",
+    "com.yxf.aterminal.AgentAuthorizationUiTest#fullAuthorizationWaitsForDesktopAndConflictReadsActualRevision",
+    "com.yxf.aterminal.AgentAuthorizationUiTest#compactLargeTextCardsAndImeKeepResponseReachable",
+    "com.yxf.aterminal.AgentAuthorizationUiTest#pendingReadFailureRetainsCardsAndReadonlyDeviceCannotAnswer",
+    "com.yxf.aterminal.AgentFocusTest#draftFocusAndSelectionSurviveRepeatedHistoryRefresh",
+    "com.yxf.aterminal.AgentFocusTest#repeatedStatesCollapseAcrossMessagesAndPagesButTransitionsRemain",
+    "com.yxf.aterminal.GlobalAssistantTest#listUnreadRunningDraftMigrationAndLateSendStayInTheirConversation",
+    "com.yxf.aterminal.GlobalAssistantTest#entryFullPageBackNavigationAndBlankNewConversation",
+    "com.yxf.aterminal.MobilePrototypeTest#partialMessageLoadsAllRecordPagesAndSurvivesOfflineReopen",
+    "com.yxf.aterminal.MobilePrototypeTest#unifiedDrawerAndSettingsNavigationPreserveTerminal",
+    "com.yxf.aterminal.ToolDetailsUiTest#fullPageRecordsExpandIndependentlyAndCopyCompletePagedText",
+    "com.yxf.aterminal.ToolDetailsUiTest#failedReadRetriesInlineAndLateResultCannotReopenDetails",
+    "com.yxf.aterminal.WorkspaceReviewRegressionTest#reopeningDuringSendCannotRestoreAlreadyClearedDraft",
+    "com.yxf.aterminal.WorkspaceReviewRegressionTest#versionedInteractionSnapshotUpdatesCachedToolState",
+    "com.yxf.aterminal.WorkspaceReviewRegressionTest#evidenceIndexPreservesParameterAndResultLabels"
+  ],
+  "failed_in_previous_run": [
+    "MobilePrototypeTest#scopesComposerImagesPagingAndSettings: optional screenshot returned null",
+    "MobilePrototypeTest#compactToolsKeepNarrationAndFullDetailsAcrossRefresh: optional screenshot returned null"
+  ],
+  "followup": "R20/R21/native final source prepared; awaiting coordinated Android build/emulator window",
+  "real_encrypted_rpc": "Required final run_program tee permanence/regrant/revoke, closed query/answer/write fence not yet run"
+}

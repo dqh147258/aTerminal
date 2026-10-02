@@ -27,7 +27,6 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
     @Suppress("UNUSED_PARAMETER") settings: () -> Unit, @Suppress("UNUSED_PARAMETER") history: Boolean = false,
     cachePath: String = activity.filesDir.resolve("agent-history.sqlite3").path,
     private val workingPath: () -> String = { "路径不可用" },
-    private val writeReason: (String) -> String? = { if (valid()) null else "Desktop 未连接 · 只读" },
     private val pickImages: (((List<Uri>) -> Unit) -> Unit)? = null,
     private val globalConversation: JSONObject? = null, private val back: (() -> Unit)? = null) {
     private val worker = Executors.newSingleThreadExecutor()
@@ -86,7 +85,7 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
     private var pendingVoice = false
     private val voice = activity.iconButton(R.drawable.ic_mic, "语音输入") { if (recognizer == null) startVoice() else stopVoice() }
     private val authorization = AgentAuthorizationPanel(activity, identity + session,
-        { !closed && valid() }, { writeReason(session) },
+        { !closed && valid() },
         { command -> rpc(session, command) }, { updateButton() })
     private val tick = object : Runnable { override fun run() { if (!closed) { updatePath(); markRead(); syncDraft(); refresh(); authorization.refresh(); ui.postDelayed(this, 1500) } } }
     private fun scope(target: String = session) = JSONArray(identity + target).toString()
@@ -223,7 +222,7 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
         val running = GlobalConversationStore.active(runState)
         val content = draft.text.toString().isNotBlank() || attachments.isNotEmpty()
         val cancelling = runState in setOf("cancelling", "stopping")
-        val reason = writeReason(session)
+        val reason = if (valid()) null else "设备离线或对话已变化 · 只读缓存"
         val icon = if (running && !content) R.drawable.ic_square else if (running) R.drawable.ic_plus else R.drawable.ic_arrow_up
         sendButton.setImageResource(icon); sendButton.contentDescription = if (cancelling) "取消中" else if (running && !content) "停止" else if (running) "追加" else "发送"
         sendButton.isEnabled = !submitting && !readingImages && !cancelling && reason == null && authorization.canSend && (running || content)

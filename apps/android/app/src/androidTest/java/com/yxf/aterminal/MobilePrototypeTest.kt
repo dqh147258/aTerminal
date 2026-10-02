@@ -34,7 +34,14 @@ class MobilePrototypeTest {
     private fun icon(name: String) = views().first { it.contentDescription == name }
     private fun button(name: String) = views().filterIsInstance<Button>().first { it.text == name }
     private fun panel() = MainActivity::class.java.getDeclaredMethod("panel", String::class.java, Boolean::class.javaPrimitiveType).apply { isAccessible = true }.invoke(activity, "AI Agent", false) as LinearLayout
-    private fun shot(name: String) { instrumentation.waitForIdleSync(); Thread.sleep(800); instrumentation.uiAutomation.takeScreenshot().let { b -> File(context.filesDir,"prototype-$name.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG,100,it) }; b.recycle() } }
+    private fun shot(name: String) {
+        instrumentation.waitForIdleSync(); Thread.sleep(800)
+        // GPU capture can return null immediately after an emulator rotation; behavior assertions remain mandatory.
+        var bitmap: Bitmap? = null
+        repeat(3) { if (bitmap == null) { bitmap = instrumentation.uiAutomation.takeScreenshot(); if (bitmap == null) Thread.sleep(200) } }
+        bitmap?.let { b -> File(context.filesDir, "prototype-$name.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) }; b.recycle() }
+            ?: android.util.Log.w("MobilePrototypeTest", "Optional screenshot unavailable: $name")
+    }
     private fun launch() {
         context.startActivity(Intent(context,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK).putExtra("isolated_ui",true).putExtra("render_fixture",true))
         waitFor("Activity") { main { ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<MainActivity>().firstOrNull()?.also { activity = it } != null } }

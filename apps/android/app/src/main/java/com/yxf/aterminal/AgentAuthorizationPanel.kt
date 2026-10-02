@@ -17,7 +17,6 @@ class AgentAuthorizationPanel(
     private val activity: Activity,
     identity: List<String>,
     private val valid: () -> Boolean,
-    private val writeReason: () -> String?,
     private val request: (JSONObject) -> JSONObject,
     private val changed: () -> Unit,
 ) {
@@ -61,7 +60,7 @@ class AgentAuthorizationPanel(
 
     private fun rpc(command: JSONObject, mutation: Boolean = false): JSONObject {
         check(!closed && valid()) { "连接或对话已变化，请回到原对话重试" }
-        if (mutation) check(writeReason() == null) { writeReason().orEmpty() }
+        if (mutation) check(canSend) { "当前设备操作权限尚未确认或仅可查看" }
         val result = request(command)
         if (result.has("error") && !result.isNull("error") && result.optString("error").isNotBlank()) error(result.optString("error"))
         return result
@@ -130,7 +129,6 @@ class AgentAuthorizationPanel(
         !permissionsFresh -> "尚未确认 Desktop 权限，请刷新"
         permissions?.has("can_mutate") != true -> "Desktop 未提供设备操作权限，请更新后重试"
         permissions?.optBoolean("can_mutate", false) != true -> "当前设备只有查看权限"
-        writeReason() != null -> writeReason()
         mutating -> "正在提交，请稍候"
         else -> null
     }
@@ -197,7 +195,7 @@ class AgentAuthorizationPanel(
                 card.addView(button("授权一次", "once:$id", canApprove) { resolve(item, "once", null) })
                 val canAlways = item.optBoolean("can_always")
                 card.addView(button("永久授权", "always:$id", canApprove && canAlways) { resolve(item, "always", null) })
-                if (!canAlways) card.addView(label(item.optString("always_unavailable_reason").ifBlank { "无法固定命令、参数、cwd 或工具版本，本次不能永久授权。" }, 12f, Palette.warning))
+                if (!canAlways) card.addView(label(item.optString("always_unavailable_reason").ifBlank { "无法固定程序、参数、cwd 或工具版本；终端交互仅支持本次授权。" }, 12f, Palette.warning))
                 card.addView(button("拒绝", "deny:$id", reason == null) { resolve(item, "deny", null) })
             } else if (item.optString("kind") == "question") {
                 card.addView(label(item.optString("question")))
@@ -268,8 +266,9 @@ class AgentAuthorizationPanel(
     }
 
     /** Persist an exact payload/request pair before sending, so lost acknowledgements survive reopening. */
+    private fun idempotencyKey(command: JSONObject) = "request:${ChatStore.digest(JSONObject(command.toString()).apply { remove("request_id") }.toString())}"
     private fun idempotent(command: JSONObject): JSONObject {
-        val key = "request:${ChatStore.digest(command.toString())}"
+        val key = idempotencyKey(command)
         val id = prefs.getString(key, null) ?: UUID.randomUUID().toString().also { prefs.edit().putString(key, it).commit() }
         return command.put("request_id", id)
     }
@@ -361,7 +360,14 @@ class AgentAuthorizationPanel(
                 val id = rule.optString("id", rule.optString("rule_id"))
                 content.addView(label(rule.opt("rule_preview")?.toString() ?: rule.opt("preview")?.toString() ?: rule.toString(), 13f).apply { setTextIsSelectable(true) })
                 content.addView(button("撤销规则", "revoke:$id", reason == null && id.isNotBlank()) {
-                    mutate(idempotent(JSONObject().put("action", "revoke_rule").put("rule_id", id))) { loadRules() }
+                    val command = idempotent(JSONObject().put("action", "revoke_rule").put("rule_id", id))
+                    mutate(command) { result ->
+                        check(result.optString("rule_id") == id && result.has("revoked")) { "Desktop 未确认本次撤销，请刷新重试" }
+                        result.getBoolean("revoked")
+                        // A confirmed revoke finishes this operation. Regranting the same rule needs a new nonce.
+                        prefs.edit().remove(idempotencyKey(command)).commit()
+                        loadRules()
+                    }
                 })
             }
         }

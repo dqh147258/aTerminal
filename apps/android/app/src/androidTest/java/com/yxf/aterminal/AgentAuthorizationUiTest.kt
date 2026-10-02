@@ -31,7 +31,6 @@ class AgentAuthorizationUiTest {
     private lateinit var scroll: ScrollView
     private val identity = listOf("authorization-ui", UUID.randomUUID().toString(), "desktop", "session")
     private val connected = AtomicBoolean(true)
-    private var writeBlocked: String? = null
     private val calls = CopyOnWriteArrayList<JSONObject>()
     private var permissions = JSONObject().put("permission_mode", "ask").put("full_authorization", false).put("revision", 0).put("can_mutate", true)
     private var pending = mutableListOf<JSONObject>()
@@ -85,23 +84,25 @@ class AgentAuthorizationUiTest {
     }
     private fun approval(id: String, always: Boolean = true) = JSONObject().put("id", id).put("kind", "approval").put("state", "pending")
         .put("title", "需要授权：执行命令").put("reason", "命令需要用户确认").put("session_id", "delegated-session")
-        .put("run_id", "child-run").put("tool", "run_command").put("arguments_preview", "{\"command\":\"touch report.txt\"}")
+        .put("run_id", "child-run").put("tool", "run_program").put("arguments_preview", "{\"program\":\"/usr/bin/tee\",\"args\":[\"-a\",\"report.txt\"],\"stdin\":\"line\\n\"}")
         .put("cwd", "/tmp/fixture").put("can_always", always).put("rule_preview", "相同命令、参数、目录和版本")
     private fun question() = JSONObject().put("id", "q").put("kind", "question").put("state", "pending")
         .put("title", "请补充需求").put("question", "选择输出格式").put("options", JSONArray(listOf("JSON", "文字"))).put("session_id", "s").put("run_id", "r")
-    private fun launch(useChat: Boolean = false) {
+    private fun launch(useChat: Boolean = false, sessionChat: Boolean = false) {
         context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK).putExtra("isolated_ui", true))
         waitFor("activity") { main { ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<MainActivity>().firstOrNull { it.hasWindowFocus() }?.also { activity = it } != null } }
         main {
             root = activity.column().apply { setBackgroundColor(Palette.background) }
             activity.setContentView(root)
-            if (useChat) {
+            if (useChat || sessionChat) {
                 root.addView(activity.row().apply { addView(activity.heading("Agent")); addView(activity.label("关闭")) })
                 val global = JSONObject().put("scope", JSONObject().put("agent", "global-agent")).put("title", "测试对话")
-                chat = AgentPanel(activity, root, identity, "", { connected.get() }, { session, raw ->
-                    assertEquals("", session)
-                    val command = JSONObject(raw); assertEquals("global-agent", command.getString("agent_id")); rpc(command).toString()
-                }, {}, cachePath = context.cacheDir.resolve("authorization-${UUID.randomUUID()}.sqlite3").path, globalConversation = global)
+                chat = AgentPanel(activity, root, identity, if (sessionChat) "s" else "", { connected.get() }, { session, raw ->
+                    assertEquals(if (sessionChat) "s" else "", session)
+                    val command = JSONObject(raw)
+                    if (sessionChat) assertFalse(command.has("agent_id")) else assertEquals("global-agent", command.getString("agent_id"))
+                    rpc(command).toString()
+                }, {}, cachePath = context.cacheDir.resolve("authorization-${UUID.randomUUID()}.sqlite3").path, globalConversation = if (sessionChat) null else global)
                 authorization = AgentPanel::class.java.getDeclaredField("authorization").apply { isAccessible = true }.get(chat) as AgentAuthorizationPanel
             } else mount()
         }
@@ -109,7 +110,7 @@ class AgentAuthorizationUiTest {
     }
     private fun mount() {
         root.removeAllViews()
-        authorization = AgentAuthorizationPanel(activity, identity, { connected.get() }, { writeBlocked }, ::rpc, {})
+        authorization = AgentAuthorizationPanel(activity, identity, { connected.get() }, ::rpc, {})
         root.addView(authorization!!.entry)
         scroll = activity.scroll(authorization!!.cards)
         root.grow(scroll)
@@ -124,7 +125,7 @@ class AgentAuthorizationUiTest {
         main {
             assertTrue(views().filterIsInstance<TextView>().any { it.text.contains("delegated-session") })
             assertFalse(tagged("always:deny").isEnabled)
-            assertTrue(views().filterIsInstance<TextView>().any { it.text.contains("本次不能永久授权") })
+            assertTrue(views().filterIsInstance<TextView>().any { it.text.contains("仅支持本次授权") })
             tagged("once:once").performClick()
         }
         waitFor("once resolved") { calls.any { it.optString("decision") == "once" } && main { views().none { it.tag == "once:once" } } }
@@ -315,6 +316,61 @@ class AgentAuthorizationUiTest {
         waitFor("deny without details") { calls.any { it.optString("decision") == "deny" } }
         val result = calls.last { it.optString("action") == "resolve" }
         assertFalse(result.has("details_ack")); assertFalse(result.has("fingerprint"))
+    }
+
+    @Test fun revokeRetriesLostAcknowledgementButRegrantUsesNewNonce() {
+        rules.add(JSONObject().put("id", "stable-rule").put("rule_preview", "/usr/bin/tee -a report.txt"))
+        val responses = mutableMapOf<String, JSONObject>(); val loseAck = AtomicBoolean(true)
+        intercept = { command -> if (command.optString("action") == "revoke_rule") {
+            val id = command.getString("request_id")
+            val result = synchronized(this) { responses.getOrPut(id) {
+                rules.removeAll { it.optString("id") == "stable-rule" }
+                JSONObject().put("revoked", true).put("rule_id", "stable-rule")
+            } }
+            if (loseAck.getAndSet(false)) error("ACK lost after successful revoke")
+            result
+        } else null }
+        launch()
+        main { authorization!!.entry.performClick(); tagged("authorization-rules").performClick() }
+        waitFor("first rule") { main { views().any { it.tag == "revoke:stable-rule" } } }
+        main { tagged("revoke:stable-rule").performClick() }
+        waitFor("lost revoke ack retained") { main { tagged("revoke:stable-rule").isEnabled && views().filterIsInstance<TextView>().any { it.text.contains("ACK lost") } } }
+        main { tagged("revoke:stable-rule").performClick() }
+        waitFor("retry confirmed empty") { main { views().filterIsInstance<TextView>().any { it.text == "没有永久授权规则" } } }
+        val first = calls.filter { it.optString("action") == "revoke_rule" }
+        assertEquals(2, first.size); assertEquals(first[0].getString("request_id"), first[1].getString("request_id"))
+        synchronized(this) { rules.add(JSONObject().put("id", "stable-rule").put("rule_preview", "same regranted rule")) }
+        main { tagged("authorization-rules").performClick() }
+        waitFor("regranted rule") { main { views().any { it.tag == "revoke:stable-rule" } } }
+        main { tagged("revoke:stable-rule").performClick() }
+        waitFor("second revoke really removed rule") { main { views().filterIsInstance<TextView>().any { it.text == "没有永久授权规则" } } }
+        val latest = calls.last { it.optString("action") == "revoke_rule" }
+        assertNotEquals(first[0].getString("request_id"), latest.getString("request_id"))
+        assertTrue(synchronized(this) { rules.isEmpty() })
+    }
+
+    @Test fun detachedOrClosedTerminalDoesNotDisableAgentQueriesAnswersSettingsOrStop() {
+        pending.add(question()); permissions.put("permission_mode", "read_only")
+        launch(sessionChat = true)
+        // These are the production Activity's unavailable terminal states; the Agent device grant stays valid.
+        main {
+            for (field in listOf("desktopAttached", "controlled")) MainActivity::class.java.getDeclaredField(field).apply { isAccessible = true }.setBoolean(activity, false)
+            MainActivity::class.java.getDeclaredField("sessionExited").apply { isAccessible = true }.setBoolean(activity, true)
+            (tagged("answer:q") as EditText).setText("仍可回答")
+            assertTrue(tagged("answer-submit:q").isEnabled); tagged("answer-submit:q").performClick()
+        }
+        waitFor("answer with unavailable PTY") { calls.any { it.optString("answer") == "仍可回答" } }
+        main { authorization!!.entry.performClick(); assertTrue(tagged("mode:ask").isEnabled); tagged("mode:ask").performClick() }
+        waitFor("management with unavailable PTY") { main { authorization!!.permissionMode == "ask" && tagged("mode:read_only").isEnabled } }
+        main { tagged("mode:read_only").performClick() }
+        waitFor("readonly mode changed") { main { authorization!!.permissionMode == "read_only" } }
+        main { dialog()!!.dismiss(); views().first { it.contentDescription == "停止" && it.isEnabled }.performClick() }
+        waitFor("cancel unavailable PTY") { calls.any { it.optString("action") == "cancel" } }
+        main { AgentPanel::class.java.getDeclaredField("runState").apply { isAccessible = true }.set(chat, "idle")
+            (views().first { it.contentDescription == "发送任务或追加消息" } as EditText).setText("读取对话历史")
+            views().first { it.contentDescription == "发送" && it.isEnabled }.performClick() }
+        waitFor("readonly query sent") { calls.any { it.optString("action") == "send" } }
+        assertEquals("read_only", calls.last { it.optString("action") == "send" }.getString("permission_mode"))
     }
 
     @Test fun compactLargeTextCardsAndImeKeepResponseReachable() {
