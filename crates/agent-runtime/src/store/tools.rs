@@ -106,7 +106,7 @@ impl Store {
         let mut scanned = 0usize;
         // Cap database reads and CPU independently from the number of successful matches.
         while scanned < 128 && scanned_bytes < 256 * 1024 && items.len() < limit {
-            let event:Option<(i64,String,String,i64,String)>=db.query_row("SELECT seq,id,kind,at,scope FROM events WHERE seq<=?1 AND seq<=?2 AND json_extract(scope,'$.owner')=?3 AND json_extract(scope,'$.desktop')=?4 AND (?5 IS NULL OR json_extract(scope,'$.session')=?5) AND (?6 IS NULL OR at>=?6) AND (?7 IS NULL OR at<=?7) ORDER BY seq DESC LIMIT 1",params![cursor.before,cursor.high,caller.owner,caller.desktop,session,args.after_ms,args.before_ms],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
+            let event:Option<SearchEvent>=db.query_row("SELECT seq,id,kind,at,scope FROM events WHERE seq<=?1 AND seq<=?2 AND json_extract(scope,'$.owner')=?3 AND json_extract(scope,'$.desktop')=?4 AND (?5 IS NULL OR json_extract(scope,'$.session')=?5) AND (?6 IS NULL OR at>=?6) AND (?7 IS NULL OR at<=?7) ORDER BY seq DESC LIMIT 1",params![cursor.before,cursor.high,caller.owner,caller.desktop,session,args.after_ms,args.before_ms],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
             let Some((seq, event_id, event_kind, at, scope)) = event else {
                 break;
             };

@@ -1066,7 +1066,10 @@ fn handle_session(
             );
             let bytes = encode_input(&req, engine)?;
             pty.write(bytes)?;
-            authorization::input(info);
+            authorization::input(
+                info,
+                authorization.as_ref().and_then(|p| p.submitted_command()),
+            );
         }
         Operation::ObserveTerminal => {
             reply.history = vec![serde_json::to_string(&engine.read_view(12000, 512 * 1024))?];
@@ -1085,7 +1088,7 @@ fn handle_session(
             }
             let bytes = encode_input(&req, engine)?;
             pty.write(bytes)?;
-            authorization::input(info);
+            authorization::input(info, None);
         }
         Operation::Input => {
             let started = Instant::now();
@@ -1104,7 +1107,7 @@ fn handle_session(
                 let changed = !bytes.is_empty() && !focus_notification;
                 pty.write(bytes)?;
                 if changed {
-                    authorization::input(info);
+                    authorization::input(info, None);
                     info.manual_revision += 1;
                 }
                 control.commit(req.client, req.input_seq, signature);

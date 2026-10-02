@@ -107,8 +107,9 @@ impl Backend {
         let plan = ai_terminal_agent_runtime::authorization::inspect_command_plan(command)
             .context("inspect_command_not_readonly; use run_command to request authorization")?;
         check(context)?;
+        let inspection_context = self.inspection_context(context, &session, &cwd)?;
         let result = crate::process::inspect(
-            context,
+            &inspection_context,
             std::path::Path::new(&plan.program),
             &plan.args,
             &cwd,

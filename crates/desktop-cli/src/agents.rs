@@ -200,7 +200,7 @@ fn call(
     }
     Ok(0)
 }
-pub fn run(command: AgentAction, state: Option<PathBuf>, json_output: bool) -> Result<u32> {
+fn request(command: AgentAction) -> Result<(Option<String>, Value)> {
     let (session, mut value, id) = match command {
         AgentAction::List => (None, json!({"action":"list"}), None),
         AgentAction::Show { id, session } => (session, json!({"action":"state"}), id),
@@ -298,6 +298,10 @@ pub fn run(command: AgentAction, state: Option<PathBuf>, json_output: bool) -> R
     if let Some(id) = id {
         value["agent_id"] = json!(id);
     }
+    Ok((session, value))
+}
+pub fn run(command: AgentAction, state: Option<PathBuf>, json_output: bool) -> Result<u32> {
+    let (session, value) = request(command)?;
     call(state, session, value, json_output)
 }
 pub fn history(command: HistoryAction, state: Option<PathBuf>, json_output: bool) -> Result<u32> {
@@ -322,4 +326,89 @@ pub fn history(command: HistoryAction, state: Option<PathBuf>, json_output: bool
         },
     };
     call(state, session, value, json_output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    #[derive(Parser)]
+    struct Cli {
+        #[command(subcommand)]
+        action: AgentAction,
+    }
+    fn parse(args: &[&str]) -> Result<(Option<String>, Value)> {
+        request(Cli::try_parse_from(std::iter::once("agents").chain(args.iter().copied()))?.action)
+    }
+    #[test]
+    fn explicit_permissions_and_resolution_serialize_the_user_rpc() {
+        let (_, value) = parse(&[
+            "permissions",
+            "dialog",
+            "--expected-revision",
+            "3",
+            "--full-authorization",
+            "true",
+        ])
+        .unwrap();
+        assert_eq!(
+            value,
+            json!({"action":"set_permissions","agent_id":"dialog","expected_revision":3,"permission_mode":null,"full_authorization":true})
+        );
+        let (session, value) = parse(&[
+            "resolve",
+            "pending",
+            "--session",
+            "terminal",
+            "--decision",
+            "once",
+            "--fingerprint",
+            "exact",
+            "--details-ack",
+            "--request-id",
+            "nonce",
+        ])
+        .unwrap();
+        assert_eq!(session.as_deref(), Some("terminal"));
+        assert_eq!(value["details_ack"], true);
+        assert_eq!(value["fingerprint"], "exact");
+        assert_eq!(value["request_id"], "nonce");
+        assert!(parse(&["permissions", "--full-authorization", "true"]).is_err());
+        assert!(parse(&["resolve", "pending"]).is_err());
+        assert!(
+            parse(&[
+                "resolve",
+                "pending",
+                "--decision",
+                "once",
+                "--answer",
+                "text"
+            ])
+            .is_err()
+        );
+    }
+    #[test]
+    fn new_send_defaults_to_ask_and_exposes_pending_details_without_input_prompts() {
+        let (_, value) = parse(&["send", "--message", "work"]).unwrap();
+        assert_eq!(value["permission_mode"], "ask");
+        assert_eq!(value["allow_input"], false);
+        let (_, value) = parse(&[
+            "approval-details",
+            "pending",
+            "--agent-id",
+            "dialog",
+            "--cursor",
+            "opaque",
+        ])
+        .unwrap();
+        assert_eq!(
+            value,
+            json!({"action":"approval_details","agent_id":"dialog","pending_id":"pending","cursor":"opaque"})
+        );
+        let (_, value) = parse(&["revoke-rule", "rule", "--request-id", "nonce"]).unwrap();
+        assert_eq!(
+            value,
+            json!({"action":"revoke_rule","rule_id":"rule","request_id":"nonce"})
+        );
+    }
 }

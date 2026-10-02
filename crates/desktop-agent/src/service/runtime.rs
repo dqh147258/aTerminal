@@ -1,3 +1,6 @@
+#[cfg(test)]
+#[path = "runtime/authorization_tests.rs"]
+mod authorization_tests;
 #[path = "runtime/tools.rs"]
 mod tools;
 use super::*;
@@ -20,15 +23,15 @@ use std::sync::Weak;
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum Command {
-    List,
+    List {},
     GlobalCreate {
         request_id: String,
     },
     GlobalList {
         cursor: Option<i64>,
     },
-    State,
-    Permissions,
+    State {},
+    Permissions {},
     ApprovalDetails {
         pending_id: String,
         cursor: Option<String>,
@@ -57,7 +60,7 @@ pub(super) enum Command {
         request_id: String,
         rule_id: String,
     },
-    Context,
+    Context {},
     Send {
         request_id: String,
         message: String,
@@ -79,7 +82,7 @@ pub(super) enum Command {
         offset: usize,
         data: String,
     },
-    Cancel,
+    Cancel {},
     History {
         cursor: Option<String>,
     },
@@ -352,7 +355,7 @@ pub(super) fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
     }
     let value = match command {
         Command::GlobalCreate { .. } | Command::GlobalList { .. } => unreachable!(),
-        Command::List => {
+        Command::List {} => {
             let scopes = host.agents.store.agents(&owner, &desktop)?;
             let rows = scopes
                 .into_iter()
@@ -365,7 +368,7 @@ pub(super) fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
                 .store
                 .approval_details(&scope, &pending_id, cursor.as_deref())?
         }
-        Command::Permissions => host.agents.store.permissions(&scope)?,
+        Command::Permissions {} => host.agents.store.permissions(&scope)?,
         Command::SetPermissions {
             expected_revision,
             permission_mode,
@@ -412,7 +415,7 @@ pub(super) fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
             );
             host.agents.revoke_rule(&scope, &request_id, &rule_id)?
         }
-        Command::Context => {
+        Command::Context {} => {
             let info = scope
                 .session
                 .as_deref()
@@ -421,7 +424,7 @@ pub(super) fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
             let cwd = info.as_ref().and_then(crate::process::cwd);
             json!({"cwd":cwd,"available":info.is_some()})
         }
-        Command::State => {
+        Command::State {} => {
             let mut value = host.agents.state(&scope)?;
             value["history_generation"] = json!(host.agents.store.generation(&scope)?);
             value["last_event_sequence"] = json!(host.agents.store.latest_sequence(&scope)?);
@@ -495,7 +498,7 @@ pub(super) fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
             let bytes = STANDARD.decode(&data).context("invalid_image_encoding")?;
             json!({"offset":host.agents.store.image_chunk(&scope,&upload_id,offset,&bytes)?})
         }
-        Command::Cancel => {
+        Command::Cancel {} => {
             host.agents.cancel(&scope)?;
             host.agents.state(&scope)?
         }
@@ -696,6 +699,70 @@ impl Backend {
                 candidates: HashMap::new(),
             }),
         }))
+    }
+    pub(super) fn inspection_context(
+        &self,
+        context: &ToolContext,
+        session: &str,
+        cwd: &Path,
+    ) -> Result<ToolContext> {
+        let host = self.host()?;
+        let info = self.info(session)?.info.context("session_unavailable")?;
+        ensure!(
+            crate::process::cwd(&info).as_deref() == Some(cwd),
+            "inspection_cwd_changed"
+        );
+        let session = session.to_owned();
+        let cwd = cwd.to_owned();
+        let owner = self.scope.owner.clone();
+        let generation = self.generation;
+        let epoch = info.epoch;
+        let process = info.process_id;
+        let identity = info.process_identity;
+        let extensions = self.extensions.clone();
+        let provider = self.provider.clone();
+        let client = self.client;
+        let mut context = context.clone();
+        context.authorization_check = Some(
+            ai_terminal_agent_runtime::host::AuthorizationPermit::observation(move || {
+                ensure!(
+                    host.account.owner() == owner && host.account.generation() == generation,
+                    "account_changed"
+                );
+                ensure!(
+                    host.owners.lock().unwrap().get(&session) == Some(&owner),
+                    "session_belongs_to_another_account"
+                );
+                let config = host.config.snapshot(&owner);
+                extensions.check_credentials(&config.config)?;
+                let current = config
+                    .config
+                    .providers
+                    .get(&provider.id)
+                    .context("provider_removed")?;
+                ensure!(
+                    current.enabled
+                        && current.credential_revision == provider.credential_revision
+                        && current.secret_ref == provider.secret_ref,
+                    "provider_credentials_revoked"
+                );
+                let current = poll(&host, &session, client)?
+                    .info
+                    .context("session_unavailable")?;
+                ensure!(
+                    current.epoch == epoch
+                        && current.process_id == process
+                        && current.process_identity == identity,
+                    "inspection_session_changed"
+                );
+                ensure!(
+                    crate::process::cwd(&current).as_deref() == Some(cwd.as_path()),
+                    "inspection_cwd_changed"
+                );
+                Ok(())
+            }),
+        );
+        Ok(context)
     }
     fn host(&self) -> Result<Arc<Host>> {
         let host = self.host.upgrade().context("desktop_stopped")?;
@@ -1180,6 +1247,17 @@ impl TerminalBackend for Backend {
             Ok(())
         })
     }
+    fn action_fence(&self, _context: &ToolContext, name: &str, args: &Value) -> Result<Value> {
+        if !matches!(name, "run_command" | "input_text" | "send_keys") {
+            return Ok(Value::Null);
+        }
+        let id = self.session(args)?;
+        let info = self.info(&id)?.info.context("session_unavailable")?;
+        let shell: Value = serde_json::from_str(&info.shell_status).unwrap_or(Value::Null);
+        Ok(
+            json!({"session_id":id,"session_epoch":info.epoch,"manual_revision":info.manual_revision,"input_revision":shell["host_input_boundary"]["input_revision"]}),
+        )
+    }
     fn approval_display(&self, args: &Value) -> Result<(String, Value)> {
         let secrets = self
             .host()?
@@ -1262,7 +1340,9 @@ impl TerminalBackend for Backend {
                     _ => None,
                 };
                 if let Some(dialect) = dialect {
-                    let revision = reply.snapshot.as_ref().map_or(0, |s| s.revision);
+                    let revision = shell["host_input_boundary"]["input_revision"]
+                        .as_u64()
+                        .unwrap_or(u64::MAX);
                     descriptor.shell_proof =
                         Some(ai_terminal_agent_runtime::authorization::ShellProof {
                             dialect,
@@ -1275,11 +1355,21 @@ impl TerminalBackend for Backend {
                             current_revision: revision,
                         });
                 }
-                // Until the complete fixed-program grammar is available, arbitrary PTY
-                // source is an unknown capability and cannot receive a permanent rule.
-                // Prompt/input proofs do not identify aliases, functions or wrappers.
-                descriptor.source = ToolSource::Unknown;
-                descriptor.execution_identity = None;
+                // Pin the complete command language before reading the executable.
+                // Wrappers/interpreters/expansions cannot inherit the first program's hash.
+                if let Some(program) = args["command"]
+                    .as_str()
+                    .and_then(ai_terminal_agent_runtime::authorization::permanent_command_program)
+                {
+                    let metadata = std::fs::metadata(&program)?;
+                    if metadata.is_file() && metadata.len() <= 64 * 1024 * 1024 {
+                        descriptor.execution_identity =
+                            Some(blake3::hash(&std::fs::read(&program)?).to_hex().to_string());
+                    }
+                }
+                if descriptor.execution_identity.is_none() {
+                    descriptor.source = ToolSource::Unknown;
+                }
             }
         }
         if name == "mcp_call"
@@ -1289,7 +1379,16 @@ impl TerminalBackend for Backend {
                     .unwrap_or("")
                     .starts_with("builtin/"))
         {
-            self.extensions.authorization_descriptor(&mut descriptor)?;
+            if name == "skill_action"
+                && args["arguments"]["cwd"].as_str().unwrap_or("session") == "session"
+            {
+                let extensions = self
+                    .extensions
+                    .for_session(descriptor.cwd.as_ref().map(PathBuf::from));
+                extensions.authorization_descriptor(&mut descriptor)?;
+            } else {
+                self.extensions.authorization_descriptor(&mut descriptor)?;
+            }
         }
         let _ = context;
         Ok(descriptor)
@@ -1507,7 +1606,18 @@ impl TerminalBackend for Backend {
                         .starts_with("builtin/") =>
                 {
                     ensure!(args["action"] == "script", "unknown_skill_action");
-                    self.extensions
+                    let session =
+                        self.scope.session.clone().or_else(|| {
+                            args["arguments"]["session_id"].as_str().map(str::to_owned)
+                        });
+                    let cwd = session
+                        .as_deref()
+                        .map(|id| self.info(id))
+                        .transpose()?
+                        .and_then(|r| r.info)
+                        .and_then(|i| crate::process::cwd(&i));
+                    let extensions = self.extensions.for_session(cwd);
+                    extensions
                         .script(
                             &context,
                             args["skill_id"].as_str().context("skill_id_required")?,

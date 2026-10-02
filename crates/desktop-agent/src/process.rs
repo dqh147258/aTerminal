@@ -205,7 +205,9 @@ pub(crate) async fn inspect(
     #[cfg(windows)]
     command.wrap(JobObject);
     command.wrap(KillOnDrop);
-    context.check_authorization()?;
+    // The Broker supplies an observation permit that rechecks identity/cwd at
+    // commit. Reentering check_authorization while this gate is held would lock
+    // the same non-reentrant mutex; commit does not acquire the gate again.
     let start = Instant::now();
     let mut child = {
         let gate = context.execution_gate.lock().unwrap();
@@ -296,7 +298,9 @@ mod toolset_tests {
     };
     use serde_json::json;
     use std::sync::{Arc, Mutex};
-    fn context(temp: &tempfile::TempDir) -> (ToolContext, tokio::sync::watch::Sender<bool>) {
+    pub(super) fn context(
+        temp: &tempfile::TempDir,
+    ) -> (ToolContext, tokio::sync::watch::Sender<bool>) {
         let store = Store::open(&temp.path().join("state/db")).unwrap();
         let scope = store.agent("o", "d", Some("s")).unwrap();
         let root = store
@@ -381,5 +385,50 @@ mod toolset_tests {
             "cancelled"
         );
         assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod toolset_permit_tests {
+    use super::*;
+    use ai_terminal_agent_runtime::host::AuthorizationPermit;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    };
+    #[tokio::test]
+    async fn inspection_commits_observation_once_and_revalidation_can_prevent_spawn() {
+        let temp = tempfile::tempdir().unwrap();
+        let (mut context, _cancel) = super::toolset_tests::context(&temp);
+        let checks = Arc::new(AtomicU32::new(0));
+        let verified = checks.clone();
+        context.authorization_check = Some(AuthorizationPermit::observation(move || {
+            verified.fetch_add(1, Ordering::AcqRel);
+            Ok(())
+        }));
+        let result = inspect(&context, std::path::Path::new("/bin/pwd"), &[], temp.path())
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(checks.load(Ordering::Acquire), 1);
+        assert_eq!(
+            inspect(&context, std::path::Path::new("/bin/pwd"), &[], temp.path())
+                .await
+                .err()
+                .unwrap()
+                .to_string(),
+            "authorization_action_already_consumed"
+        );
+        context.authorization_check = Some(AuthorizationPermit::observation(|| {
+            anyhow::bail!("inspect_fixture_cwd_changed")
+        }));
+        assert_eq!(
+            inspect(&context, std::path::Path::new("/bin/pwd"), &[], temp.path())
+                .await
+                .err()
+                .unwrap()
+                .to_string(),
+            "inspect_fixture_cwd_changed"
+        );
     }
 }

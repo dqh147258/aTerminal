@@ -95,6 +95,9 @@ pub trait TerminalBackend: Send + Sync {
             permission_management: false,
         })
     }
+    fn action_fence(&self, _context: &ToolContext, _name: &str, _args: &Value) -> Result<Value> {
+        Ok(Value::Null)
+    }
     fn approval_display(&self, args: &Value) -> Result<(String, Value)> {
         Ok((
             crate::authorization::redacted_preview(args),
@@ -670,6 +673,16 @@ impl AgentHost {
     }
     /// Wait for this exact Run without polling the model or creating another user Run.
     pub async fn wait_agent_task(&self, context: &ToolContext, args: Value) -> Result<ToolOutput> {
+        context
+            .budget
+            .waiting_for_tasks(&context.run_id, self.wait_agent_task_inner(context, args))
+            .await
+    }
+    async fn wait_agent_task_inner(
+        &self,
+        context: &ToolContext,
+        args: Value,
+    ) -> Result<ToolOutput> {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Arguments {
@@ -683,7 +696,8 @@ impl AgentHost {
             "invalid_agent_task_timeout_ms"
         );
         let started = Instant::now();
-        let end = started + Duration::from_millis(args.timeout_ms);
+        let timeout = Duration::from_millis(args.timeout_ms);
+        let initial_remaining = context.budget.remaining()?;
         // Subscribe before observing, so completion between the read and wait cannot be lost.
         let mut updates = self.task_updates.subscribe();
         let mut cancel = context.cancel.clone();
@@ -694,7 +708,8 @@ impl AgentHost {
             let remaining = context.budget.remaining()?;
             ensure!(!*cancel.borrow(), "cancelled");
             let done = value["done"] == true;
-            if done || Instant::now() >= end {
+            let active_elapsed = initial_remaining.saturating_sub(remaining);
+            if done || active_elapsed >= timeout {
                 value["timed_out"] = json!(!done);
                 value["elapsed_ms"] = json!(started.elapsed().as_millis() as u64);
                 context.budget.read(serde_json::to_vec(&value)?.len())?;
@@ -703,8 +718,7 @@ impl AgentHost {
             tokio::select! {
                 biased;
                 _ = cancel.wait_for(|v| *v) => bail!("cancelled"),
-                _ = tokio::time::sleep(remaining.min(Duration::from_millis(100))) => {},
-                _ = tokio::time::sleep_until(tokio::time::Instant::from_std(end)) => {},
+                _ = tokio::time::sleep(remaining.min(Duration::from_millis(100)).min(timeout.saturating_sub(active_elapsed))) => {},
                 changed = updates.changed() => { changed.context("agent_task_notifications_closed")?; },
             }
         }
@@ -1335,9 +1349,7 @@ impl AgentHost {
                         _=tool_cancel.wait_for(|v|*v)=>bail!("cancelled"),
                         result=job.budget.run_bounded(async {
                             if name == "ask_user" { self.ask_user(&context,call.function.arguments.clone()).await }
-                            else if matches!(name.as_str(), "wait_agent_task" | "wait_agent_tasks") {
-                                job.budget.waiting_for_tasks(&job.run, gateway.call(context,name,call.function.arguments.clone())).await
-                            } else { gateway.call(context,name,call.function.arguments.clone()).await }
+                            else { gateway.call(context,name,call.function.arguments.clone()).await }
                         })=>result?,
                     };
                     if write {
@@ -1487,6 +1499,11 @@ impl AgentHost {
                     }
                     Err(error) => {
                         self.store.unit_update(&job.scope,&unit,json!({"action_id":action.action_id,"name":name,"error":error.to_string()}))?;
+                        if write && error.to_string().starts_with("authorization_denied") {
+                            let _ =
+                                self.store
+                                    .action_receipt(&job.scope, &action.action_id, "failed");
+                        }
                         if write && !error.to_string().starts_with("authorization_denied") {
                             requires_observation = true;
                             let _ =
@@ -2878,6 +2895,8 @@ mod runtime_contracts {
         let path = temp.path().join("data/rejected.db");
         let store = Arc::new(Store::open(&path).unwrap());
         let scope = store.agent("owner", "desktop", Some("session")).unwrap();
+        // This regression exercises the analysis barrier with an explicit user grant.
+        store.set_permissions(&scope, 0, None, Some(true)).unwrap();
         let model = Arc::new(RejectedModel(AtomicU32::new(0)));
         let backend = Arc::new(WriteBackend::default());
         let host = AgentHost::new(store.clone(), tokio::runtime::Handle::current());
