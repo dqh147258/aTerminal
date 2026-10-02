@@ -78,6 +78,8 @@ class GlobalAssistantTest {
             val command = JSONObject(json); calls.add(command)
             val id = command.getString("agent_id")
             when (command.getString("action")) {
+                "permissions" -> """{"permission_mode":"ask","full_authorization":false,"revision":0,"can_mutate":true}"""
+                "pending" -> """{"items":[],"cursor":null,"has_more":false}"""
                 "state" -> JSONObject().put("state", "idle").put("history_generation", 0).toString()
                 "history" -> JSONObject().put("generation", 0).put("has_more", false).put("items", JSONArray().apply {
                     if (id == "one") for (i in 8 downTo 1) put(JSONObject().put("id", "$id-$i").put("sequence", i).put("kind", if (i % 2 == 0) "assistant" else "user").put("value", JSONObject().put(if (i % 2 == 0) "text" else "message", if (i % 2 == 0) "先确认 Desktop 连接，再查看在线终端，最后逐个确认是否有未完成任务。\n本轮没有执行终端命令。" else "帮我整理一下工作空间巡检的顺序。")))

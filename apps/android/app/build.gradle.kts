@@ -26,6 +26,8 @@ android {
     buildFeatures { buildConfig = true }
     buildTypes {
         debug {
+            // Install isolated UI fixtures beside the normal app; never reuse its account storage.
+            if (providers.gradleProperty("authorizationUiFixture").orNull == "true") applicationIdSuffix = ".authorizationfixture"
             buildConfigField("boolean", "TERMINAL_DEBUG", "true")
             val address = configuredServer ?: localServer
             val ca = configuredCa ?: rootProject.file("../../deploy/secrets/lan-ca.crt").takeIf { address == localServer && it.isFile }?.absolutePath

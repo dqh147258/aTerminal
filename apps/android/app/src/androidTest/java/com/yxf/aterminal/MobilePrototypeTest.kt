@@ -77,7 +77,9 @@ git status --short
         try {
             main { chat = AgentPanel(activity, panel(), listOf("https://compact.invalid", UUID.randomUUID().toString(), "d"), "s", { true }, { _, raw ->
                 when (JSONObject(raw).getString("action")) {
-                    "state" -> JSONObject().put("history_generation", 0).put("state", "running").put("root_user_message_id", "root").put("live_text", if (polls.incrementAndGet() < 2) narration else "").toString()
+                    "permissions" -> """{"permission_mode":"ask","full_authorization":false,"revision":0,"can_mutate":true}"""
+                "pending" -> """{"items":[],"cursor":null,"has_more":false}"""
+                "state" -> JSONObject().put("history_generation", 0).put("state", "running").put("root_user_message_id", "root").put("live_text", if (polls.incrementAndGet() < 2) narration else "").toString()
                     "history" -> JSONObject().put("generation", 0).put("has_more", false).put("items", JSONArray().apply {
                         if (polls.get() >= 2) put(JSONObject().put("id", "reply").put("sequence", 3).put("kind", "assistant").put("value", JSONObject().put("text", answer)))
                         if (polls.get() >= 2) put(interaction)
@@ -125,6 +127,8 @@ git status --short
         val rpc: (String, String) -> String = { _, raw ->
             val command = JSONObject(raw)
             when (command.getString("action")) {
+                "permissions" -> """{"permission_mode":"ask","full_authorization":false,"revision":0,"can_mutate":true}"""
+                "pending" -> """{"items":[],"cursor":null,"has_more":false}"""
                 "state" -> JSONObject().put("state", "completed").put("history_generation", 0).toString()
                 "history" -> JSONObject().put("generation", 0).put("has_more", false).put("items", JSONArray()
                     .put(JSONObject().put("id", "long-reply").put("sequence", 2).put("kind", "assistant").put("value", JSONObject().put("text", full.take(120)).put("record_id", "long-reply").put("partial", true)))
@@ -165,8 +169,8 @@ git status --short
         try {
             val terminal = main { get("terminal") }
             main {
-                icon("设置").performClick(); button("LLM 大模型").performClick()
-                assertTrue(views().any { it.contentDescription=="返回设置" })
+                icon("设置").performClick(); icon("LLM 大模型").performClick()
+                assertTrue(views().any { it.contentDescription=="返回上一页" })
                 activity.onBackPressed(); assertTrue(views().filterIsInstance<TextView>().any { it.text.toString()=="设置" })
                 assertSame(terminal,get("terminal")); icon("关闭设置").performClick()
                 // Freeze transport polling while presenting explicit, isolated device/session fixtures.
@@ -219,13 +223,15 @@ git status --short
                 val overlay = MainActivity::class.java.getDeclaredField("overlayPanel").apply { isAccessible = true }.get(activity) as View
                 assertEquals(root.width-root.paddingLeft-root.paddingRight,overlay.width)
                 assertTrue(views().filterIsInstance<TextView>().any { it.text == "设置" })
-                assertTrue(views().filterIsInstance<Button>().any { it.text == "LLM 大模型" })
+                assertTrue(views().any { it.contentDescription == "LLM 大模型" })
             }
             shot("settings")
             val request: (String,String)->String = { scope, text ->
                 val c = JSONObject(text); commands.add(scope to c)
                 when(c.getString("action")) {
-                    "state" -> JSONObject().put("state",states[scope] ?: "idle").put("history_generation",0).toString()
+                    "permissions" -> """{"permission_mode":"ask","full_authorization":false,"revision":0,"can_mutate":true}"""
+                "pending" -> """{"items":[],"cursor":null,"has_more":false}"""
+                "state" -> JSONObject().put("state",states[scope] ?: "idle").put("history_generation",0).toString()
                     "send" -> { states[scope] = "running"; "{\"state\":\"running\"}" }
                     "cancel" -> { states[scope] = "stopping"; "{\"state\":\"stopping\"}" }
                     "image_begin" -> "{\"upload_id\":\"fixture-image\"}"
@@ -257,10 +263,11 @@ git status --short
             waitFor("image ready") { main { views().any { it.contentDescription=="移除图片" } && icon("发送").isEnabled } }
             main { switch("other-session"); assertFalse(views().any { it.contentDescription=="移除图片" }); switch("session"); assertTrue(views().any { it.contentDescription=="移除图片" }) }
             shot("chat-image-draft")
+            waitFor("permissions after reopening") { main { icon("发送").isEnabled } }
             main { icon("发送").performClick() }
             waitFor("image-only send") { commands.any { it.second.optString("action")=="send" } }
             val sent = commands.first { it.second.optString("action")=="send" }
-            assertEquals("session",sent.first); assertEquals("",sent.second.getString("message")); assertTrue(sent.second.getBoolean("allow_input")); assertEquals(1,sent.second.getJSONArray("images").length())
+            assertEquals("session",sent.first); assertEquals("",sent.second.getString("message")); assertEquals("ask",sent.second.getString("permission_mode")); assertFalse(sent.second.has("allow_input")); assertEquals(1,sent.second.getJSONArray("images").length())
             waitFor("stop button") { main { views().any { it.contentDescription=="停止" && it.isEnabled } } }
             main { field().setText("追加检查"); assertTrue(icon("追加").isEnabled); icon("追加").performClick() }
             waitFor("append") { commands.count { it.second.optString("action")=="send" }==2 }
@@ -286,14 +293,16 @@ git status --short
             val constrained = main {
                 val panelView = field().parent.parent.parent as LinearLayout
                 val before = panelView.layoutParams.height
-                panelView.layoutParams = panelView.layoutParams.apply { height = activity.dp(180) }
+                panelView.layoutParams = panelView.layoutParams.apply { height = minOf(activity.dp(180), (panelView.parent as View).height) }
                 panelView to before
             }
             instrumentation.waitForIdleSync()
             // Hiding auxiliary labels requests a second layout frame after IME/size changes.
             waitFor("constrained message viewport") { main {
                 val viewport = AgentPanel::class.java.getDeclaredField("scroll").apply { isAccessible=true }.get(chat) as ScrollView
-                viewport.height > activity.dp(20)
+                val input = field(); val rect = android.graphics.Rect()
+                constrained.first.height == constrained.first.layoutParams.height && viewport.height > activity.dp(20) &&
+                    input.getGlobalVisibleRect(rect) && rect.height() >= input.height - 2
             } }
             main {
                 val rect = android.graphics.Rect(); val input = field()
