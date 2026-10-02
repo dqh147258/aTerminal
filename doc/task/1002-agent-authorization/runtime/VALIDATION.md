@@ -17,3 +17,6 @@
 完整临时输出位于 `/private/tmp/aterminal-runtime-final-libs.log`、`aterminal-runtime-final-desktop.log`、`aterminal-runtime-last-host.log`、`aterminal-runtime-native-final-cli.log`、`aterminal-runtime-last-clippy.log`、`aterminal-runtime-last-cli-clippy.log`。它们是本地测试桩证据，不证明真实供应商或物理设备。
 
 剩余root验收：最终主线复跑、独立encrypted Review/实际Bash-Zsh override marker、Android/iOS UI；PowerShell本机不可用，不声称runtime实测。无付费模型、正常账号/终端/手机模拟器被用于本执行者验证；无OS/cwd沙箱或通用TUI完成保证。
+
+
+在fa29899后的Native结果来源followup：`cargo test --locked -j2 -p ai-terminal-agent-runtime --lib store::tools:: -- --test-threads=2` 6/6；`cargo test --locked -j2 -p ai-terminal-agent --lib independent_agent_reads -- --test-threads=2` 1/1。证明native running被独立Global读取仍running，另一Agent PTY input不能失效，wait真正返回completed/exit0/immutable输出及准确marker。持久run_id/重启unknown/oldrun不替换附在Store用例中。相关两lib/tests strictclippy、fmt/diff过；日志 `/private/tmp/aterminal-runtime-native-followup-{store,observer,clippy}.log`。此前无关检查不重复加总。

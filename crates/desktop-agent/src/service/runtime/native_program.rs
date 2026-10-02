@@ -99,7 +99,7 @@ impl Backend {
         let info = self.info(&session)?.info.context("session_unavailable")?;
         let cwd = crate::process::cwd(&info).context("current_session_cwd_unavailable")?;
         let store = self.host()?.agents.store.clone();
-        let mut value = json!({"source":"native_program","program":args.program,"args":args.args,"cwd":cwd,"state":"prepared","accepted":false,"final":false,"exit_code":null,"epoch":info.epoch,"manual_revision":info.manual_revision,"evidence_source":"managed_native_process","stdin_bytes":args.stdin.as_ref().map_or(0,String::len),"submitted_at":now()});
+        let mut value = json!({"source":"native_program","run_id":context.run_id,"program":args.program,"args":args.args,"cwd":cwd,"state":"prepared","accepted":false,"final":false,"exit_code":null,"epoch":info.epoch,"manual_revision":info.manual_revision,"evidence_source":"managed_native_process","stdin_bytes":args.stdin.as_ref().map_or(0,String::len),"submitted_at":now()});
         let command_id = store.begin_command(
             &self.scope,
             &context.run_id,

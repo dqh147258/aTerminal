@@ -220,7 +220,7 @@ impl Backend {
         check(context)?;
         let host = self.host()?;
         let mut value = host.agents.store.command(&self.scope, command_id)?;
-        if value["final"] != true {
+        if value["final"] != true && value["source"] != "native_program" {
             let session = value["session_id"]
                 .as_str()
                 .context("command_session_missing")?;
@@ -236,6 +236,31 @@ impl Backend {
                 .store
                 .update_command(&self.scope, command_id, &value)?;
             value = host.agents.store.command(&self.scope, command_id)?;
+        }
+        if value["source"] == "native_program"
+            && let Some(record) = value["result_record_id"].as_str()
+        {
+            let page = host.agents.store.record_page(
+                &self.scope,
+                record,
+                "body",
+                None,
+                context.max_read_bytes.clamp(4, 12288),
+            )?;
+            if page["cursor"].is_null()
+                && let Some(body) = page["body"].as_str()
+                && let Ok(output) = serde_json::from_str::<Value>(body)
+            {
+                ensure!(
+                    output["command_id"] == command_id,
+                    "native_result_record_mismatch"
+                );
+                value["stdout"] = output["stdout"].clone();
+                value["stderr"] = output["stderr"].clone();
+                value["stdout_truncated"] = output["stdout_truncated"].clone();
+                value["stderr_truncated"] = output["stderr_truncated"].clone();
+            }
+            value["output_record"] = page;
         }
         value.as_object_mut().unwrap().remove("baseline");
         Ok(value)

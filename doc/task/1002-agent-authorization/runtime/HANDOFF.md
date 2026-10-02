@@ -11,3 +11,6 @@ Runtime lib99/99、Desktop lib57/57、CLI2参数解析和3真实Daemon+本地SSE
 Native local未登录账户内部身份=local/installation，Store/RPC owner隔离不变；HTTP MCP cwd未知，不用本地目录冒充远端；stdio固定spawncwd保持；Skill默认session cwd真正随同Run cd变化。扩展移除/disable/version/凭据变更停止旧调用；MCP启动线性点短持gate，async I/O不持锁。
 
 剩余属于root：独立encrypted Review、实际Bash/Zsh覆盖marker、主线整合复跑、Android/iOS真实UI/协议验收。没有用户付费模型、物理设备、正常账号/终端被用于测试；PowerShell不可用未运行。原生stdout/进程完成不等于通用TUI/application完成。
+
+
+最新native来源分流followup（在fa29899后）：PTY invalidate只影响PTY行；native get/wait直接读管理过程Store state，不经Shell correlate。begin_command持久run_id，update保留旧run关联，Store.open已有native非final=>unknown/final/exitnull/reason=desktop_restart；不重放。get_result有界回读command指定result_record_id的immutable stdout/stderr/exit；大档案带cursor，可read_record继续，不取Session最新Run。Store工具6/6与真实独立Global observer读运行native、另一Agent写PTY、wait完成/exit0/marker/档案1/1以及相关strictclippy过。
