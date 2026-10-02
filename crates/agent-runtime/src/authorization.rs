@@ -124,6 +124,12 @@ fn classify(action: &ActionDescriptor) -> (Risk, &'static str) {
     {
         return (Risk::Forbidden, "model_permission_management_forbidden");
     }
+    if action.tool == "run_program" {
+        return (
+            Risk::RequiresApproval,
+            "native_program_requires_user_authorization",
+        );
+    }
     if action.source != ToolSource::Builtin {
         return (Risk::RequiresApproval, "extension_or_unknown_tool");
     }
@@ -660,6 +666,18 @@ fn contains_permission_command(action: &ActionDescriptor) -> bool {
             .as_array()
             .cloned()
             .unwrap_or_default();
+        if matches!(
+            name,
+            "sh" | "bash" | "zsh" | "pwsh" | "powershell" | "python" | "python3" | "node" | "env"
+        ) && permission_cli_text(
+            &args
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" "),
+        ) {
+            return true;
+        }
         if name.eq_ignore_ascii_case("aterminal")
             && args.iter().any(|v| v == "agents")
             && args.iter().any(|v| {
@@ -689,6 +707,9 @@ fn contains_permission_command(action: &ActionDescriptor) -> bool {
     let Some(command) = action.arguments.get(field).and_then(Value::as_str) else {
         return false;
     };
+    permission_cli_text(command)
+}
+fn permission_cli_text(command: &str) -> bool {
     // Defense in depth for obvious direct/compound CLI calls. This is deliberately
     // not advertised as a complete detection of arbitrary computed shell programs.
     let words: Vec<_> = command
@@ -1177,7 +1198,8 @@ mod tests {
     }
     #[test]
     fn managed_native_leaf_only_can_persist_and_v3_isolates_all_old_rules() {
-        let leaf = native("/usr/bin/tee", &["-a", "/tmp/marker"]);
+        let mut leaf = native("/usr/bin/tee", &["-a", "/tmp/marker"]);
+        leaf.arguments["stdin"] = json!("CLI");
         assert!(assess(&leaf).can_always);
         assert_eq!(assess(&leaf).risk, Risk::RequiresApproval);
         assert!(stable_fingerprint(&leaf).starts_with("v3:"));

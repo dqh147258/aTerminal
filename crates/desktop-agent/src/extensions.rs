@@ -626,12 +626,16 @@ impl Frozen {
                     .to_hex()
                     .to_string(),
             );
-            descriptor.cwd = binding
-                .config
-                .cwd
-                .as_ref()
-                .or(self.cwd.as_ref())
-                .map(|p| p.to_string_lossy().into_owned());
+            descriptor.cwd = if binding.config.wire()? == "stdio" {
+                binding
+                    .config
+                    .cwd
+                    .as_ref()
+                    .or(self.cwd.as_ref())
+                    .map(|p| p.to_string_lossy().into_owned())
+            } else {
+                None
+            };
             // Remote service versions and interpreter dependencies cannot be pinned by
             // configuration alone. Such calls remain once/full only.
             descriptor.execution_identity = None;
@@ -876,6 +880,39 @@ pub fn builtin_catalog() -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn http_mcp_preview_never_claims_a_local_directory_as_remote_execution_scope() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = OwnerConfig::default();
+        let server:McpServer=serde_json::from_value(json!({"transport":"streamable_http","url":"http://127.0.0.1:1","enabled":true,"cwd":"/local/unused"})).unwrap();
+        config.mcp.insert("remote".into(), server);
+        let frozen = Frozen::new(
+            temp.path(),
+            "owner",
+            1,
+            Arc::new(config),
+            "",
+            Some(temp.path().into()),
+        )
+        .unwrap();
+        let mut descriptor = ai_terminal_agent_runtime::authorization::ActionDescriptor {
+            account_id: "owner".into(),
+            desktop_id: "desktop".into(),
+            tool: "mcp_call".into(),
+            source: ai_terminal_agent_runtime::authorization::ToolSource::Builtin,
+            source_id: "builtin".into(),
+            tool_version: Some("1".into()),
+            target: "session".into(),
+            cwd: Some("/local/session".into()),
+            arguments: json!({"server_id":"remote","tool":"effect","arguments":{}}),
+            execution_identity: None,
+            shell_proof: None,
+            permission_management: false,
+        };
+        frozen.authorization_descriptor(&mut descriptor).unwrap();
+        assert!(descriptor.cwd.is_none());
+        assert!(!ai_terminal_agent_runtime::authorization::assess(&descriptor).can_always);
+    }
     #[test]
     fn disabled_removed_or_reconfigured_extensions_revoke_frozen_calls() {
         let temp = tempfile::tempdir().unwrap();

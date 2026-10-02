@@ -147,3 +147,12 @@ aTerminal history retention off
 2026-09-26 使用用户授权的 `https://api-inference.modelscope.cn/v1`、OpenAI Chat 协议和 `Qwen/Qwen3.8-27B` 完成真实 SSE 工具循环验收。当前 Desktop 模型别名为 `modelscope-qwen`，全局与 Session 默认均已绑定，思考使用供应商默认。测试和复跑命令见 [真实验收报告](../doc/task/0925-terminal-agents/LIVE-MODELSCOPE.md)。该结果不扩展为其他供应商、视觉或特定思考强度的实测结论。
 
 Terminal 状态消息按实际内容去重：后台采样、用户消息和委托快照共用最近状态比较；仅采样时间、Shell 报告时间或人工输入计数变化不会新增消息。进程身份、前台任务、Shell 阶段/目录/退出码及 Desktop attachment 等变化仍记入历史，A→B→A 保留两次变化。相同状态复用原记录，重启后仍有效；人工输入抢占校验独立保留。旧历史记录不自动删除。
+
+
+## Managed native programs and permanent authorization
+
+`run_program` takes an absolute `program`, literal `args` (at most 64 / 16000 total UTF-8 bytes), and optional UTF-8 `stdin` (at most 16000 bytes; absent/null means EOF). Global calls require `session_id`; Session calls stay bound. Desktop directly executes the program in the Session's OS-observed cwd with a cleared environment. It does not enter the PTY, parse Shell aliases/functions, change the terminal draft or impose a cwd/OS sandbox. Cards show the actual program/arguments and the result uses `source=native_program`.
+
+Risky native calls use the same once/always/deny/full permissions. Permanent rules are available only for a pinned system leaf program, its exact args/stdin, account/Desktop/Session/cwd and actual file hash. For example `/usr/bin/tee` with `args=["-a","/absolute/marker"]` and explicit stdin appends those bytes through a direct native process. Interpreters, wrappers and unknown programs remain once/full only; identified authorization-management CLI/RPC calls remain forbidden to models. Unknown native programs are still executable after explicit once/full approval. Policy v3 makes old rules based on PTY/program-name assumptions ineligible.
+
+`run_command`, `input_text` and `send_keys` remain ordinary PTY interactions with once/full approval and input/manual/cancellation fences. They cannot receive permanent rules, since even an absolute path can be intercepted by Shell functions or aliases. Use `inspect_command` for positive fixed native reads and `run_program` for a managed effectful leaf operation. Native execution returns a durable command ID, real child exit and bounded stdout/stderr; it stops its own process group on cancellation or a 30-second execution limit. Unknown/cancelled outcomes are not replayed, and native process completion does not claim general TUI/application completion.

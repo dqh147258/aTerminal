@@ -44,6 +44,22 @@ pub(super) fn normalized_arguments(value: &Value) -> Result<Value> {
     }
     Ok(value)
 }
+pub(super) fn native_binary(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"\x7fELF")
+        || bytes.starts_with(b"MZ")
+        || [
+            [0xfe, 0xed, 0xfa, 0xce],
+            [0xce, 0xfa, 0xed, 0xfe],
+            [0xfe, 0xed, 0xfa, 0xcf],
+            [0xcf, 0xfa, 0xed, 0xfe],
+            [0xca, 0xfe, 0xba, 0xbe],
+            [0xbe, 0xba, 0xfe, 0xca],
+            [0xca, 0xfe, 0xba, 0xbf],
+            [0xbf, 0xba, 0xfe, 0xca],
+        ]
+        .iter()
+        .any(|magic| bytes.starts_with(magic))
+}
 struct Receipt {
     store: Arc<Store>,
     scope: Scope,
@@ -192,9 +208,18 @@ impl Backend {
         if status.code().is_none() {
             value["reason"] = json!("native_exit_code_unavailable");
         }
+        let body=json!({"source":"native_program","command_id":command_id,"stdout":stream(&stdout),"stderr":stream(&stderr),"exit_code":status.code(),"stdout_truncated":stdout_truncated,"stderr_truncated":stderr_truncated}).to_string();
+        let record = store.archive(
+            &self.scope,
+            &context.run_id,
+            &format!("{}/native-result", context.action_id),
+            "native_program",
+            value.clone(),
+            body.as_bytes(),
+        )?;
+        value["result_record_id"] = json!(record.id);
         store.update_command(&self.scope, &command_id, &value)?;
         receipt.settled = true;
-        let body=json!({"source":"native_program","command_id":command_id,"stdout":stream(&stdout),"stderr":stream(&stderr),"exit_code":status.code(),"stdout_truncated":stdout_truncated,"stderr_truncated":stderr_truncated}).to_string();
         let preview = body
             .chars()
             .take(context.max_read_bytes / 4)
@@ -207,9 +232,13 @@ impl Backend {
                 body,
                 model_body: Some(preview),
                 binary: false,
-                record_id: None,
+                record_id: Some(record.id),
             }),
-            outcome: Some("written".into()),
+            outcome: Some(if status.code().is_some() {
+                "written".into()
+            } else {
+                "unknown".into()
+            }),
         })
     }
 }
@@ -229,6 +258,9 @@ mod tests {
             )
             .is_err()
         );
+        assert!(!native_binary(b"#!/bin/sh\nprintf value"));
+        assert!(!native_binary(b"shell source"));
+        assert!(native_binary(b"\x7fELFbinary"));
         assert_eq!(
             normalized_arguments(&json!({"program":"/bin/echo","args":[]})).unwrap()["stdin"],
             Value::Null

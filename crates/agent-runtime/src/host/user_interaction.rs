@@ -209,7 +209,9 @@ impl AgentHost {
             loop {
                 context.budget.remaining()?;
                 ensure!(!*cancel.borrow(), "cancelled");
-                job.snapshot.backend.authorize(false).await?;
+                tokio::select! {biased; _=cancel.wait_for(|v|*v)=>bail!("cancelled"), result=job.snapshot.backend.authorize(false)=>{result?;}}
+                context.budget.remaining()?;
+                ensure!(!*cancel.borrow()&&*context.execution_gate.lock().unwrap(),"cancelled");
                 let item = self.store.poll_pending(&context.scope, id)?;
                 if item["state"] == "pending" && item["kind"] == "approval" {
                     let mode = self.store.permissions(context.budget.permission_scope())?;
@@ -315,7 +317,7 @@ impl AgentHost {
         {
             let (preview, details) = job.snapshot.backend.approval_display(args)?;
             let requires_details = details.to_string().len() > 4096;
-            let pending=self.store.create_pending(&context.scope,authority,&context.run_id,&context.action_id,json!({"kind":"approval","title":format!("Approve {name}"),"reason":assessment.reason,"tool":name,"arguments_preview":preview,"arguments_truncated":requires_details,"requires_details":requires_details,"_details":details,"cwd":descriptor.cwd,"fingerprint":assessment.fingerprint,"can_always":assessment.can_always,"always_unavailable_reason":if assessment.can_always {Value::Null} else {json!("Exact execution identity or cwd unavailable")},"rule_preview":{"tool":name,"target":descriptor.target,"cwd":descriptor.cwd,"source":descriptor.source_id,"version":descriptor.tool_version}}))?;
+            let pending=self.store.create_pending(&context.scope,authority,&context.run_id,&context.action_id,json!({"kind":"approval","title":format!("Approve {name}"),"reason":assessment.reason,"tool":name,"arguments_preview":preview,"arguments_truncated":requires_details,"requires_details":requires_details,"_details":details,"cwd":descriptor.cwd,"fingerprint":assessment.fingerprint,"can_always":assessment.can_always,"always_unavailable_reason":if assessment.can_always {Value::Null} else {json!("Exact execution identity or cwd unavailable")},"rule_preview":{"tool":name,"target":descriptor.target,"cwd":descriptor.cwd,"source":descriptor.source_id,"version":descriptor.tool_version,"execution_identity":descriptor.execution_identity,"dispatch":format!("{:?}",descriptor.source)}}))?;
             let response = self.await_human(context, pending).await?;
             ensure!(response["decision"] != "deny", "authorization_denied");
             once = response["decision"] == "once";
@@ -516,7 +518,11 @@ mod tests {
                 desktop_id: context.scope.desktop.clone(),
                 tool: name.into(),
                 source: crate::authorization::ToolSource::Builtin,
-                source_id: "builtin-test".into(),
+                source_id: if name == "run_program" {
+                    "aterminal/native-program.v3".into()
+                } else {
+                    "builtin-test".into()
+                },
                 tool_version: Some("v1".into()),
                 target: "terminal".into(),
                 cwd: Some(self.cwd.lock().unwrap().clone()),
@@ -869,6 +875,50 @@ mod tests {
         );
         fixture.host.cancel(&fixture.scope).unwrap();
         assert_eq!(fixture.settle().await["state"], "cancelled");
+    }
+    #[tokio::test]
+    async fn old_v2_rule_never_auto_approves_v3_managed_native_action() {
+        let args = json!({"program":"/usr/bin/tee","args":["-a","/tmp/marker"],"stdin":"marker","session_id":"terminal"});
+        let fixture = Fixture::new(vec![("run_program", args.clone())]);
+        fixture.start("root", 5, true);
+        let pending = fixture.pending().await;
+        let v3 = pending["fingerprint"].as_str().unwrap();
+        assert!(v3.starts_with("v3:"));
+        let old = format!("v2:{}", &v3[3..]);
+        let old_row = fixture
+            .host
+            .store
+            .create_pending(
+                &fixture.scope,
+                &fixture.scope,
+                "old-run",
+                "old-action",
+                json!({"kind":"approval","fingerprint":old,"can_always":true,"tool":"run_command"}),
+            )
+            .unwrap();
+        let old_id = old_row["id"].as_str().unwrap();
+        fixture
+            .host
+            .store
+            .resolve_pending(&fixture.scope, "old-response", old_id, Some("always"), None)
+            .unwrap();
+        fixture
+            .host
+            .store
+            .consume_pending(&fixture.scope, old_id)
+            .unwrap();
+        assert!(
+            fixture
+                .host
+                .store
+                .rule_matches(&fixture.scope, &old)
+                .unwrap()
+        );
+        assert!(!fixture.host.store.rule_matches(&fixture.scope, v3).unwrap());
+        assert_eq!(fixture.backend.writes.load(Ordering::Acquire), 0);
+        fixture.answer(&pending, "once");
+        assert_eq!(fixture.settle().await["state"], "completed");
+        assert_eq!(fixture.backend.writes.load(Ordering::Acquire), 1);
     }
     #[tokio::test]
     async fn cancelled_wait_never_executes_or_replays_old_pending() {
