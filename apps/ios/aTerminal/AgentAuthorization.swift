@@ -126,6 +126,12 @@ enum AuthorizationFailure: LocalizedError {
             if includeRules {
                 let values = try await list("rules", key: "items", transport: transport, token: token)
                 guard token == generation else { return }; rules = values.compactMap(AgentRule.init)
+                var activeRules = Set<String>()
+                for rule in rules { activeRules.insert(rule.id) }
+                // A refreshed absence confirms revocation even if its mutation reply was lost.
+                for key in Array(requestIDs.keys) where key.hasPrefix("revoke:") {
+                    if !activeRules.contains(String(key.dropFirst(7))) { requestIDs[key] = nil }
+                }
             }
             error = ""
         } catch {

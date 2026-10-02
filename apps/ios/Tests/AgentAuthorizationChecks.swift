@@ -16,6 +16,7 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
     var rules: [[String: Any]] = [["id": "rule", "rule_preview": ["command": "exact", "cwd": "/tmp"]]]
     var conflict = false
     var failedResolve = false
+    var lostRevokeReply = false
     func request(_ command: [String: Any]) async throws -> [String: Any] {
         commands.append(command)
         switch command["action"] as? String {
@@ -36,7 +37,10 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
             for row in rows { if row["id"] as? String != pendingID { remaining.append(row) } }
             rows = remaining
             return ["duplicate": false]
-        case "revoke_rule": rules = []; return ["revoked": true]
+        case "revoke_rule":
+            rules = []
+            if lostRevokeReply { lostRevokeReply = false; throw AuthorizationFailure.message("lost revoke response") }
+            return ["revoked": true]
         default: fatalError("Unexpected command")
         }
     }
@@ -78,6 +82,14 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
         var revokeIDs: [String] = []
         for command in server.commands where command["action"] as? String == "revoke_rule" { revokeIDs.append(command["request_id"] as! String) }
         check(revokeIDs.count == 2 && revokeIDs[0] != revokeIDs[1] && model.rules.isEmpty, "Regranted rule reused an old revocation ID")
+        server.rules = [["id": "rule", "rule_preview": "uncertain regrant"]]
+        await model.refresh(includeRules: true); server.lostRevokeReply = true; await model.revoke(model.rules[0])
+        check(model.rules.isEmpty, "Applied revoke not recovered after lost response")
+        server.rules = [["id": "rule", "rule_preview": "regrant after uncertain revoke"]]
+        await model.refresh(includeRules: true); await model.revoke(model.rules[0])
+        revokeIDs = []
+        for command in server.commands where command["action"] as? String == "revoke_rule" { revokeIDs.append(command["request_id"] as! String) }
+        check(revokeIDs.count == 4 && revokeIDs[2] != revokeIDs[3] && model.rules.isEmpty, "Lost revoke reply poisoned a regranted rule")
         model.bind(context: "readonly", writable: false, transport: server.request)
         await model.refresh(); let before = server.commands.count
         await model.setPermissions(full: true)

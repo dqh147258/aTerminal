@@ -42,6 +42,7 @@ struct ChatPanel: View {
     @FocusState private var composing: Bool
     @State private var importingImages = false
     @State private var imageDestination: ChatScope?
+    @State private var pendingJump = 0
     @State private var firstRender = true
     @State private var latestBottomVisible = false
     @State private var historyBottomVisible = false
@@ -84,10 +85,13 @@ struct ChatPanel: View {
             }
                 .accessibilityIdentifier("chat.timeline")
                 .onChange(of: model.items.last?.id) { _ in
-                    if !model.browsing && (firstRender || latestBottomVisible), !model.items.isEmpty { proxy.scrollTo("chat.bottom", anchor: .bottom); firstRender = false }
+                    if !model.browsing && !model.authorization.pending.contains(where: { $0.actionable }) && (firstRender || latestBottomVisible), !model.items.isEmpty { proxy.scrollTo("chat.bottom", anchor: .bottom); firstRender = false }
                 }
-                .onChange(of: model.liveText) { _ in if !model.browsing && latestBottomVisible { proxy.scrollTo("chat.bottom", anchor: .bottom) } }
-                .onChange(of: model.authorization.pending.first?.id) { id in
+                .onChange(of: model.liveText) { _ in if !model.browsing && !model.authorization.pending.contains(where: { $0.actionable }) && latestBottomVisible { proxy.scrollTo("chat.bottom", anchor: .bottom) } }
+                .onChange(of: pendingJump) { _ in
+                    if let id = model.authorization.pending.first(where: { $0.actionable })?.id { firstRender = false; proxy.scrollTo(id, anchor: .top) }
+                }
+                .onChange(of: model.authorization.pending.first(where: { $0.actionable })?.id) { id in
                     if !model.browsing, let id { proxy.scrollTo(id, anchor: .top) }
                 }
                 .onChange(of: model.target) { _ in firstRender = true }
@@ -108,7 +112,8 @@ struct ChatPanel: View {
                     Label(model.authorization.permissions == nil ? "授权状态待同步" : model.authorization.full ? "当前对话完全授权" : model.authorization.mode == "read_only" ? "只读模式" : "按需授权", systemImage: model.authorization.full ? "lock.open" : "lock.shield")
                 }.accessibilityIdentifier("authorization.open")
                 Spacer()
-                if !model.authorization.pending.isEmpty {
+                if model.authorization.pending.contains(where: { $0.actionable }) {
+                    Button("待处理请求") { pendingJump += 1 }.accessibilityIdentifier("authorization.pending.jump")
                     Button("停止") { model.cancel(core) }.disabled(!model.canCancel).accessibilityIdentifier("authorization.stop")
                 }
             }.font(.caption)

@@ -15,7 +15,8 @@ private enum UITestInput {
             if clear.exists {
                 if !clear.isHittable { app.scrollViews.firstMatch.swipeUp() }
                 clear.tap()
-                field.tap()
+                // Native keyboard clear actions preserve this field's focus.
+                if field.isHittable { field.tap() }
             } else {
                 guard field.elementType == .textField || field.elementType == .secureTextField else {
                     XCTFail("The code editor clear action is unavailable", file: file, line: line); return
@@ -658,6 +659,7 @@ final class AuthorizationUITests: XCTestCase {
     func testOnceQuestionOptionAndFreeTextWithKeyboard() {
         let app = open()
         tap("authorization.resolve.once", app)
+        tap("authorization.question.open", app)
         tap("authorization.option.0", app)
         let answer = app.textFields["authorization.answer"]
         XCTAssertEqual(answer.value as? String, "Markdown")
@@ -701,7 +703,7 @@ final class AuthorizationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["authorization.resolve.once"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["authorization.resolve.once"].isEnabled)
         XCTAssertFalse(app.buttons["authorization.resolve.deny"].isEnabled)
-        XCTAssertFalse(app.buttons["authorization.answer.send"].isEnabled)
+        XCTAssertFalse(app.buttons["authorization.question.open"].isEnabled)
         tap("authorization.open", app)
         XCTAssertTrue(app.staticTexts["authorization.readonly"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.switches["authorization.full"].isEnabled)
@@ -727,9 +729,25 @@ final class AuthorizationRpcUITests: XCTestCase {
     }
     private func tap(_ id: String, _ app: XCUIApplication) {
         let button = app.buttons[id]
-        XCTAssertTrue(button.waitForExistence(timeout: 30), id)
-        if !button.isHittable { app.scrollViews["chat.timeline"].swipeUp(velocity: .slow) }
-        button.tap()
+        let pendingAction = id.hasPrefix("authorization.resolve.") || id == "authorization.question.open" || id == "authorization.details.open"
+        if pendingAction {
+            let jump = app.buttons["authorization.pending.jump"]
+            XCTAssertTrue(jump.waitForExistence(timeout: 20), "No actionable pending request for " + id)
+            XCTAssertTrue(jump.isHittable); jump.tap()
+        } else { XCTAssertTrue(button.waitForExistence(timeout: 20), id) }
+        var previousAbove = true
+        for _ in 0..<16 {
+            if button.exists && button.isHittable { button.tap(); return }
+            let scroll = app.scrollViews["chat.timeline"]
+            guard scroll.exists else { break }
+            let exists = button.exists
+            let above = exists ? button.frame.midY < scroll.frame.midY : !previousAbove
+            previousAbove = above
+            let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: above ? 0.2 : 0.8))
+            let end = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: above ? 0.8 : 0.2))
+            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
+        }
+        XCTAssertTrue(button.exists && button.isHittable, "Unreachable " + id)
     }
     private func open() throws -> (XCUIApplication, Context) {
         guard let text = ProcessInfo.processInfo.environment["AI_TERMINAL_IOS_AUTHORIZATION_CONTEXT"],
@@ -789,6 +807,12 @@ final class AuthorizationRpcUITests: XCTestCase {
     }
     func testEncryptedApprovalQuestionRulesFullAndRecovery() throws {
         let (app, context) = try open()
+        // This dedicated fixture persists across failed attempts. Cancel only its
+        // previous suspended Run using the same user-facing stop control.
+        if app.buttons["chat.stop"].isEnabled {
+            tap("chat.stop", app)
+            wait { !app.buttons["chat.stop"].isEnabled }
+        }
         setFull(false, app: app)
         let once = try task("once", arguments: command("once", file: "once", context: context), context: context, app: app)
         XCTAssertTrue(app.buttons["authorization.resolve.once"].waitForExistence(timeout: 30))
@@ -801,6 +825,7 @@ final class AuthorizationRpcUITests: XCTestCase {
         notExecuted("deny", context: context)
         tap("authorization.resolve.deny", app); done(denied, app)
         let question = try task("question", tool: "ask_user", arguments: ["question": "Choose output", "options": ["Markdown", "Plain text"]], context: context, app: app)
+        tap("authorization.question.open", app)
         tap("authorization.option.0", app)
         UITestInput.replace(app.textFields["authorization.answer"], with: "iOS custom answer", app: app)
         let answerButton = app.buttons["authorization.answer.keyboard"].exists ? "authorization.answer.keyboard" : "authorization.answer.send"
