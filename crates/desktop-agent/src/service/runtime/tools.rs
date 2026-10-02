@@ -155,6 +155,11 @@ impl Backend {
                 if output.value["accepted"] != true {
                     unknown(&mut saved, "input_not_accepted");
                 }
+                host.agents.store.set_command_acceptance(
+                    &self.scope,
+                    &command_id,
+                    output.value["accepted"] == true,
+                )?;
                 host.agents
                     .store
                     .update_command(&self.scope, &command_id, &saved)?;
@@ -251,7 +256,7 @@ impl Backend {
             Value::Null
         };
         Ok(ToolOutput::value(
-            json!({"role":if global{"global"}else{"session"},"tools":terminal_tools(global).iter().map(|t|t.name.as_str()).collect::<Vec<_>>(),"vision":context.vision,"terminal":terminal,"authorization":null,"budget":context.budget.tool_status()?,"limits":{"wait_ms":30000,"task_ids":32,"history_page":50,"shell_evidence":"observational","os_sandbox":false,"cwd_sandbox":false,"mcp_catalog_may_start_enabled_servers":true}}),
+            json!({"role":if global{"global"}else{"session"},"tools":terminal_tools(global).iter().map(|t|t.name.as_str()).collect::<Vec<_>>(),"vision":context.vision,"terminal":terminal,"authorization":self.host()?.agents.permission_capabilities(context)?,"budget":context.budget.tool_status()?,"limits":{"wait_ms":30000,"task_ids":32,"history_page":50,"shell_evidence":"observational","os_sandbox":false,"cwd_sandbox":false,"mcp_catalog_may_start_enabled_servers":true}}),
         ))
     }
     fn read_delta(&self, context: &ToolContext, args: Value) -> Result<ToolOutput> {
@@ -321,6 +326,83 @@ fn delta_state(
 async fn pause(context: &ToolContext, end: Instant) -> Result<()> {
     let mut cancel = context.cancel.clone();
     let remaining = context.budget.remaining()?;
-    tokio::select! {biased; _=cancel.wait_for(|v|*v)=>bail!("cancelled"), _=tokio::time::sleep(remaining)=>bail!("run_time_budget"), _=tokio::time::sleep(Duration::from_millis(50).min(end.saturating_duration_since(Instant::now())))=>{}}
+    tokio::select! {biased; _=cancel.wait_for(|v|*v)=>bail!("cancelled"), _=tokio::time::sleep(remaining.min(Duration::from_millis(50)).min(end.saturating_duration_since(Instant::now())))=>{}}
     check(context)
+}
+
+#[cfg(test)]
+mod toolset_tests {
+    use super::*;
+    fn info(phase: &str, sequence: u64, command: &str, exit: Option<i32>) -> SessionInfo {
+        SessionInfo{epoch:1,manual_revision:2,shell_status:json!({"phase":phase,"sequence":sequence,"command":command,"exit_code":exit,"instance":"hook","cwd":"/changed"}).to_string(),..Default::default()}
+    }
+    fn submitted() -> Value {
+        json!({"command":"false","epoch":1,"manual_revision":2,"state":"submitted","final":false,"baseline":{"phase":"prompt","sequence":3,"instance":"hook","command_association":true},"application_task":{"state":"unknown"}})
+    }
+    #[test]
+    fn completion_requires_exact_sequence_command_and_prompt_exit() {
+        let mut value = submitted();
+        correlate(&mut value, &info("prompt", 3, "previous", Some(0)));
+        assert_eq!(value["state"], "submitted");
+        assert!(value["exit_code"].is_null());
+        correlate(&mut value, &info("running", 4, "false", None));
+        assert_eq!(value["state"], "running");
+        assert!(value["exit_code"].is_null());
+        correlate(&mut value, &info("prompt", 4, "false", Some(1)));
+        assert_eq!(value["state"], "completed");
+        assert_eq!(value["exit_code"], 1);
+        assert_eq!(value["cwd"], "/changed");
+        assert_eq!(value["application_task"]["state"], "unknown");
+    }
+    #[test]
+    fn conflicts_manual_input_and_missing_codes_stay_unknown() {
+        for evidence in [
+            info("prompt", 4, "other", Some(0)),
+            info("prompt", 5, "false", Some(0)),
+            info("prompt", 4, "false", None),
+            SessionInfo {
+                manual_revision: 3,
+                ..info("prompt", 4, "false", Some(0))
+            },
+        ] {
+            let mut value = submitted();
+            correlate(&mut value, &evidence);
+            assert_eq!(value["state"], "unknown");
+            assert!(value["exit_code"].is_null());
+        }
+        let mut value = submitted();
+        value["baseline"] = Value::Null;
+        correlate(&mut value, &info("prompt", 4, "false", Some(0)));
+        assert_eq!(value["state"], "unknown");
+    }
+    #[test]
+    fn delta_references_require_same_view_and_tui_changes_refetch() {
+        let view = ReadView {
+            epoch: 1,
+            revision: 5,
+            dimensions_epoch: 1,
+            alternate_screen: false,
+            screen_start: 0,
+            source_partial: false,
+            lines: vec![],
+        };
+        assert_eq!(delta_state(Some(&view), &view, 5).0, "unchanged");
+        assert_eq!(delta_state(None, &view, 5).0, "refetch_required");
+        assert_eq!(delta_state(Some(&view), &view, 4).0, "refetch_required");
+        let changed = ReadView {
+            revision: 6,
+            alternate_screen: true,
+            ..view.clone()
+        };
+        assert_eq!(
+            delta_state(Some(&view), &changed, 5),
+            ("refetch_required", "mutable_tui_screen")
+        );
+        let resized = ReadView {
+            revision: 6,
+            dimensions_epoch: 2,
+            ..view.clone()
+        };
+        assert_eq!(delta_state(Some(&view), &resized, 5).0, "refetch_required");
+    }
 }

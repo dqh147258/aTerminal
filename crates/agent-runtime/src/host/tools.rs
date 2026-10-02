@@ -178,6 +178,16 @@ impl AgentHost {
         output(context, json!({"tasks":tasks}))
     }
     pub async fn wait_agent_tasks(&self, context: &ToolContext, args: Value) -> Result<ToolOutput> {
+        context
+            .budget
+            .waiting_for_tasks(&context.run_id, self.wait_agent_tasks_inner(context, args))
+            .await
+    }
+    async fn wait_agent_tasks_inner(
+        &self,
+        context: &ToolContext,
+        args: Value,
+    ) -> Result<ToolOutput> {
         let args: WaitBatch = serde_json::from_value(args)?;
         validate_ids(&args.task_ids)?;
         ensure!(
@@ -189,7 +199,8 @@ impl AgentHost {
             "invalid_task_wait_timeout"
         );
         let started = Instant::now();
-        let end = started + Duration::from_millis(args.timeout_ms);
+        let timeout = Duration::from_millis(args.timeout_ms);
+        let initial_remaining = context.budget.remaining()?;
         let mut updates = self.task_updates.subscribe();
         let mut cancel = context.cancel.clone();
         let mut bounded = context.clone();
@@ -206,14 +217,15 @@ impl AgentHost {
             } else {
                 tasks.iter().any(|v| v["done"] == true)
             };
-            if done || Instant::now() >= end {
+            let remaining = context.budget.remaining()?;
+            let active_elapsed = initial_remaining.saturating_sub(remaining);
+            if done || active_elapsed >= timeout {
                 return output(
                     context,
-                    json!({"tasks":tasks,"mode":args.mode,"timed_out":!done,"elapsed_ms":started.elapsed().as_millis() as u64}),
+                    json!({"tasks":tasks,"mode":args.mode,"timed_out":!done,"elapsed_ms":started.elapsed().as_millis() as u64,"active_elapsed_ms":active_elapsed.as_millis() as u64}),
                 );
             }
-            let remaining = context.budget.remaining()?;
-            tokio::select! {biased; _=cancel.wait_for(|v|*v)=>bail!("cancelled"), _=tokio::time::sleep(remaining)=>bail!("run_time_budget"), _=tokio::time::sleep_until(tokio::time::Instant::from_std(end))=>{}, changed=updates.changed()=>{changed.context("agent_task_notifications_closed")?;}}
+            tokio::select! {biased; _=cancel.wait_for(|v|*v)=>bail!("cancelled"), _=tokio::time::sleep(remaining.min(Duration::from_millis(100)).min(timeout.saturating_sub(active_elapsed)))=>{}, changed=updates.changed()=>{changed.context("agent_task_notifications_closed")?;}}
         }
     }
     pub fn cancel_agent_task(&self, context: &ToolContext, args: Value) -> Result<ToolOutput> {
@@ -227,15 +239,19 @@ impl AgentHost {
         let (target, _) =
             self.store
                 .agent_task_for_run(&context.scope, &context.run_id, &args.task_id, 4)?;
+        context.check_authorization()?;
         let jobs = self.jobs.lock().unwrap();
         let mut cancelled = false;
         if let Some(job) = jobs.get(&target.agent)
             && job.run == args.task_id
         {
             ensure!(job.scope == target, "agent_scope_mismatch");
+            let mut gate = job.execution_gate.lock().unwrap();
             let mut state = job.state.lock().unwrap();
             if running(&state.state) {
-                *job.execution_gate.lock().unwrap() = false;
+                context.check_authorization()?;
+                context.commit_authorization(None)?;
+                *gate = false;
                 let _ = job.cancel.send(true);
                 state.state = "stopping".into();
                 cancelled = true;
@@ -248,5 +264,309 @@ impl AgentHost {
             context,
             json!({"task_id":args.task_id,"cancel_requested":cancelled,"terminal_interrupt_sent":false}),
         )
+    }
+}
+
+#[cfg(test)]
+mod toolset_tests {
+    use super::*;
+    struct Fixture {
+        host: Arc<AgentHost>,
+        context: ToolContext,
+        cancel: watch::Sender<bool>,
+        child: Scope,
+        _temp: tempfile::TempDir,
+    }
+    impl Fixture {
+        fn new() -> Self {
+            let temp = tempfile::tempdir().unwrap();
+            let store = Arc::new(Store::open(&temp.path().join("data/db")).unwrap());
+            let scope = store.agent("o", "d", None).unwrap();
+            let child = store.agent("o", "d", Some("s")).unwrap();
+            let root = store
+                .accept_user(&scope, "r", "coordinate", json!({}))
+                .unwrap();
+            let (cancel, receiver) = watch::channel(false);
+            let context = ToolContext {
+                history_unit_id: root.user_message_id.clone(),
+                vision: false,
+                scope: scope.clone(),
+                run_id: root.run_id,
+                root_user_message_id: root.root_user_message_id,
+                action_id: "a".into(),
+                max_read_bytes: 4096,
+                budget: Arc::new(Budget::new(30, 20, 20000, scope)),
+                cancel: receiver,
+                execution_gate: Arc::new(Mutex::new(true)),
+                authorization_check: None,
+            };
+            Self {
+                host: AgentHost::new(store, tokio::runtime::Handle::current()),
+                context,
+                cancel,
+                child,
+                _temp: temp,
+            }
+        }
+        fn task(&self, target: &Scope) -> String {
+            self.host
+                .store
+                .delegate(
+                    target,
+                    &self.context.root_user_message_id,
+                    &id(),
+                    "work",
+                    json!({}),
+                    None,
+                )
+                .unwrap()
+                .run_id
+        }
+    }
+    #[test]
+    fn schemas_enforce_role_targets_and_bounded_batch_parameters() {
+        let session = definitions(false);
+        let global = definitions(true);
+        for name in [
+            "list_agent_tasks",
+            "get_agent_tasks",
+            "wait_agent_tasks",
+            "cancel_agent_task",
+        ] {
+            assert!(!session.iter().any(|t| t.name == name));
+            assert!(global.iter().any(|t| t.name == name));
+        }
+        for name in ["run_command", "wait_terminal"] {
+            let global = global.iter().find(|t| t.name == name).unwrap();
+            assert!(
+                global.parameters["required"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!("session_id"))
+            );
+            assert!(
+                session.iter().find(|t| t.name == name).unwrap().parameters["properties"]
+                    .get("session_id")
+                    .is_none()
+            );
+        }
+        let tool = global
+            .iter()
+            .find(|t| t.name == "wait_agent_tasks")
+            .unwrap();
+        let schema = jsonschema::validator_for(&tool.parameters).unwrap();
+        assert!(schema.is_valid(&json!({"task_ids":[id()],"mode":"any","timeout_ms":1})));
+        for value in [
+            json!({"task_ids":[],"mode":"all","timeout_ms":1}),
+            json!({"task_ids":[id()],"mode":"any","timeout_ms":30001}),
+            json!({"task_ids":[id()],"mode":"other","timeout_ms":1}),
+        ] {
+            assert!(!schema.is_valid(&value));
+        }
+    }
+    #[tokio::test]
+    async fn batch_any_all_preserve_fixed_ids_timeout_cancel_and_notification() {
+        let fixture = Fixture::new();
+        let one = fixture.task(&fixture.child);
+        let other = fixture.host.store.agent("o", "d", Some("other")).unwrap();
+        let two = fixture.task(&other);
+        fixture
+            .host
+            .store
+            .finish_run(&fixture.child, &one, "completed")
+            .unwrap();
+        let any = fixture
+            .host
+            .wait_agent_tasks(
+                &fixture.context,
+                json!({"task_ids":[one,two],"mode":"any","timeout_ms":30000}),
+            )
+            .await
+            .unwrap()
+            .value;
+        assert_eq!(any["timed_out"], false);
+        assert_eq!(any["tasks"][0]["task_id"], one);
+        assert_eq!(any["tasks"][1]["task_id"], two);
+        let all = fixture
+            .host
+            .wait_agent_tasks(
+                &fixture.context,
+                json!({"task_ids":[one,two],"mode":"all","timeout_ms":10}),
+            )
+            .await
+            .unwrap()
+            .value;
+        assert_eq!(all["timed_out"], true);
+        assert_eq!(all["tasks"][1]["state"], "running");
+        let host = fixture.host.clone();
+        let completed = two.clone();
+        let target = other.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            host.store
+                .finish_run(&target, &completed, "cancelled")
+                .unwrap();
+            host.task_updates.send_replace(());
+        });
+        let all = fixture
+            .host
+            .wait_agent_tasks(
+                &fixture.context,
+                json!({"task_ids":[one,two],"mode":"all","timeout_ms":30000}),
+            )
+            .await
+            .unwrap()
+            .value;
+        assert_eq!(all["timed_out"], false);
+        assert_eq!(all["tasks"][1]["state"], "cancelled");
+        let pending = fixture.task(&other);
+        let cancel = fixture.cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            cancel.send(true).unwrap();
+        });
+        assert_eq!(
+            fixture
+                .host
+                .wait_agent_tasks(
+                    &fixture.context,
+                    json!({"task_ids":[pending],"mode":"all","timeout_ms":30000})
+                )
+                .await
+                .err()
+                .unwrap()
+                .to_string(),
+            "cancelled"
+        );
+    }
+    #[tokio::test]
+    async fn batch_invalid_or_foreign_ids_fail_as_a_set() {
+        let fixture = Fixture::new();
+        let task = fixture.task(&fixture.child);
+        let foreign = fixture.host.store.agent("foreign", "d", Some("s")).unwrap();
+        let bad = fixture.task(&foreign);
+        for ids in [
+            vec![task.clone(), task.clone()],
+            vec![task.clone(), bad],
+            vec![task.clone(), id()],
+        ] {
+            assert!(
+                fixture
+                    .host
+                    .get_agent_tasks(&fixture.context, json!({"task_ids":ids}))
+                    .is_err()
+            );
+        }
+        assert!(
+            fixture
+                .host
+                .list_agent_tasks(&fixture.context, json!({"limit":51}))
+                .is_err()
+        );
+        let listed = fixture
+            .host
+            .list_agent_tasks(&fixture.context, json!({}))
+            .unwrap()
+            .value;
+        assert_eq!(listed["tasks"].as_array().unwrap().len(), 1);
+        assert_eq!(listed["tasks"][0]["task_id"], task);
+    }
+    struct UnusedModel;
+    impl Model for UnusedModel {
+        fn stream(
+            &self,
+            _: rig_core::completion::CompletionRequest,
+        ) -> BackendFuture<'_, rig_core::streaming::StreamingCompletionResponse> {
+            Box::pin(async { bail!("unused_fixture_model") })
+        }
+    }
+    struct UnusedBackend;
+    impl TerminalBackend for UnusedBackend {
+        fn authorize(&self, _: bool) -> BackendFuture<'_, ()> {
+            Box::pin(async { Ok(()) })
+        }
+        fn invoke<'a>(
+            &'a self,
+            _: ToolContext,
+            _: &'a str,
+            _: Value,
+        ) -> BackendFuture<'a, ToolOutput> {
+            Box::pin(async { bail!("unused_fixture_backend") })
+        }
+    }
+    #[tokio::test]
+    async fn cancelling_old_task_does_not_touch_newer_session_run() {
+        let fixture = Fixture::new();
+        let old = fixture.task(&fixture.child);
+        fixture
+            .host
+            .store
+            .finish_run(&fixture.child, &old, "completed")
+            .unwrap();
+        let new = fixture.task(&fixture.child);
+        let (cancel, _receiver) = watch::channel(false);
+        let snapshot = RunSnapshot {
+            revision: 1,
+            provider: Protocol::OpenaiChat,
+            builder: RequestBuilder {
+                settings: crate::model::RequestSettings {
+                    model: "unused".into(),
+                    temperature: None,
+                    max_tokens: 100,
+                    additional_params: None,
+                },
+                system: "fixture".into(),
+                tools: vec![],
+            },
+            model: Arc::new(UnusedModel),
+            backend: Arc::new(UnusedBackend),
+            context_window: 10000,
+            max_rounds: 1,
+            max_seconds: 30,
+            allow_write: true,
+            vision: false,
+        };
+        let job = Arc::new(Job {
+            scope: fixture.child.clone(),
+            run: new.clone(),
+            root: fixture.context.root_user_message_id.clone(),
+            snapshot: Arc::new(snapshot),
+            budget: fixture.context.budget.clone(),
+            cancel: cancel.clone(),
+            state: Mutex::new(JobState {
+                state: "running".into(),
+                queue: VecDeque::new(),
+                live: String::new(),
+                error: None,
+            }),
+            execution_gate: Arc::new(Mutex::new(true)),
+        });
+        fixture
+            .host
+            .jobs
+            .lock()
+            .unwrap()
+            .insert(fixture.child.agent.clone(), job.clone());
+        assert_eq!(
+            fixture
+                .host
+                .cancel_agent_task(&fixture.context, json!({"task_id":old}))
+                .unwrap()
+                .value["cancel_requested"],
+            false
+        );
+        assert!(!*cancel.borrow());
+        assert!(*job.execution_gate.lock().unwrap());
+        assert_eq!(
+            fixture
+                .host
+                .cancel_agent_task(&fixture.context, json!({"task_id":new}))
+                .unwrap()
+                .value["cancel_requested"],
+            true
+        );
+        assert!(*cancel.borrow());
+        assert!(!*job.execution_gate.lock().unwrap());
+        assert!(!fixture.context.budget.cancelled.load(Ordering::Acquire));
     }
 }
