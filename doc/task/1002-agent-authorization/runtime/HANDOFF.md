@@ -14,3 +14,6 @@ Native local未登录账户内部身份=local/installation，Store/RPC owner隔�
 
 
 最新native来源分流followup（在fa29899后）：PTY invalidate只影响PTY行；native get/wait直接读管理过程Store state，不经Shell correlate。begin_command持久run_id，update保留旧run关联，Store.open已有native非final=>unknown/final/exitnull/reason=desktop_restart；不重放。get_result有界回读command指定result_record_id的immutable stdout/stderr/exit；大档案带cursor，可read_record继续，不取Session最新Run。Store工具6/6与真实独立Global observer读运行native、另一Agent写PTY、wait完成/exit0/marker/档案1/1以及相关strictclippy过。
+
+
+最新R2 Skill包完整性后续（在ad5bd37后）：manifest的declared hashMap版本先验、所有声明文件实际bytes逐hash验证，限制256文件/8MiB；descriptor与gate内commit后的实际spawn前复验。entry/manifest不变只改helper也拒绝旧snapshot。泛用解释器脚本外部imports不可固定，因此execution_identity=None、always=false，只提供一次/full，UI说明“脚本有效依赖版本无法完全固定，仅可一次/完全授权”；可靠native叶子永久仍保留。helper-only变更descriptor+actualscript启动拒绝1case、动态Skill当前cwd related case及strict两lib/testsclippy通过。

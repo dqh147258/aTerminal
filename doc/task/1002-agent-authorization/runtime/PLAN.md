@@ -16,3 +16,5 @@ Root已批准独立run_program原生入口和v3规则：PTY永不永久，可靠
 后续Review发现native运行记录误用PTY失效/关联：修复source分流、get/wait读取管理过程状态与重启未知，新增并发回归。
 
 来源分流后续已完成：Store工具6/6、实际独立Global observer并发native/PT​​Y/get/wait/档案1/1及strictclippy过；无需重复不相关验收。
+
+R2完整注册Skill包actualhash验证及泛用脚本once/full边界已实现并通过针对回归；无需OS依赖沙箱。

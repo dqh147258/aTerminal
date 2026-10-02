@@ -1,11 +1,12 @@
 {
-  "state": "Completed native result isolation follow-up",
+  "state": "Completed reviewed native result and whole Skill package followups",
   "run": "d51ef561-a773-416c-b35c-eb5e1cd13301",
   "source_commits": [
     "8eaf8bb",
     "39fcb54",
     "06b4c9d",
-    "fa29899"
+    "fa29899",
+    "ad5bd37"
   ],
   "implemented": [
     "Store/Host/RPC/CLI permissions, persistent approval/question, exact once/always/deny, TTL and no replay",
@@ -15,7 +16,8 @@
     "Only native leaf executable hash/args/stdin/cwd has v3 permanent rule; PTY never permanent, v2 rules ineffective",
     "Readonly transport users cannot approve/mutate/revoke; known closed Session capabilities remain readable",
     "Dynamic Skill current cwd, HTTP MCP remote cwd unknown, extension disable/version/credentials revoke and final commit gate",
-    "Native live command rows are independent from PTY invalidation/correlation; immutable output dereferenced, run_id retained, restart nonfinal native=>unknown desktop_restart"
+    "Native live command rows are independent from PTY invalidation/correlation; immutable output dereferenced, run_id retained, restart nonfinal native=>unknown desktop_restart",
+    "Entire declared Skill package actual hashes checked at descriptor and last spawn; external dependencies cannot be pinned, all generic Skill scripts once/full only with exact UI explanation"
   ],
   "verification": [
     "Runtime99/99 lib passed; final human wait cancel recheck Host11/11 focus passed",
@@ -23,7 +25,8 @@
     "CLI2 parse tests and CLI3 actual daemon/local HTTP/PTY/native tests passed; native tee always->auto->revoke->deny->regrant->revoke marker exact and same rule ID",
     "Two lib strict clippy --tests and CLI bin/test strict clippy passed on final owned source",
     "cargo fmt all check and git diff check passed; jobs2/testthreads2",
-    "Followup Store tools6/6 + actual independent Global observer/native-running/PTY-write/get-wait/immutable output1/1 passed; relevant strict two-crate clippy/tests and fmt/diff passed"
+    "Followup Store tools6/6 + actual independent Global observer/native-running/PTY-write/get-wait/immutable output1/1 passed; relevant strict two-crate clippy/tests and fmt/diff passed",
+    "R2 helper-only mutation while entry/manifest unchanged rejected descriptor and actual script spawn (1 test); dynamic Skill OS cwd regression still passes; final relevant strict two-crate clippy/tests passed"
   ],
   "remaining_coordinator_scope": [
     "Independent encrypted Review/actual Bash/Zsh override marker followup",
