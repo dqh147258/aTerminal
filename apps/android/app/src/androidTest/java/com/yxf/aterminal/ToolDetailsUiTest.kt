@@ -53,6 +53,8 @@ class ToolDetailsUiTest {
                 assertEquals("session", session)
                 val command = JSONObject(raw)
                 when (command.getString("action")) {
+                    "permissions" -> """{"permission_mode":"ask","full_authorization":false,"revision":0,"can_mutate":true}"""
+                    "pending" -> """{"items":[],"cursor":null,"has_more":false}"""
                     "state" -> JSONObject().put("state", "completed").put("history_generation", 0).toString()
                     "history" -> JSONObject().put("generation", 0).put("has_more", false).put("items", JSONArray().put(item)).toString()
                     "record" -> record(command).toString()

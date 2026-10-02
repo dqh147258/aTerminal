@@ -45,11 +45,15 @@ class WorkspaceReviewRegressionTest {
         val empty=JSONObject().put("generation",0).put("has_more",false).put("items",JSONArray()).toString()
         try {
             main { old=AgentPanel(activity,body(),identity,"s",{true},{_,raw -> when(JSONObject(raw).getString("action")) {
+                "permissions" -> """{"permission_mode":"ask","full_authorization":false,"revision":0,"can_mutate":true}"""
+                "pending" -> """{"items":[],"cursor":null,"has_more":false}"""
                 "state" -> "{\"state\":\"idle\",\"history_generation\":0}"
                 "history" -> empty
                 "send" -> { sent.countDown();check(ack.await(8,TimeUnit.SECONDS));"{\"state\":\"running\"}" }
                 else -> error("Unexpected")
-            }},{});input().setText("任务已被服务端接受");views().first{it.contentDescription=="发送"}.performClick() }
+            }},{});input().setText("任务已被服务端接受") }
+            waitFor("Desktop permissions") { main { views().first{it.contentDescription=="发送"}.isEnabled } }
+            main { views().first{it.contentDescription=="发送"}.performClick() }
             assertTrue(sent.await(5,TimeUnit.SECONDS))
             main { old?.close();current=AgentPanel(activity,body(),identity,"s",{false},{_,_ -> check(newHistory.await(8,TimeUnit.SECONDS));empty},{}) }
             ack.countDown();waitFor("ack clears origin draft") { store.read("s").optString("text")=="" }
@@ -68,6 +72,8 @@ class WorkspaceReviewRegressionTest {
         fun item():JSONObject { @Suppress("UNCHECKED_CAST") val rows=AgentPanel::class.java.getDeclaredField("items").apply{isAccessible=true}.get(chat) as Map<String,JSONObject>;return rows["unit"] ?: JSONObject() }
         try {
             main {chat=AgentPanel(activity,body(),listOf("review",UUID.randomUUID().toString(),"desktop"),"s",{true},{_,raw -> when(JSONObject(raw).getString("action")) {
+                "permissions" -> """{"permission_mode":"ask","full_authorization":false,"revision":0,"can_mutate":true}"""
+                "pending" -> """{"items":[],"cursor":null,"has_more":false}"""
                 "state" -> "{\"state\":\"running\",\"history_generation\":0}"
                 "history" -> JSONObject().put("generation",0).put("has_more",false).put("items",JSONArray().put(JSONObject().put("id","unit").put("sequence",1).put("created_at",phase.get()+1).put("kind","interaction").put("value",JSONObject().put("partial",true).put("record_id","unit-${phase.get()}").put("text","说明")))).toString()
                 "record" -> {records.incrementAndGet();JSONObject().put("kind","history_event").put("body",original().toString()).put("cursor",JSONObject.NULL).toString()}
