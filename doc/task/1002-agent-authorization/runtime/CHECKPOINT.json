@@ -1,10 +1,11 @@
 {
-  "state": "Completed owned implementation and local verification",
+  "state": "Completed native result isolation follow-up",
   "run": "d51ef561-a773-416c-b35c-eb5e1cd13301",
   "source_commits": [
     "8eaf8bb",
     "39fcb54",
-    "06b4c9d"
+    "06b4c9d",
+    "fa29899"
   ],
   "implemented": [
     "Store/Host/RPC/CLI permissions, persistent approval/question, exact once/always/deny, TTL and no replay",
@@ -13,14 +14,16 @@
     "Managed run_program directexec/envclear/bounded stdin+literalargs/current OS cwd/real output+exit+durable command/result_record_id",
     "Only native leaf executable hash/args/stdin/cwd has v3 permanent rule; PTY never permanent, v2 rules ineffective",
     "Readonly transport users cannot approve/mutate/revoke; known closed Session capabilities remain readable",
-    "Dynamic Skill current cwd, HTTP MCP remote cwd unknown, extension disable/version/credentials revoke and final commit gate"
+    "Dynamic Skill current cwd, HTTP MCP remote cwd unknown, extension disable/version/credentials revoke and final commit gate",
+    "Native live command rows are independent from PTY invalidation/correlation; immutable output dereferenced, run_id retained, restart nonfinal native=>unknown desktop_restart"
   ],
   "verification": [
     "Runtime99/99 lib passed; final human wait cancel recheck Host11/11 focus passed",
     "Desktop57/57 lib passed including actual Broker/Actor race and native group cancellation, scope/CAS/legacy/remote readonly",
     "CLI2 parse tests and CLI3 actual daemon/local HTTP/PTY/native tests passed; native tee always->auto->revoke->deny->regrant->revoke marker exact and same rule ID",
     "Two lib strict clippy --tests and CLI bin/test strict clippy passed on final owned source",
-    "cargo fmt all check and git diff check passed; jobs2/testthreads2"
+    "cargo fmt all check and git diff check passed; jobs2/testthreads2",
+    "Followup Store tools6/6 + actual independent Global observer/native-running/PTY-write/get-wait/immutable output1/1 passed; relevant strict two-crate clippy/tests and fmt/diff passed"
   ],
   "remaining_coordinator_scope": [
     "Independent encrypted Review/actual Bash/Zsh override marker followup",

@@ -225,6 +225,7 @@ impl Store {
           UPDATE runs SET state='orphaned' WHERE state IN ('running','paused');
           DELETE FROM pins; PRAGMA user_version=2; COMMIT;")?;
         authorization::initialize(&db)?;
+        tools::interrupt_native_commands(&db)?;
         let key: Option<Vec<u8>> = db
             .query_row("SELECT value FROM meta WHERE key='cursor_key'", [], |r| {
                 r.get(0)

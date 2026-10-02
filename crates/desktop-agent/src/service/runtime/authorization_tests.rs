@@ -926,3 +926,141 @@ async fn native_cancellation_kills_own_process_group_and_retains_unknown_without
     )
     .unwrap();
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn independent_agent_reads_and_waits_running_native_while_pty_input_cannot_invalidate_it() {
+    use ai_terminal_agent_runtime::host::Budget;
+    let (f, backend, scope, context, _cancel, terminal) = native_fixture();
+    let marker = f._dir.path().join("native-completed");
+    let script = format!(
+        "sleep 0.6; /usr/bin/printf NATIVE > '{}'",
+        marker.to_string_lossy()
+    );
+    let runner = backend.clone();
+    let run = tokio::spawn(async move {
+        runner
+            .invoke(
+                context,
+                "run_program",
+                json!({"program":"/bin/sh","args":["-c",script]}),
+            )
+            .await
+    });
+    let mut id = None;
+    for _ in 0..100 {
+        id = f
+            .host
+            .agents
+            .store
+            .history(&scope, None)
+            .unwrap()
+            .items
+            .iter()
+            .find(|row| row.kind == "command_submission")
+            .and_then(|row| row.value["command_id"].as_str())
+            .map(str::to_owned);
+        if let Some(id) = &id
+            && f.host.agents.store.command(&scope, id).unwrap()["accepted"] == true
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let id = id.expect("native started");
+    let observer = f
+        .host
+        .agents
+        .store
+        .create_global(&scope.owner, &scope.desktop, "observer")
+        .unwrap();
+    let root = f
+        .host
+        .agents
+        .store
+        .accept_user(
+            &observer,
+            "observe",
+            "read and write isolated terminal",
+            json!({}),
+        )
+        .unwrap();
+    let view = f.host.config.snapshot(&scope.owner);
+    let provider = view.config.providers["native"].clone();
+    let observer_backend = Backend::new(
+        &f.host,
+        observer.clone(),
+        String::new(),
+        Arc::new(view.config),
+        view.revision,
+        provider,
+        None,
+        None,
+    )
+    .unwrap();
+    let (_cancel, receiver) = tokio::sync::watch::channel(false);
+    let mut ctx = ToolContext {
+        history_unit_id: root.user_message_id,
+        vision: false,
+        scope: observer.clone(),
+        run_id: root.run_id,
+        root_user_message_id: root.root_user_message_id,
+        action_id: "observe-native".into(),
+        max_read_bytes: 4096,
+        budget: Arc::new(Budget::new(30, 10, 10000, observer)),
+        cancel: receiver,
+        execution_gate: Arc::new(Mutex::new(true)),
+        authorization_check: None,
+    };
+    let running = observer_backend
+        .invoke(ctx.clone(), "get_command_result", json!({"command_id":id}))
+        .await
+        .unwrap();
+    assert_eq!(running.value["state"], "running");
+    assert_eq!(running.value["final"], false);
+    ctx.action_id = "other-agent-pty".into();
+    let written = observer_backend
+        .invoke(
+            ctx.clone(),
+            "input_text",
+            json!({"session_id":terminal,"text":"independent draft","submit":false}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(written.value["accepted"], true);
+    assert_eq!(
+        f.host.agents.store.command(&scope, &id).unwrap()["state"],
+        "running"
+    );
+    let waited = observer_backend
+        .invoke(
+            ctx,
+            "wait_command",
+            json!({"command_id":id,"timeout_ms":2000}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(waited.value["state"], "completed");
+    assert_eq!(waited.value["exit_code"], 0);
+    assert_eq!(waited.value["timed_out"], false);
+    assert!(waited.value["result_record_id"].is_string());
+    assert_eq!(waited.value["stdout"]["text"], "");
+    assert_eq!(
+        waited.value["output_record"]["record_id"],
+        waited.value["result_record_id"]
+    );
+    assert_eq!(std::fs::read_to_string(marker).unwrap(), "NATIVE");
+    run.await.unwrap().unwrap();
+    observer_backend.finished();
+    backend.finished();
+    super::super::dispatch(
+        &f.host,
+        Request {
+            operation: Operation::Close as i32,
+            client: 1,
+            session: terminal,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+}
