@@ -193,3 +193,164 @@ impl Drop for Integration {
         let _ = std::fs::remove_dir_all(&self.directory);
     }
 }
+
+#[cfg(all(test, unix))]
+mod toolset_tests {
+    use super::*;
+    use portable_pty::{Child, MasterPty, PtySize, native_pty_system};
+    use std::{
+        io::Write,
+        thread,
+        time::{Duration, Instant},
+    };
+    struct ShellFixture {
+        integration: Integration,
+        writer: Box<dyn Write + Send>,
+        child: Box<dyn Child + Send + Sync>,
+        _master: Box<dyn MasterPty + Send>,
+        _temp: tempfile::TempDir,
+    }
+    impl ShellFixture {
+        fn new(shell: &str, rc: &str) -> Self {
+            let temp = tempfile::tempdir().unwrap();
+            let original = temp.path().join("config");
+            std::fs::create_dir(&original).unwrap();
+            std::fs::write(
+                original.join(if shell.ends_with("zsh") {
+                    ".zshrc"
+                } else {
+                    ".bashrc"
+                }),
+                rc,
+            )
+            .unwrap();
+            let (integration, mut command) =
+                Integration::prepare(temp.path(), &[shell.into()]).unwrap();
+            command.env("HOME", &original);
+            command.env("ATERMINAL_ORIGINAL_ZDOTDIR", &original);
+            command.env("TERM", "xterm-256color");
+            command.cwd(temp.path());
+            let pair = native_pty_system()
+                .openpty(PtySize {
+                    rows: 24,
+                    cols: 80,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .unwrap();
+            let child = pair.slave.spawn_command(command).unwrap();
+            drop(pair.slave);
+            let mut reader = pair.master.try_clone_reader().unwrap();
+            thread::spawn(move || {
+                let _ = std::io::copy(&mut reader, &mut std::io::sink());
+            });
+            let writer = pair.master.take_writer().unwrap();
+            let fixture = Self {
+                integration,
+                writer,
+                child,
+                _master: pair.master,
+                _temp: temp,
+            };
+            fixture.wait(0);
+            fixture
+        }
+        fn wait(&self, sequence: u64) -> Value {
+            let end = Instant::now() + Duration::from_secs(5);
+            loop {
+                let observed = self.integration.observation();
+                if let Some(value) = &observed
+                    && value["phase"] == "prompt"
+                    && value["sequence"] == sequence
+                {
+                    return value.clone();
+                }
+                assert!(
+                    Instant::now() < end,
+                    "shell hook timed out at sequence {sequence}: {observed:?}"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+        fn run(&mut self, command: &str, sequence: u64) -> Value {
+            self.writer
+                .write_all(format!("{command}\r").as_bytes())
+                .unwrap();
+            self.writer.flush().unwrap();
+            self.wait(sequence)
+        }
+    }
+    impl Drop for ShellFixture {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
+    #[test]
+    fn bash_hooks_correlate_compound_exit_and_preserve_prompt_commands() {
+        let mut fixture = ShellFixture::new(
+            "/bin/bash",
+            "PS1='fixture> '; HISTCONTROL=; HISTIGNORE=; PROMPT_COMMAND='true'\n",
+        );
+        let first = fixture.run("false", 1);
+        assert_eq!(first["command"], "false");
+        assert_eq!(first["exit_code"], 1);
+        assert_eq!(first["command_association"], true);
+        let second = fixture.run("true; false", 2);
+        assert_eq!(second["command"], "true; false");
+        assert_eq!(second["exit_code"], 1);
+        let third = fixture.run("cd /", 3);
+        assert_eq!(third["cwd"], "/");
+        assert_eq!(third["exit_code"], 0);
+        assert_eq!(third["trusted_for_authorization"], false);
+        assert!(third["reported_at_ns"].as_u64().is_some());
+    }
+    #[test]
+    fn zsh_hooks_preserve_existing_precmd_and_exact_exit() {
+        let mut fixture = ShellFixture::new(
+            "/bin/zsh",
+            "PS1='fixture> '; precmd() { true; }; existing_hook() { true; }; precmd_functions=(existing_hook)\n",
+        );
+        let first = fixture.run("false", 1);
+        assert_eq!(first["command"], "false");
+        assert_eq!(first["exit_code"], 1);
+        assert_eq!(first["command_association"], true);
+        let second = fixture.run("true; false", 2);
+        assert_eq!(second["command"], "true; false");
+        assert_eq!(second["exit_code"], 1);
+        let third = fixture.run("cd /", 3);
+        assert_eq!(third["cwd"], "/");
+        assert_eq!(third["exit_code"], 0);
+    }
+    #[test]
+    fn bash_existing_debug_trap_is_preserved_and_association_is_unavailable() {
+        let mut fixture = ShellFixture::new(
+            "/bin/bash",
+            "PS1='fixture> '; trap 'printf x >> \"$HOME/debug_marker\"' DEBUG\n",
+        );
+        assert_eq!(fixture.wait(0)["command_association"], false);
+        fixture.writer.write_all(b"false\r").unwrap();
+        fixture.writer.flush().unwrap();
+        thread::sleep(Duration::from_millis(100));
+        assert!(fixture._temp.path().join("config/debug_marker").exists());
+        assert_eq!(fixture.wait(0)["command_association"], false);
+    }
+    #[test]
+    fn malformed_or_truncated_hook_files_are_unknown() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("hook");
+        std::fs::create_dir(&directory).unwrap();
+        let integration = Integration {
+            directory: directory.clone(),
+        };
+        for invalid in [
+            b"prompt\0zero\0/\0".as_slice(),
+            b"prompt\00\0/\00\0false\0bash:1".as_slice(),
+        ] {
+            std::fs::write(directory.join("state"), invalid).unwrap();
+            assert!(integration.observation().is_none());
+        }
+        std::fs::write(directory.join("state"), b"prompt\01\0/\04\0false\0bash:1\0").unwrap();
+        assert_eq!(integration.observation().unwrap()["exit_code"], 1);
+    }
+}

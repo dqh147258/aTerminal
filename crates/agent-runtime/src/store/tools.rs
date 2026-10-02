@@ -192,7 +192,7 @@ impl Store {
                     caller.desktop,
                     args.root_user_message_id,
                     args.state,
-                    limit + 1
+                    (limit + 1) as i64
                 ],
                 |r| {
                     Ok((
@@ -313,6 +313,18 @@ impl Store {
         let value:String=db.query_row("SELECT value FROM tool_commands WHERE id=?1 AND json_extract(scope,'$.owner')=?2 AND json_extract(scope,'$.desktop')=?3 AND (?4 IS NULL OR session=?4)",params![command,caller.owner,caller.desktop,caller.session],|r|r.get(0)).optional()?.context("command_not_found_or_expired")?;
         Ok(serde_json::from_str(&value)?)
     }
+    /// Submission acceptance is independent from (possibly already invalidated) completion.
+    pub fn set_command_acceptance(
+        &self,
+        caller: &Scope,
+        command: &str,
+        accepted: bool,
+    ) -> Result<()> {
+        let db = self.db.lock().unwrap();
+        command_schema(&db)?;
+        db.execute("UPDATE tool_commands SET value=json_set(value,'$.accepted',json(?5)) WHERE id=?1 AND json_extract(scope,'$.owner')=?2 AND json_extract(scope,'$.desktop')=?3 AND (?4 IS NULL OR session=?4)",params![command,caller.owner,caller.desktop,caller.session,if accepted{"true"}else{"false"}])?;
+        Ok(())
+    }
     /// A final result is immutable. Concurrent observers cannot overwrite completed/unknown evidence.
     pub fn update_command(&self, caller: &Scope, command: &str, value: &Value) -> Result<()> {
         let db = self.db.lock().unwrap();
@@ -331,5 +343,195 @@ impl Store {
         command_schema(&db)?;
         db.execute("UPDATE tool_commands SET value=json_set(value,'$.state','unknown','$.reason','intervening_agent_input','$.final',json('true'),'$.exit_code',NULL) WHERE session=?1 AND json_extract(scope,'$.owner')=?2 AND json_extract(scope,'$.desktop')=?3 AND NOT(scope=?4 AND action=?5) AND COALESCE(json_extract(value,'$.final'),0)=0",params![session,caller.owner,caller.desktop,caller.key()?,action])?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod toolset_tests {
+    use super::*;
+    #[test]
+    fn search_cursors_bind_filters_scope_watermark_and_retention() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&temp.path().join("data/db")).unwrap();
+        let global = store.agent("owner", "desktop", None).unwrap();
+        let child = store.agent("owner", "desktop", Some("one")).unwrap();
+        let foreign = store.agent("foreign", "desktop", Some("one")).unwrap();
+        for index in 0..3 {
+            store
+                .append(
+                    &child,
+                    "assistant",
+                    None,
+                    json!({"text":format!("needle {index}")}),
+                )
+                .unwrap();
+        }
+        store
+            .append(
+                &foreign,
+                "assistant",
+                None,
+                json!({"text":"needle foreign"}),
+            )
+            .unwrap();
+        let query = json!({"query":"needle","kind":"assistant","limit":1,"session_id":"one"});
+        let first = store.search_history(&global, query.clone()).unwrap();
+        assert_eq!(first["items"].as_array().unwrap().len(), 1);
+        assert!(!first.to_string().contains("foreign"));
+        let cursor = first["cursor"].as_str().unwrap();
+        store
+            .append(&child, "assistant", None, json!({"text":"needle new"}))
+            .unwrap();
+        let mut next = query.clone();
+        next["cursor"] = json!(cursor);
+        let second = store.search_history(&global, next.clone()).unwrap();
+        assert_ne!(
+            first["items"][0]["event_id"],
+            second["items"][0]["event_id"]
+        );
+        assert!(!second.to_string().contains("needle new"));
+        let mut changed = next.clone();
+        changed["query"] = json!("different");
+        assert!(store.search_history(&global, changed).is_err());
+        assert!(store.search_history(&child, next).is_err());
+        assert!(
+            store
+                .search_history(&child, json!({"query":"needle","session_id":"two"}))
+                .is_err()
+        );
+        store
+            .clean(&child, &Retention::KeepLast { count: 1 }, false)
+            .unwrap();
+        let mut expired = query;
+        expired["cursor"] = json!(cursor);
+        assert_eq!(
+            store
+                .search_history(&global, expired)
+                .unwrap_err()
+                .to_string(),
+            "cursor_expired"
+        );
+    }
+    #[test]
+    fn search_reports_exact_record_and_unicode_snippet() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&temp.path().join("data/db")).unwrap();
+        let scope = store.agent("o", "d", Some("s")).unwrap();
+        let run = store
+            .accept_user(&scope, "run", "inspect", json!({}))
+            .unwrap();
+        let record = store
+            .archive(
+                &scope,
+                &run.run_id,
+                "evidence",
+                "text",
+                json!({}),
+                "İİİ 结果 needle end".as_bytes(),
+            )
+            .unwrap();
+        let result = store
+            .search_history(&scope, json!({"query":"结果","kind":"text"}))
+            .unwrap();
+        assert_eq!(result["items"][0]["record_id"], record.id);
+        assert!(
+            result["items"][0]["snippet"]
+                .as_str()
+                .unwrap()
+                .contains("结果")
+        );
+        assert!(snippet("İİİ marker", "marker").unwrap().contains("marker"));
+    }
+    #[test]
+    fn command_results_survive_restart_and_new_runs_with_scope_and_retention() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("data/db");
+        let store = Store::open(&path).unwrap();
+        let global = store.agent("o", "d", None).unwrap();
+        let session = store.agent("o", "d", Some("s")).unwrap();
+        let other = store.agent("o", "d", Some("other")).unwrap();
+        let foreign = store.agent("x", "d", None).unwrap();
+        let run = store
+            .accept_user(&global, "run", "command", json!({}))
+            .unwrap();
+        let command = store
+            .begin_command(
+                &global,
+                &run.run_id,
+                "action",
+                "s",
+                json!({"command":"false","state":"submitted","final":false}),
+            )
+            .unwrap();
+        assert!(
+            store
+                .begin_command(&global, &run.run_id, "action", "s", json!({}))
+                .is_err()
+        );
+        let mut value = store.command(&session, &command).unwrap();
+        value["state"] = json!("completed");
+        value["exit_code"] = json!(1);
+        value["final"] = json!(true);
+        store.update_command(&global, &command, &value).unwrap();
+        store
+            .set_command_acceptance(&global, &command, true)
+            .unwrap();
+        assert!(store.command(&other, &command).is_err());
+        assert!(store.command(&foreign, &command).is_err());
+        store.finish_run(&global, &run.run_id, "completed").unwrap();
+        store.accept_user(&global, "new", "new", json!({})).unwrap();
+        drop(store);
+        let store = Store::open(&path).unwrap();
+        let retained = store.command(&session, &command).unwrap();
+        assert_eq!(retained["exit_code"], 1);
+        assert_eq!(retained["accepted"], true);
+        assert!(retained["evidence_event_id"].is_string());
+        store
+            .clean(&global, &Retention::KeepLast { count: 1 }, false)
+            .unwrap();
+        assert!(store.command(&global, &command).is_err());
+    }
+    #[test]
+    fn raw_writes_invalidate_only_pending_associations_and_acceptance_is_independent() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&temp.path().join("data/db")).unwrap();
+        let global = store.agent("o", "d", None).unwrap();
+        let run = store
+            .accept_user(&global, "r", "command", json!({}))
+            .unwrap();
+        let command = store
+            .begin_command(
+                &global,
+                &run.run_id,
+                "a",
+                "s",
+                json!({"state":"submitted","final":false}),
+            )
+            .unwrap();
+        store.invalidate_command_writes(&global, "s", "a").unwrap();
+        assert_eq!(
+            store.command(&global, &command).unwrap()["state"],
+            "submitted"
+        );
+        store
+            .invalidate_command_writes(&global, "s", "raw")
+            .unwrap();
+        store
+            .set_command_acceptance(&global, &command, true)
+            .unwrap();
+        let result = store.command(&global, &command).unwrap();
+        assert_eq!(result["state"], "unknown");
+        assert_eq!(result["accepted"], true);
+        store
+            .update_command(
+                &global,
+                &command,
+                &json!({"state":"completed","exit_code":0}),
+            )
+            .unwrap();
+        assert_eq!(
+            store.command(&global, &command).unwrap()["state"],
+            "unknown"
+        );
     }
 }
