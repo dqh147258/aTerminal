@@ -27,6 +27,7 @@ class AgentAuthorizationRpcUiTest {
     private lateinit var activity: MainActivity
     private lateinit var remote: RemoteTerminal
     private lateinit var session: String
+    private var agentId: String? = null
     private var chat: AgentPanel? = null
     private lateinit var root: LinearLayout
     private var authorization: AgentAuthorizationPanel? = null
@@ -39,7 +40,10 @@ class AgentAuthorizationRpcUiTest {
     private fun dialog() = authorization?.let { AgentAuthorizationPanel::class.java.getDeclaredField("dialog").apply { isAccessible = true }.get(it) as? android.app.AlertDialog }
     private fun views() = all(root) + listOfNotNull(dialog()?.window?.decorView).flatMap { all(it) }
     private fun tagged(tag: String) = views().first { it.tag == tag }
-    private fun request(action: String, fields: JSONObject = JSONObject()) = JSONObject(remote.agent(session, fields.put("version", 1).put("action", action).toString()))
+    private fun request(action: String, fields: JSONObject = JSONObject()): JSONObject {
+        agentId?.let { fields.put("agent_id", it) }
+        return JSONObject(remote.agent(session, fields.put("version", 1).put("action", action).toString()))
+    }
     private fun waitFor(name: String, condition: () -> Boolean) {
         val until = SystemClock.elapsedRealtime() + 35000
         while (SystemClock.elapsedRealtime() < until) { if (condition()) return; Thread.sleep(60) }
@@ -128,6 +132,8 @@ class AgentAuthorizationRpcUiTest {
         val expected = JSONObject().put("auth-review-once.log", JSONArray(listOf("once")))
             .put("auth-review-always.log", JSONArray(listOf("always", "always", "always")))
             .put("auth-review-long.log", JSONArray(listOf(" ".repeat(6000) + "long")))
+            .put("auth-review-global-full.log", JSONArray(listOf("global-full")))
+            .put("auth-review-global-full-off.log", JSONObject.NULL)
             .put("auth-review-closed-write.log", JSONObject.NULL)
             .put("auth-review-cancelled.log", JSONObject.NULL)
             .put("auth-review-denied.log", JSONObject.NULL).put("auth-review-full.log", JSONArray(listOf("full", "full")))
@@ -196,6 +202,36 @@ class AgentAuthorizationRpcUiTest {
             task("full-off", "printf 'after-off\\n' >> auth-review-full-off.log"); decision(pending(), "once"); completed("full-off")
             report.put("full_persists_across_runs_until_closed", true)
 
+            val terminalSession = session
+            val scope = JSONObject(remote.agent("", JSONObject().put("version", 1).put("action", "global_create").put("request_id", "authorization-global-scope").toString())).getJSONObject("scope")
+            session = ""; agentId = scope.getString("agent")
+            main {
+                chat?.close()
+                root.removeAllViews(); root.addView(activity.row().apply { addView(activity.heading("Global Agent")); addView(activity.label("关闭")) })
+                chat = AgentPanel(activity, root, listOf(fixture.getString("server"), fixture.getString("username"), desktop), "", { true }, { target, raw -> sent.add(target to raw); remote.agent(target, raw) }, {}, cachePath = cache.path,
+                    globalConversation = JSONObject().put("scope", scope).put("title", "授权隔离对话"))
+                authorization = AgentPanel::class.java.getDeclaredField("authorization").apply { isAccessible = true }.get(chat) as AgentAuthorizationPanel
+            }
+            waitFor("global mode confirmed") { main { authorization!!.canSend } }
+            assertFalse(request("permissions").getBoolean("full_authorization"))
+            full(true)
+            fun globalNative(file: String, input: String) = JSONArray().put(JSONObject().put("tool", "run_program").put("arguments", JSONObject()
+                .put("session_id", terminalSession).put("program", "/usr/bin/tee").put("args", JSONArray(listOf("-a", file))).put("stdin", input)))
+            task("global-full", steps = globalNative("auth-review-global-full.log", "global-full\n")); completed("global-full"); assertNull(activePending())
+            full(false)
+            task("global-full-off", steps = globalNative("auth-review-global-full-off.log", "should-not-run\n")); decision(pending(), "deny"); completed("global-full-off")
+            assertFalse(request("permissions").getBoolean("full_authorization"))
+            session = terminalSession; agentId = null
+            main {
+                chat?.close()
+                root.removeAllViews(); root.addView(activity.row().apply { addView(activity.heading("Session Agent")); addView(activity.label("关闭")) })
+                chat = AgentPanel(activity, root, listOf(fixture.getString("server"), fixture.getString("username"), desktop), session, { true }, { target, raw -> sent.add(target to raw); remote.agent(target, raw) }, {}, cachePath = cache.path)
+                authorization = AgentPanel::class.java.getDeclaredField("authorization").apply { isAccessible = true }.get(chat) as AgentAuthorizationPanel
+            }
+            waitFor("session mode restored") { main { authorization!!.canSend } }
+            assertFalse(request("permissions").getBoolean("full_authorization"))
+            report.put("global_full_closed_and_scope_isolated", true)
+
             task("cwd-create", "/bin/mkdir auth-review-subdir"); decision(pending(), "once"); completed("cwd-create")
             task("cwd-change", "cd auth-review-subdir"); decision(pending(), "once"); completed("cwd-change")
             waitFor("observed cwd changed") { request("context").optString("cwd") == "$initialCwd/auth-review-subdir" }
@@ -258,6 +294,8 @@ class AgentAuthorizationRpcUiTest {
             full(true)
             task("closed-write", "printf 'unexpected\\n' >> auth-review-closed-write.log", waitCommand = false)
             completed("closed-write")
+            full(false)
+            assertFalse(request("permissions").getBoolean("full_authorization"))
             report.put("closed_scope_queries_questions_settings", true).put("closed_write_denied_by_host", true)
 
             assertEquals(primaryAccount, context.getSharedPreferences("account", 0).all)
