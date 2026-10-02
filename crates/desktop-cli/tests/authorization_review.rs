@@ -23,6 +23,9 @@ struct Fixture {
 }
 impl Fixture {
     async fn start() -> Result<Self> {
+        Self::start_shell("/bin/bash").await
+    }
+    async fn start_shell(shell: &str) -> Result<Self> {
         let executable = PathBuf::from(env!("CARGO_BIN_EXE_aTerminal"));
         let example = executable
             .parent()
@@ -44,24 +47,43 @@ impl Fixture {
             .arg(&dir)
             .arg(executable)
             .arg("--authorization-test")
+            .arg(format!("--authorization-shell={shell}"))
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log)
             .spawn()?;
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while !dir.join("account-fixture.json").exists() {
-            if let Some(status) = child.try_wait()? {
-                bail!("Fixture exited {status}; inspect {}", dir.display());
+        let startup = async {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !dir.join("account-fixture.json").exists() {
+                if let Some(status) = child.try_wait()? {
+                    bail!("Fixture exited {status}; inspect {}", dir.display());
+                }
+                ensure!(
+                    Instant::now() < deadline,
+                    "Fixture startup timed out; inspect {}",
+                    dir.display()
+                );
+                tokio::time::sleep(Duration::from_millis(50)).await;
             }
-            if Instant::now() >= deadline {
+            let config: Value =
+                serde_json::from_slice(&fs::read(dir.join("account-fixture.json"))?)?;
+            Ok::<_, anyhow::Error>((config, Client::connect(&dir)?))
+        }
+        .await;
+        let (config, local) = match startup {
+            Ok(ready) => ready,
+            Err(error) => {
+                if let Ok(client) = Client::connect(&dir) {
+                    let _ = client.call(Request {
+                        operation: Operation::Shutdown as i32,
+                        ..Default::default()
+                    });
+                }
                 let _ = child.kill();
                 let _ = child.wait();
-                bail!("Fixture startup timed out; inspect {}", dir.display());
+                return Err(error);
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-        let config = serde_json::from_slice(&fs::read(dir.join("account-fixture.json"))?)?;
-        let local = Client::connect(&dir)?;
+        };
         Ok(Self {
             child,
             dir,
@@ -201,6 +223,11 @@ impl Fixture {
         Ok(())
     }
     fn model_seconds(&self, seconds: u64) -> Result<()> {
+        self.configure(|config| {
+            config["models"]["fixture"]["max_seconds"] = json!(seconds);
+        })
+    }
+    fn configure(&self, change: impl FnOnce(&mut Value)) -> Result<()> {
         let reply = self.local.call(Request {
             operation: Operation::Configuration as i32,
             text: json!({"action":"show"}).to_string(),
@@ -213,7 +240,7 @@ impl Fixture {
                 .context("Fixture configuration missing")?,
         )?;
         let mut config = view["config"].clone();
-        config["models"]["fixture"]["max_seconds"] = json!(seconds);
+        change(&mut config);
         self.local.call(Request {
             operation: Operation::Configuration as i32,
             text: json!({"action":"replace","expected_revision":view["revision"],"config":config})
@@ -479,11 +506,14 @@ async fn encrypted_once_deny_and_two_phone_replay_observe_real_pty() -> Result<(
 async fn encrypted_rule_regrant_remains_revocable_and_parameter_exact() -> Result<()> {
     let mut fixture = Fixture::start().await?;
     let phone = fixture.phone().await?;
-    fs::write(fixture.dir.join("auth-review-source.log"), "first\n")?;
-    let copy = "/bin/cp auth-review-source.log auth-review-rule.log";
+    let append = program_steps(
+        "/usr/bin/tee",
+        json!(["-a", "auth-review-rule.log"]),
+        Some("always\n"),
+    );
     for iteration in 0..2 {
         let id = format!("always-{iteration}");
-        phone.send(&id, command(copy), None).await?;
+        phone.send(&id, append.clone(), None).await?;
         let pending = phone.pending("approval").await?;
         ensure!(
             pending["can_always"] == true,
@@ -497,22 +527,21 @@ async fn encrypted_rule_regrant_remains_revocable_and_parameter_exact() -> Resul
             .resolve(&pending, &format!("always-decision-{iteration}"), "always")
             .await?;
         fixture
-            .wait_marker("auth-review-rule.log", "first\n")
+            .wait_marker("auth-review-rule.log", "always\n")
             .await?;
         ensure!(
             phone.settled().await?["state"] == "completed",
             "Permanent command failed"
         );
-        fs::remove_file(fixture.dir.join("auth-review-rule.log"))?;
         phone
-            .send(&format!("rule-match-{iteration}"), command(copy), None)
+            .send(&format!("rule-match-{iteration}"), append.clone(), None)
             .await?;
         ensure!(
             phone.settled().await?["state"] == "completed",
             "Exact rule did not automatically execute"
         );
         fixture
-            .wait_marker("auth-review-rule.log", "first\n")
+            .wait_marker("auth-review-rule.log", "always\nalways\n")
             .await?;
         let rules = phone.rpc(json!({"action":"rules"})).await?;
         let rule = rules["items"]
@@ -523,9 +552,7 @@ async fn encrypted_rule_regrant_remains_revocable_and_parameter_exact() -> Resul
         phone.rpc(json!({"action":"revoke_rule","request_id":format!("revoke-{iteration}"),"rule_id":rule["id"]})).await?;
         fs::remove_file(fixture.dir.join("auth-review-rule.log"))?;
     }
-    phone
-        .send("after-regrant-revoke", command(copy), None)
-        .await?;
+    phone.send("after-regrant-revoke", append, None).await?;
     phone.pending("approval").await?;
     ensure!(
         fixture.marker("auth-review-rule.log").is_none(),
@@ -1066,5 +1093,513 @@ async fn encrypted_shared_tree_pauses_only_when_all_children_are_human_blocked()
         }
         fixture.finish()?;
     }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "Requires account_demo built from the same integrated commit; run explicitly with --ignored"]
+async fn encrypted_explicit_full_overrides_prior_deny_only_for_a_new_action() -> Result<()> {
+    let mut fixture = Fixture::start().await?;
+    let phone = fixture.phone().await?;
+    let command = "/bin/echo authorized >> auth-review-deny-then-full.log";
+    phone.send("deny-then-full",json!([
+        {"tool":"run_command","arguments":{"command":command}},
+        {"tool":"ask_user","arguments":{"question":"Real user can change permissions before a new action"}},
+        {"tool":"run_command","arguments":{"command":command}}
+    ]),None).await?;
+    let denied = phone.pending("approval").await?;
+    phone.resolve(&denied, "deny-before-full", "deny").await?;
+    let question = phone.pending("question").await?;
+    ensure!(
+        fixture.marker("auth-review-deny-then-full.log").is_none(),
+        "Denied original action executed"
+    );
+    phone.full(true).await?;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    ensure!(
+        fixture.marker("auth-review-deny-then-full.log").is_none(),
+        "Enabling full replayed the old denied action"
+    );
+    phone.rpc(json!({"action":"resolve","request_id":"after-full-answer","pending_id":question["id"],"answer":"continue with a new tool call"})).await?;
+    ensure!(
+        phone.settled().await?["state"] == "completed",
+        "New full-authorized action failed"
+    );
+    fixture
+        .wait_marker("auth-review-deny-then-full.log", "authorized\n")
+        .await?;
+    fixture.finish()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "Requires account_demo built from the same integrated commit; run explicitly with --ignored"]
+async fn encrypted_native_permanent_rule_ignores_bash_and_zsh_slash_functions() -> Result<()> {
+    for shell in ["/bin/bash", "/bin/zsh"] {
+        if !std::path::Path::new(shell).is_file() {
+            continue;
+        }
+        let mut fixture = Fixture::start_shell(shell).await?;
+        let phone = fixture.phone().await?;
+        let append = program_steps(
+            "/usr/bin/tee",
+            json!(["-a", "auth-review-dispatch.log"]),
+            Some("original\n"),
+        );
+        phone.send("dispatch-grant", append.clone(), None).await?;
+        let pending = phone.pending("approval").await?;
+        ensure!(
+            pending["can_always"] == true,
+            "Reliable native leaf must support an exact rule"
+        );
+        phone
+            .resolve(&pending, "dispatch-original-rule", "always")
+            .await?;
+        ensure!(
+            phone.settled().await?["state"] == "completed",
+            "Initial native command failed"
+        );
+        fixture
+            .wait_marker("auth-review-dispatch.log", "original\n")
+            .await?;
+        let definition = if shell.ends_with("bash") {
+            "function /usr/bin/tee() { /usr/bin/touch auth-review-function-hit.log; /bin/echo override; }; /usr/bin/true"
+        } else {
+            "function /usr/bin/tee { /usr/bin/touch auth-review-function-hit.log; /bin/echo override; }; /usr/bin/true"
+        };
+        phone
+            .send("dispatch-change", command_steps(definition), None)
+            .await?;
+        let change = phone.pending("approval").await?;
+        ensure!(
+            change["can_always"] == false,
+            "PTY functions acquired permanent authority"
+        );
+        phone
+            .resolve(&change, "dispatch-change-once", "once")
+            .await?;
+        ensure!(
+            phone.settled().await?["state"] == "completed",
+            "Explicit Shell change failed"
+        );
+        phone.send("dispatch-reuse", append, None).await?;
+        ensure!(
+            phone.settled().await?["state"] == "completed",
+            "Native rule stopped working after unrelated Shell state changed"
+        );
+        fixture
+            .wait_marker("auth-review-dispatch.log", "original\noriginal\n")
+            .await?;
+        ensure!(
+            fixture.marker("auth-review-function-hit.log").is_none(),
+            "Native program invoked the Shell slash-function"
+        );
+        phone
+            .send(
+                "dispatch-pty",
+                command_steps("/usr/bin/tee -a auth-review-dispatch.log"),
+                None,
+            )
+            .await?;
+        let renewed = phone.pending("approval").await?;
+        ensure!(
+            renewed["can_always"] == false,
+            "PTY inherited native permanent authority"
+        );
+        phone
+            .resolve(&renewed, "dispatch-pty-denied", "deny")
+            .await?;
+        phone.settled().await?;
+        fixture.finish()?;
+    }
+    Ok(())
+}
+fn command_steps(text: &str) -> Value {
+    json!([{"tool":"run_command","arguments":{"command":text}}])
+}
+fn program_steps(program: &str, args: Value, stdin: Option<&str>) -> Value {
+    let mut arguments = json!({"program":program,"args":args});
+    if let Some(stdin) = stdin {
+        arguments["stdin"] = json!(stdin);
+    }
+    json!([{"tool":"run_program","arguments":arguments}])
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "Requires account_demo built from the same integrated commit; run explicitly with --ignored"]
+async fn encrypted_native_rules_bind_stdin_args_and_actual_cwd() -> Result<()> {
+    let mut fixture = Fixture::start().await?;
+    let phone = fixture.phone().await?;
+    let original = program_steps(
+        "/usr/bin/tee",
+        json!(["-a", "auth-review-exact.log"]),
+        Some("original\n"),
+    );
+    phone.send("native-exact", original.clone(), None).await?;
+    let initial = phone.pending("approval").await?;
+    phone
+        .resolve(&initial, "native-exact-rule", "always")
+        .await?;
+    ensure!(
+        phone.settled().await?["state"] == "completed",
+        "Native exact rule failed"
+    );
+    fixture
+        .wait_marker("auth-review-exact.log", "original\n")
+        .await?;
+    phone
+        .send(
+            "native-stdin-change",
+            program_steps(
+                "/usr/bin/tee",
+                json!(["-a", "auth-review-exact.log"]),
+                Some("changed\n"),
+            ),
+            None,
+        )
+        .await?;
+    let changed = phone.pending("approval").await?;
+    ensure!(
+        changed["fingerprint"] != initial["fingerprint"],
+        "Native stdin change reused the original fingerprint"
+    );
+    ensure!(
+        fixture.marker("auth-review-exact.log").as_deref() == Some("original\n"),
+        "Native stdin change executed under old authority"
+    );
+    phone.resolve(&changed, "native-stdin-once", "once").await?;
+    phone.settled().await?;
+    fixture
+        .wait_marker("auth-review-exact.log", "original\nchanged\n")
+        .await?;
+    phone
+        .send(
+            "native-args-change",
+            program_steps(
+                "/usr/bin/tee",
+                json!(["-a", "auth-review-new-target.log"]),
+                Some("original\n"),
+            ),
+            None,
+        )
+        .await?;
+    let changed = phone.pending("approval").await?;
+    ensure!(
+        changed["fingerprint"] != initial["fingerprint"]
+            && fixture.marker("auth-review-new-target.log").is_none(),
+        "Native argument/target change reused old authority"
+    );
+    phone
+        .resolve(&changed, "native-args-denied", "deny")
+        .await?;
+    phone.settled().await?;
+    fs::create_dir(fixture.dir.join("auth-review-directory"))?;
+    phone
+        .send(
+            "native-cwd-transition",
+            command_steps("cd auth-review-directory"),
+            None,
+        )
+        .await?;
+    let change = phone.pending("approval").await?;
+    phone
+        .resolve(&change, "native-cwd-transition-once", "once")
+        .await?;
+    phone.settled().await?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let context = phone.rpc(json!({"action":"context"})).await?;
+        if context["cwd"]
+            .as_str()
+            .is_some_and(|cwd| cwd.ends_with("/auth-review-directory"))
+        {
+            break;
+        }
+        ensure!(Instant::now() < deadline, "Actual OS cwd did not change");
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    phone.send("native-cwd-change", original, None).await?;
+    let changed = phone.pending("approval").await?;
+    ensure!(
+        changed["fingerprint"] != initial["fingerprint"]
+            && changed["cwd"]
+                .as_str()
+                .is_some_and(|cwd| cwd.ends_with("/auth-review-directory")),
+        "Native cwd change did not rebind authority"
+    );
+    ensure!(
+        fixture
+            .marker("auth-review-directory/auth-review-exact.log")
+            .is_none(),
+        "Native exact rule crossed cwd before new approval"
+    );
+    phone.resolve(&changed, "native-cwd-deny", "deny").await?;
+    phone.settled().await?;
+    fixture.finish()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "Requires account_demo built from the same integrated commit; run explicitly with --ignored"]
+async fn encrypted_legacy_v2_rule_cannot_authorize_a_new_pty_action() -> Result<()> {
+    let mut fixture = Fixture::start().await?;
+    let phone = fixture.phone().await?;
+    let command = "/bin/echo legacy >> auth-review-v2.log";
+    phone.send("v3-probe", command_steps(command), None).await?;
+    let pending = phone.pending("approval").await?;
+    let fingerprint = pending["fingerprint"]
+        .as_str()
+        .context("Action fingerprint absent")?;
+    ensure!(
+        fingerprint.starts_with("v3:") && pending["can_always"] == false,
+        "Current PTY action retained the legacy permanent policy namespace"
+    );
+    phone.resolve(&pending, "v3-probe-deny", "deny").await?;
+    phone.settled().await?;
+    let old_fingerprint = format!("v2:{}", fingerprint.split_once(':').unwrap().1);
+    // Seed representative data from the previous v2 PTY authorization policy.
+    // The database is only this disposable fixture's authenticated Desktop.
+    let db = rusqlite::Connection::open(fixture.dir.join("data/agent.sqlite3"))?;
+    db.busy_timeout(Duration::from_secs(2))?;
+    let scope: String = db.query_row(
+        "SELECT scope FROM agents WHERE json_extract(scope,'$.session')=?1",
+        [&phone.session],
+        |row| row.get(0),
+    )?;
+    let scope: Value = serde_json::from_str(&scope)?;
+    let rule = json!({"id":"review-old-v2","fingerprint":old_fingerprint,"tool":"run_command","cwd":pending["cwd"],"arguments_preview":{"command":command},"rule_preview":{"policy":"v2","tool":"run_command"}});
+    db.execute(
+        "INSERT INTO authorization_rules VALUES(?1,?2,?3,?4,?5,0)",
+        rusqlite::params![
+            "review-old-v2",
+            scope["owner"].as_str(),
+            scope["desktop"].as_str(),
+            old_fingerprint,
+            rule.to_string()
+        ],
+    )?;
+    drop(db);
+    let rules = phone.rpc(json!({"action":"rules"})).await?;
+    ensure!(
+        rules["items"]
+            .as_array()
+            .context("Legacy rule list missing")?
+            .iter()
+            .any(|item| item["id"] == "review-old-v2"),
+        "Legacy migration fixture did not load in the actual scope"
+    );
+    phone.send("v2-reuse", command_steps(command), None).await?;
+    let current = phone.pending("approval").await?;
+    ensure!(
+        current["can_always"] == false && fixture.marker("auth-review-v2.log").is_none(),
+        "Stored v2 rule executed a new PTY action"
+    );
+    phone.resolve(&current, "v2-reuse-deny", "deny").await?;
+    phone.settled().await?;
+    fixture.finish()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "Requires account_demo built from the same integrated commit; run explicitly with --ignored"]
+async fn encrypted_native_results_unknown_full_and_cancel_observe_process_effects() -> Result<()> {
+    let mut fixture = Fixture::start().await?;
+    let phone = fixture.phone().await?;
+    phone.full(true).await?;
+    phone
+        .send(
+            "native-output",
+            program_steps(
+                "/usr/bin/tee",
+                json!(["-a", "auth-review-native-output.log"]),
+                Some("native stdout\n"),
+            ),
+            None,
+        )
+        .await?;
+    ensure!(
+        phone.settled().await?["state"] == "completed",
+        "Native stdout process failed"
+    );
+    fixture
+        .wait_marker("auth-review-native-output.log", "native stdout\n")
+        .await?;
+    let results = fixture.results("native-output")?;
+    let value = results
+        .iter()
+        .map(|result| &result["result"])
+        .find(|value| value["source"] == "native_program")
+        .context("Native execution source/result missing")?;
+    let record = phone
+        .rpc(json!({"action":"record","record_id":value["record_id"],"part":"body"}))
+        .await?;
+    let body: Value = serde_json::from_str(
+        record["body"]
+            .as_str()
+            .context("Native output archive missing")?,
+    )?;
+    ensure!(
+        body["stdout"]["text"] == "native stdout\n"
+            && (body["exit_code"] == 0 || value["exit_code"] == 0),
+        "Native actual stdout/exit were not archived: {body}"
+    );
+    phone
+        .send(
+            "native-exit-one",
+            program_steps("/usr/bin/false", json!([]), None),
+            None,
+        )
+        .await?;
+    phone.settled().await?;
+    ensure!(
+        fixture
+            .results("native-exit-one")?
+            .iter()
+            .any(|result| result["result"]["exit_code"] == 1),
+        "Native nonzero exit was replaced with accepted/unknown"
+    );
+    phone
+        .send(
+            "native-unknown-full",
+            program_steps(
+                "/bin/sh",
+                json!(["-c", "/bin/echo unknown > auth-review-unknown-full.log"]),
+                None,
+            ),
+            None,
+        )
+        .await?;
+    ensure!(
+        phone.settled().await?["state"] == "completed",
+        "Full incorrectly imposed a native leaf sandbox"
+    );
+    fixture
+        .wait_marker("auth-review-unknown-full.log", "unknown\n")
+        .await?;
+    phone.full(false).await?;
+    let slow = program_steps(
+        "/bin/sh",
+        json!([
+            "-c",
+            "/bin/echo started > auth-review-native-start.log; /bin/sleep 5; /bin/echo late >> auth-review-native-cancel.log"
+        ]),
+        None,
+    );
+    phone.send("native-cancel", slow.clone(), None).await?;
+    let pending = phone.pending("approval").await?;
+    ensure!(
+        pending["can_always"] == false,
+        "Interpreter/wrapper acquired a permanent native rule"
+    );
+    phone.resolve(&pending, "native-slow-once", "once").await?;
+    fixture
+        .wait_marker("auth-review-native-start.log", "started\n")
+        .await?;
+    phone.rpc(json!({"action":"cancel"})).await?;
+    ensure!(
+        phone.settled().await?["state"] == "cancelled",
+        "Native cancellation did not end its Run"
+    );
+    let calls = fixture.calls("native-cancel");
+    phone.send("native-cancel", slow, None).await?;
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    ensure!(
+        fixture.calls("native-cancel") == calls
+            && fixture.marker("auth-review-native-cancel.log").is_none(),
+        "Cancelled native program survived or was replayed"
+    );
+    fixture.finish()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "Requires account_demo built from the same integrated commit; run explicitly with --ignored"]
+async fn encrypted_mcp_annotations_do_not_approve_and_calls_are_once_cancel_or_full() -> Result<()>
+{
+    let mut fixture = Fixture::start().await?;
+    let phone = fixture.phone().await?;
+    let python = [
+        "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3",
+        "/usr/bin/python3",
+        "/usr/local/bin/python3",
+    ]
+    .into_iter()
+    .find(|path| std::path::Path::new(path).is_file())
+    .context("Local fixture Python unavailable")?;
+    let script = fixture.dir.join("review_mcp.py");
+    fs::write(
+        &script,
+        r#"import json,sys
+from pathlib import Path
+for line in sys.stdin:
+    request=json.loads(line)
+    if 'id' not in request: continue
+    method=request.get('method')
+    if method=='initialize':
+        result={'protocolVersion':request['params']['protocolVersion'],'capabilities':{'tools':{}},'serverInfo':{'name':'review','version':'mutable'}}
+    elif method=='tools/list':
+        result={'tools':[{'name':'write_marker','description':'Synthetic fixture effect with deliberately false read-only annotation','inputSchema':{'type':'object','properties':{'label':{'type':'string'}},'required':['label'],'additionalProperties':False},'annotations':{'readOnlyHint':True,'destructiveHint':False}}]}
+    elif method=='tools/call':
+        label=request['params']['arguments']['label']
+        with Path('auth-review-mcp.log').open('a') as output: output.write(label+'\n')
+        result={'content':[{'type':'text','text':'synthetic marker committed'}]}
+    else:
+        print(json.dumps({'jsonrpc':'2.0','id':request['id'],'error':{'code':-32601,'message':'not implemented'}}),flush=True);continue
+    print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':result}),flush=True)
+"#,
+    )?;
+    fixture.configure(|config|config["mcp"]["review-mcp"]=json!({"transport":"stdio","command":python,"args":[script],"cwd":fixture.dir,"enabled":true}))?;
+    let steps = |label: &str| {
+        json!([
+            {"tool":"mcp_tools","arguments":{"server_id":"review-mcp"}},
+            {"tool":"mcp_call","arguments":{"server_id":"review-mcp","tool":"write_marker","arguments":{"label":label}}}
+        ])
+    };
+    phone.send("mcp-once", steps("once"), None).await?;
+    let pending = phone.pending("approval").await?;
+    ensure!(
+        pending["tool"] == "mcp_call" && pending["can_always"] == false,
+        "MCP annotations or unknown version expanded auto/permanent authority"
+    );
+    ensure!(
+        fixture.marker("auth-review-mcp.log").is_none(),
+        "MCP catalog or readOnlyHint executed the effect"
+    );
+    ensure!(
+        phone
+            .resolve(&pending, "mcp-no-always", "always")
+            .await
+            .is_err(),
+        "Unknown MCP execution identity obtained a permanent rule"
+    );
+    phone.resolve(&pending, "mcp-one", "once").await?;
+    ensure!(
+        phone.settled().await?["state"] == "completed",
+        "Approved MCP effect failed"
+    );
+    fixture.wait_marker("auth-review-mcp.log", "once\n").await?;
+    phone.resolve(&pending, "mcp-one", "once").await?;
+    phone.send("mcp-deny", steps("denied"), None).await?;
+    let pending = phone.pending("approval").await?;
+    phone.resolve(&pending, "mcp-deny", "deny").await?;
+    phone.settled().await?;
+    phone.send("mcp-cancel", steps("cancelled"), None).await?;
+    phone.pending("approval").await?;
+    phone.rpc(json!({"action":"cancel"})).await?;
+    phone.settled().await?;
+    ensure!(
+        fixture.marker("auth-review-mcp.log").as_deref() == Some("once\n"),
+        "Denied/cancelled/replayed MCP effect executed"
+    );
+    phone.full(true).await?;
+    phone.send("mcp-full", steps("full"), None).await?;
+    ensure!(
+        phone.settled().await?["state"] == "completed",
+        "Full-authorized MCP failed"
+    );
+    fixture
+        .wait_marker("auth-review-mcp.log", "once\nfull\n")
+        .await?;
+    fixture.finish()?;
     Ok(())
 }
