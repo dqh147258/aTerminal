@@ -7,6 +7,7 @@
 - 已确认：完全授权作用于当前 Agent 对话、持续到关闭；永久授权按命令/参数/目录精确匹配；六类工具全部补齐，Android/iOS/CLI 同步。
 - 管理任务：`aTerminal / 20261002-180220-295-agent-authorization`。
 - 恢复授权（2026-10-02 19:55）：系统故障后用户要求继续并恢复全部子任务，全部模型改为 Sol。已检查保留代码与会话后，六个原子任务使用 `gpt-6.1-sol / high`、各自保存的 thread ID 在原 worktree 恢复；旧 run/终端保留在任务历史，不新建重复子任务。
+- 最新调度约束（2026-10-02 20:56）：系统再次重启、子任务已关闭。用户要求任何时刻最多两个活跃子任务，完成并关闭后才恢复下一项。当前仅恢复 runtime/toolset，policy 已完成且不恢复，Android/iOS/Review 排队；所有恢复仍使用 Sol。大型构建/模拟器错峰，cargo jobs/test threads 最多2，不改变 High 必要验收范围。
 
 ## 目标与实际行为
 
@@ -56,6 +57,8 @@
 4. `android-authorization`：Android 模式开关、审批/问答卡片、规则查看撤销、协议和 UI 回归；不改 Rust。使用 `gpt-6.1-sol / high`。
 5. `ios-authorization`：iOS 同等功能、请求状态恢复与交互测试；不改 Rust。使用 `gpt-6.1-sol / high`。
 6. 集成后安排独立 Review/验收，也使用用户要求的 `gpt-6.1-sol / high`。存在共享接口冲突时先协调，不能靠同时覆盖文件解决。
+
+当前执行顺序以最多两个活跃执行者为硬约束：先 runtime + toolset；toolset 完成、提交并关闭后可恢复 Review，与 runtime 处理安全/集成；runtime 完成并关闭后恢复 iOS；iOS/Review 任一完成并关闭后恢复 Android，或按未决依赖在两个名额内调整。恢复/发送会重新激活 completed 子任务，操作前必须检查名额，不能向已关闭排队者发送会唤醒执行的指示。完成关闭按用户本次明确授权执行，保留分支/worktree直到最后整合与验证满足清理条件。
 
 子任务读取 main 中本计划的绝对路径；用户执行授权已经覆盖这份方案。用于集成和测试的提交/合并属于本次交付步骤，按 worktree skill 保留未 Review 提交标记。逐支审查后合入实际 `main`，保留无关工作。满足集成、测试与干净 worktree 条件后才清理任务 worktree/分支/终端；现有旧 worktree、账号、活动终端和服务不动。
 

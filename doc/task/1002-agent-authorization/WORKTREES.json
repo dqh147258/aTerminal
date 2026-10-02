@@ -11,35 +11,38 @@
     "reasoning_effort": "high",
     "handshake_timeout": null,
     "codex_thread_id": "01a0fc17-ed31-7621-99e3-444343a12a9d",
-    "recovered_at": "2026-10-02 19:57:20"
+    "recovered_at": "2026-10-02 19:57:20",
+    "schedule_state": "completed"
   },
   {
     "name": "20261002-181021-572-authorization-runtime",
     "task": "20261002-180220-295-agent-authorization",
-    "current_run": "fb63f371-e6fa-4322-a8fe-57d96fa3ec18",
+    "current_run": "9abda2d3-80a6-4b7c-bd20-551668e60c5f",
     "worktree": "/Volumes/Code/public-worktree/aTerminal/1002-authorization-runtime",
     "feature": "authorization-runtime",
     "branch": "worktree/1002-authorization-runtime",
-    "iterm_session_id": "w1t1p4:CA7288B4-AF81-46CB-A8FE-A2A4009BB097",
+    "iterm_session_id": "w1t0p1:02510E7B-15CB-4980-96EA-0EFEE2D320C1",
     "model": "gpt-6.1-sol",
     "reasoning_effort": "high",
     "handshake_timeout": null,
     "codex_thread_id": "01a0fc17-fb59-7cb0-abd0-057c534f4125",
-    "recovered_at": "2026-10-02 19:57:24"
+    "recovered_at": "2026-10-02 20:59:31",
+    "schedule_state": "running"
   },
   {
     "name": "20261002-181025-555-agent-toolset",
     "task": "20261002-180220-295-agent-authorization",
-    "current_run": "5e48f262-26d4-4991-b354-0bacf332a58d",
+    "current_run": "667cf4e1-00a8-4319-b68c-77ef9ee7898a",
     "worktree": "/Volumes/Code/public-worktree/aTerminal/1002-agent-toolset",
     "feature": "agent-toolset",
     "branch": "worktree/1002-agent-toolset",
-    "iterm_session_id": "w1t1p6:C7C49391-C961-49EE-9495-52AAF93307F1",
+    "iterm_session_id": "w1t0p3:6AC2A303-D78C-49E1-B57D-173CD2955437",
     "model": "gpt-6.1-sol",
     "reasoning_effort": "high",
     "handshake_timeout": null,
     "codex_thread_id": "01a0fc18-0aee-70b0-b693-6b6bf961cd62",
-    "recovered_at": "2026-10-02 19:57:28"
+    "recovered_at": "2026-10-02 20:59:35",
+    "schedule_state": "running"
   },
   {
     "name": "20261002-181029-626-android-authorization",
@@ -53,7 +56,8 @@
     "reasoning_effort": "high",
     "handshake_timeout": null,
     "codex_thread_id": "01a0fc18-1a04-7701-890b-6d4e53d93864",
-    "recovered_at": "2026-10-02 19:57:33"
+    "recovered_at": "2026-10-02 19:57:33",
+    "schedule_state": "queued"
   },
   {
     "name": "20261002-181033-557-ios-authorization",
@@ -67,7 +71,8 @@
     "reasoning_effort": "high",
     "handshake_timeout": null,
     "codex_thread_id": "01a0fc18-28ca-70e0-aeef-e31c9186faf5",
-    "recovered_at": "2026-10-02 19:57:38"
+    "recovered_at": "2026-10-02 19:57:38",
+    "schedule_state": "queued"
   },
   {
     "name": "20261002-181315-577-authorization-review",
@@ -81,6 +86,7 @@
     "reasoning_effort": "high",
     "codex_thread_id": "01a0fc1a-a796-74e2-8543-7dc9163afbe5",
     "recovered_at": "2026-10-02 19:57:43",
-    "handshake_timeout": null
+    "handshake_timeout": null,
+    "schedule_state": "queued"
   }
 ]

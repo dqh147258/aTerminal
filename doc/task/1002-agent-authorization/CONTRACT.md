@@ -56,11 +56,15 @@ fn assess(action: &ActionDescriptor) -> Assessment;
 
 已确定的 Rust 字段：`ActionDescriptor { account_id, desktop_id, tool, source: ToolSource, source_id, tool_version: Option<String>, target, cwd: Option<String>, arguments: Value, execution_identity: Option<String>, shell_proof: Option<ShellProof>, permission_management: bool }`；字符串字段默认 String。`ToolSource = Builtin|Mcp|Skill|Unknown`，`ShellDialect = Bash|Zsh`；`ShellProof { dialect, at_prompt, input_buffer_empty, observed_revision, current_revision }` 只由 Host 的可信状态构造。`Assessment { risk, reason, fingerprint, redacted_preview, can_always }`，提供 `assess`、`stable_fingerprint`、`redacted_preview`。指纹不包含瞬时 revision，但最终动作执行必须再次检查 proof/fence。原始 `input_text`/`send_keys` 无可靠完整输入上下文时不提供永久授权；结构化命令才能形成可复验的永久规则。已识别的权限管理模型动作使用 Forbidden，full 也不能代替真实用户更改授权。
 
+策略最终接口已以 `5b89a2d` 源码冻结：`InspectCommand { program:String, args:Vec<String> }`、`inspect_command_plan(&str)->Option<InspectCommand>`；`permanent_command_program(&str)->Option<String>`；丰富规划 `FixedCommand { program:String, argv:Vec<String>, redirects:Vec<Redirect> }` / `fixed_command(&str)` 可供需要完整语法结构的调用者使用。`run_command` 始终 RequiresApproval；inspect 的有效固定原生计划 Safe，无效语法 Forbidden（不得 fallback Shell）。永久规则还要求完整输入边界及真实程序/配置 identity。指纹 namespace 为 `v2:`，旧 v1 规则失配，避免宽松旧语义沿用。
+
 接线：Host 暴露 `AgentHost::ask_user(&ToolContext, Value) async -> Result<ToolOutput>`；工具 helper 的 `definitions(global)` 注册新工具；父文件通过 `#[path="host/tools.rs"] pub mod tools`、`#[path="store/tools.rs"] mod tools`、runtime 的 `#[path="runtime/tools.rs"] mod tools` 引入子模块。Broker 调用 `Backend::invoke_added(context,name,args) -> Result<Option<ToolOutput>>`，命令缓存 `tools::CommandTracker` 由父 Backend 构造。命令 ID 对 scope 和已归档结果的关联必须可持久恢复，缓存不能成为唯一结果来源。
 
 Safe 范围：内置只读工具、纯等待、明确识别的简单安全命令。安全命令只能采用严格正向规则；复合 Shell、解析错误、用户脚本、未知程序、MCP 或原始 TUI 输入进入审批。不接受模型传 `safe:true`、tool annotations 或截图里的 Shell prompt 作为判定凭证。不增加 cwd 沙箱。
 
 规则 cwd 使用 `process::cwd` 的进程身份复核结果，不回退到 hook 或 initial_cwd。Shell hooks 本身标记 trusted_for_authorization=false，只能与 Host/OS 状态共同提供观察；空输入行需要明确输入边界（最后人工/Agent 输入与 prompt 事件的关联或实际行编辑器适配），无法确认则 proof=false 并审批，不能照屏幕提示符猜测。
+
+PTY 写入是异步队列，单独 prompt.mtime > 输入时间也不能排除排队 draft/typeahead。Actor 空输入边界仅在零输入的初始 prompt 或可关联的完整提交后对应 sequence/command 的 prompt 才能恢复为 true，未知 raw 输入保持 false。每个待审批动作绑定 Actor 瞬时 input_revision，并在实际副作用前复核；此 revision 不进入跨 Run 永久指纹。once/规则/full 均不能绕过任务已取消或输入上下文改变；命中永久规则还要重新检查当前 can_always，而不是沿用审批创建时的 eligibility。
 
 实际 Shell 的 aliases/functions/PATH 不能仅凭名字证明安全。为保证常规安全读取确实无需授权，新增 `inspect_command`：策略严格正向语法转换为固定绝对只读程序和字面 argv，Broker 在身份复核的当前 cwd 启动原生子进程（不经过 Shell、不改变 PTY draft/目录），归档 stdout/stderr/exit_code 并明确 source=sidecar_read。未知语法拒绝该读取工具，模型可改用正常 run_command 申请授权。这没有目录/OS 沙箱；它是可确定的读取执行入口。run_command 仍在原 PTY，不能用 command/builtin 字符串包装宣称解决任意用户函数覆盖。
 
