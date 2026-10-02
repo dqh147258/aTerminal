@@ -557,6 +557,25 @@ impl ConfigService {
         }
         Ok(self.snapshot(owner))
     }
+    pub fn authorization_secrets(&self, owner: &str) -> Result<Vec<String>> {
+        let view = self.snapshot(owner);
+        let mut secrets = Vec::new();
+        for provider in view.config.providers.values() {
+            let value = self.provider_secret(owner, provider)?;
+            if !value.is_empty() {
+                secrets.push(value);
+            }
+        }
+        for reference in view.config.credentials.values() {
+            let value = crate::secrets::get(&self.root, owner, reference)?;
+            if !value.is_empty() {
+                secrets.push(value);
+            }
+        }
+        secrets.sort();
+        secrets.dedup();
+        Ok(secrets)
+    }
     pub fn provider_secret(
         &self,
         owner: &str,

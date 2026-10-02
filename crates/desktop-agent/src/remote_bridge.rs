@@ -133,7 +133,7 @@ pub(crate) async fn serve_channel(
         }
         request.token.clear();
         request.client = 0;
-        let reply = match authorize(read_only, &request) {
+        let mut reply = match authorize(read_only, &request) {
             Ok(()) => {
                 let local = client.clone();
                 tokio::task::spawn_blocking(move || local.call(request)).await?
@@ -144,7 +144,31 @@ pub(crate) async fn serve_channel(
             error: e.to_string(),
             ..Reply::default()
         });
+        annotate_agent_permissions(&mut reply, read_only);
         channel.send(&reply.encode_to_vec()).await?;
+    }
+}
+/// Trusted transport metadata, never derived from client JSON or terminal control.
+pub(crate) fn annotate_agent_permissions(reply: &mut Reply, read_only: bool) {
+    fn visit(value: &mut serde_json::Value, can_mutate: bool) {
+        if let Some(object) = value.as_object_mut() {
+            if object.contains_key("permission_mode") && object.contains_key("full_authorization") {
+                object.insert("can_mutate".into(), serde_json::json!(can_mutate));
+            }
+            for value in object.values_mut() {
+                visit(value, can_mutate);
+            }
+        } else if let Some(items) = value.as_array_mut() {
+            for value in items {
+                visit(value, can_mutate);
+            }
+        }
+    }
+    for text in &mut reply.history {
+        if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(text) {
+            visit(&mut value, !read_only);
+            *text = value.to_string();
+        }
     }
 }
 pub(crate) fn authorize(read_only: bool, request: &Request) -> Result<()> {
@@ -181,7 +205,11 @@ pub(crate) fn authorize(read_only: bool, request: &Request) -> Result<()> {
                     "state",
                     "context",
                     "history",
-                    "record"
+                    "record",
+                    "permissions",
+                    "approval_details",
+                    "pending",
+                    "rules"
                 ]
                 .contains(&value["action"].as_str().unwrap_or(""))
                     && value["allow_input"] != true,

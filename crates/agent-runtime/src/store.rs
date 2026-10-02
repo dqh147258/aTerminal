@@ -1,4 +1,7 @@
 //! Durable event/record/action ledger. One connection serializes all mutations.
+mod authorization;
+#[path = "store/tools.rs"]
+mod tools;
 use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -221,6 +224,7 @@ impl Store {
           UPDATE actions SET state='unknown' WHERE state IN ('prepared','accepted');
           UPDATE runs SET state='orphaned' WHERE state IN ('running','paused');
           DELETE FROM pins; PRAGMA user_version=2; COMMIT;")?;
+        authorization::initialize(&db)?;
         let key: Option<Vec<u8>> = db
             .query_row("SELECT value FROM meta WHERE key='cursor_key'", [], |r| {
                 r.get(0)
