@@ -845,6 +845,8 @@ fn session_loop(
                     for response in engine.feed(&bytes) {
                         if let Err(e) = pty.write(response) {
                             info.error = e.to_string();
+                        } else {
+                            authorization::input(&mut info, None);
                         }
                     }
                 }
@@ -1104,10 +1106,13 @@ fn handle_session(
                 // Application-requested focus reports are protocol traffic, not manual input.
                 let focus_notification =
                     engine.focus_reporting() && matches!(bytes.as_slice(), b"\x1b[I" | b"\x1b[O");
-                let changed = !bytes.is_empty() && !focus_notification;
+                let has_input = !bytes.is_empty();
+                let changed = has_input && !focus_notification;
                 pty.write(bytes)?;
-                if changed {
+                if has_input {
                     authorization::input(info, None);
+                }
+                if changed {
                     info.manual_revision += 1;
                 }
                 control.commit(req.client, req.input_seq, signature);

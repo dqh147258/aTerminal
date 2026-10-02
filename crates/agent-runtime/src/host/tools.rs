@@ -7,6 +7,13 @@ pub fn definitions(global: bool) -> Vec<ToolDefinition> {
     let ids = json!({"type":"array","minItems":1,"maxItems":32,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":36}});
     let mut specs = vec![
         (
+            "run_program",
+            "Run an absolute program directly in the Session's OS-observed cwd with literal args and optional bounded UTF-8 stdin (default EOF). Uses native exec and a cleared environment, never Shell/PTY input or a cwd sandbox. Risky actions require once/always/full. Only pinned system leaf programs can have exact permanent rules; interpreters/wrappers/unknown programs are once/full. Returns command_id, real native exit and archived bounded output; timeout/cancel is unknown, never fabricated completion. Native child process groups are stopped on cancellation; existing PTY programs are untouched.",
+            json!({"program":{"type":"string","minLength":1,"maxLength":4096},"args":{"type":"array","maxItems":64,"items":{"type":"string","maxLength":16000}},"stdin":{"type":["string","null"],"maxLength":16000}}),
+            vec!["program", "args"],
+            true,
+        ),
+        (
             "inspect_command",
             "Run a strictly parsed read-only command as a fixed absolute native program in the Session's OS-observed cwd. Does not evaluate Shell aliases/functions/PATH or change PTY input. Bounded stdout/stderr/exit_code evidence has source=sidecar_read; unknown syntax is rejected, so use run_command for approval.",
             json!({"command":{"type":"string","minLength":1,"maxLength":16000}}),
@@ -15,7 +22,7 @@ pub fn definitions(global: bool) -> Vec<ToolDefinition> {
         ),
         (
             "run_command",
-            "Submit a complete command through the existing PTY and authorization gate. Returns command_id/accepted, NOT completion. Only a matching shell sequence and exact command can establish completion; unknown TUI tasks stay unknown.",
+            "Submit a complete command through the existing PTY and authorization gate. PTY resolution cannot receive permanent rules; use run_program for a pinned native leaf capability. Returns command_id/accepted, NOT completion. Only a matching shell sequence and exact command can establish completion; unknown TUI tasks stay unknown.",
             json!({"command":{"type":"string","minLength":1,"maxLength":16000}}),
             vec!["command"],
             true,

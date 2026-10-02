@@ -429,7 +429,16 @@ impl Frozen {
         })
     }
     pub fn check_credentials(&self, current: &OwnerConfig) -> Result<()> {
-        for server in self.servers.values() {
+        for (id, server) in &self.servers {
+            let active = current
+                .mcp
+                .get(id)
+                .filter(|s| s.enabled)
+                .context("extension_removed_or_disabled")?;
+            ensure!(
+                serde_json::to_value(active)? == serde_json::to_value(&server.config)?,
+                "extension_version_changed"
+            );
             for alias in server
                 .config
                 .env_secret_refs
@@ -442,6 +451,24 @@ impl Frozen {
                 );
             }
         }
+        for (id, skill) in &self.config.skills {
+            if skill.enabled {
+                let active = current
+                    .skills
+                    .get(id)
+                    .filter(|s| s.enabled)
+                    .context("skill_removed_or_disabled")?;
+                ensure!(
+                    active.version == skill.version && active.root == skill.root,
+                    "skill_version_changed"
+                );
+            }
+        }
+        ensure!(
+            serde_json::to_value(&self.config.skill_sources)?
+                == serde_json::to_value(&current.skill_sources)?,
+            "skill_sources_changed"
+        );
         Ok(())
     }
     pub fn server_ids(&self) -> Value {
@@ -659,7 +686,17 @@ impl Frozen {
             self.servers[id].config.call_timeout_ms,
         ));
         context.check_authorization()?;
-        context.commit_authorization(None)?;
+        {
+            // Commit is the action-start linearization point shared with user permission
+            // changes and credential/identity cancellation. Never hold this std gate
+            // across asynchronous transport I/O or recursively acquire it in preflight.
+            let permitted = context.execution_gate.lock().unwrap();
+            ensure!(
+                *permitted && !*context.cancel.borrow(),
+                "cancelled_before_mcp_call"
+            );
+            context.commit_authorization(None)?;
+        }
         let result = catalog.connection.call(tool, args, timeout).await?;
         let body = serde_json::to_string(&result)?;
         if body.len() <= context.max_read_bytes
@@ -839,6 +876,40 @@ pub fn builtin_catalog() -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn disabled_removed_or_reconfigured_extensions_revoke_frozen_calls() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = OwnerConfig::default();
+        let server: McpServer = serde_json::from_value(
+            json!({"command":"/usr/bin/printf","args":["fixed"],"enabled":true}),
+        )
+        .unwrap();
+        config.mcp.insert("server".into(), server);
+        let frozen = Frozen::new(
+            temp.path(),
+            "owner",
+            1,
+            Arc::new(config.clone()),
+            "",
+            Some(temp.path().into()),
+        )
+        .unwrap();
+        frozen.check_credentials(&config).unwrap();
+        let mut changed = config.clone();
+        changed
+            .mcp
+            .get_mut("server")
+            .unwrap()
+            .args
+            .push("new".into());
+        assert!(frozen.check_credentials(&changed).is_err());
+        let mut changed = config.clone();
+        changed.mcp.get_mut("server").unwrap().enabled = false;
+        assert!(frozen.check_credentials(&changed).is_err());
+        let mut changed = config;
+        changed.mcp.clear();
+        assert!(frozen.check_credentials(&changed).is_err());
+    }
     #[test]
     fn immutable_packages_enforce_policy_manifest_and_resource_boundaries() {
         let temp = tempfile::tempdir().unwrap();

@@ -165,3 +165,490 @@ async fn rpc_resolves_only_exact_scope_and_uses_long_details_ack() {
         .is_err()
     );
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn final_actor_commit_rejects_another_agents_draft_after_broker_preflight() {
+    use ai_terminal_agent_runtime::model::{Protocol, RequestSettings};
+    use axum::response::IntoResponse;
+    use std::sync::atomic::AtomicU32;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let calls = Arc::new(AtomicU32::new(0));
+    let requests_count = calls.clone();
+    let router=axum::Router::new().route("/chat/completions",axum::routing::post(move || {
+        let count=requests_count.clone();async move {
+            let first=count.fetch_add(1,Ordering::AcqRel)==0;
+            let delta=if first {json!({"tool_calls":[{"index":0,"id":"approved","type":"function","function":{"name":"run_command","arguments":json!({"command":"/usr/bin/printf APPROVED"}).to_string()}}]})} else {json!({"content":"finished"})};
+            let chunk=json!({"id":"stub","object":"chat.completion.chunk","created":0,"model":"stub","choices":[{"index":0,"delta":delta,"finish_reason":null}]});
+            let end=json!({"id":"stub","object":"chat.completion.chunk","created":0,"model":"stub","choices":[{"index":0,"delta":{},"finish_reason":if first {"tool_calls"} else {"stop"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}});
+            ([("content-type","text/event-stream")],format!("data: {chunk}\n\ndata: {end}\n\ndata: [DONE]\n\n")).into_response()
+        }
+    }));
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let f = Fixture::new();
+    let owner = f.host.account.owner();
+    let provider = Provider {
+        id: "test".into(),
+        name: "local stub".into(),
+        connection: ai_terminal_agent_runtime::model::Connection {
+            protocol: Protocol::OpenaiChat,
+            endpoint: format!("http://{address}"),
+            api_version: None,
+        },
+        catalog_url: None,
+        secret_ref: None,
+        credential_revision: 0,
+        enabled: true,
+    };
+    let mut config = OwnerConfig::default();
+    config
+        .providers
+        .insert(provider.id.clone(), provider.clone());
+    f.host
+        .config
+        .execute(
+            &owner,
+            crate::config::Command::Replace {
+                expected_revision: f.host.config.snapshot(&owner).revision,
+                config,
+                secrets: Default::default(),
+            },
+        )
+        .unwrap();
+    // Explicit /bin/sh source avoids startup files; this isolated PTY never runs a model or user command.
+    let created = super::super::dispatch(
+        &f.host,
+        Request {
+            operation: Operation::Create as i32,
+            client: 1,
+            cwd: f._dir.path().to_string_lossy().into_owned(),
+            command: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "printf READY; while IFS= read -r line; do printf 'LINE:%s\\n' \"$line\"; done"
+                    .into(),
+            ],
+            rows: 24,
+            cols: 80,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .info
+    .unwrap();
+    let real = f.host.sessions.lock().unwrap()[&created.id].clone();
+    let attached = request_actor(
+        &real,
+        Request {
+            operation: Operation::AttachDesktop as i32,
+            client: 1,
+            session_epoch: created.epoch,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(attached.error.is_empty());
+    let (proxy, requests) = mpsc::sync_channel::<ActorMessage>(32);
+    let target = real.clone();
+    let session_id = created.id.clone();
+    let injected = Arc::new(AtomicBool::new(false));
+    let signal = injected.clone();
+    let shim = std::thread::spawn(move || {
+        while let Ok(message) = requests.recv() {
+            if message.request.operation == Operation::AgentWrite as i32
+                && message.authorization.is_some()
+                && !signal.swap(true, Ordering::AcqRel)
+            {
+                // The original message has already passed every Broker preflight and is queued.
+                // A separately authorized writer inserts a draft before the real Actor handles it.
+                let info = request_actor(
+                    &target,
+                    Request {
+                        operation: Operation::Poll as i32,
+                        client: 700,
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+                .info
+                .unwrap();
+                let acquire = request_actor_guarded(
+                    &target,
+                    Request {
+                        operation: Operation::AgentAcquire as i32,
+                        client: 700,
+                        session_epoch: info.epoch,
+                        manual_revision: info.manual_revision,
+                        ..Default::default()
+                    },
+                    Some(Arc::new(Mutex::new(true))),
+                )
+                .unwrap();
+                let epoch = acquire.info.unwrap().control_epoch;
+                let result = request_actor_guarded(
+                    &target,
+                    Request {
+                        operation: Operation::AgentWrite as i32,
+                        client: 700,
+                        session: session_id.clone(),
+                        session_epoch: info.epoch,
+                        manual_revision: info.manual_revision,
+                        control_epoch: epoch,
+                        input_kind: 1,
+                        text: "unrelated draft".into(),
+                        submit: false,
+                        ..Default::default()
+                    },
+                    Some(Arc::new(Mutex::new(true))),
+                )
+                .unwrap();
+                assert!(result.error.is_empty(), "{}", result.error);
+            }
+            if target.send(message).is_err() {
+                break;
+            }
+        }
+    });
+    f.host
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(created.id.clone(), proxy);
+    let view = f.host.config.snapshot(&owner);
+    let scope = f
+        .host
+        .agents
+        .store
+        .agent(&owner, &view.installation_id, Some(&created.id))
+        .unwrap();
+    let model =
+        ai_terminal_agent_runtime::model::connect(&provider.connection, "stub", "").unwrap();
+    let backend = Backend::new(
+        &f.host,
+        scope.clone(),
+        String::new(),
+        Arc::new(view.config),
+        view.revision,
+        provider,
+        None,
+        None,
+    )
+    .unwrap();
+
+    let engine_model = model.clone();
+    let broker = backend.clone();
+    f.host
+        .agents
+        .submit(
+            scope.clone(),
+            "root",
+            "perform command",
+            json!({}),
+            true,
+            "",
+            move || {
+                Ok(RunSnapshot {
+                    revision: 1,
+                    provider: Protocol::OpenaiChat,
+                    builder: RequestBuilder {
+                        settings: RequestSettings {
+                            model: "stub".into(),
+                            temperature: None,
+                            max_tokens: 2048,
+                            additional_params: None,
+                        },
+                        system: "fixed".into(),
+                        tools: terminal_tools(false),
+                    },
+                    model: engine_model,
+                    backend: broker,
+                    context_window: 128000,
+                    max_rounds: 4,
+                    max_seconds: 30,
+                    allow_write: true,
+                    vision: false,
+                })
+            },
+        )
+        .unwrap();
+    let mut pending = None;
+    for _ in 0..300 {
+        let page = f.host.agents.store.pending(&scope, None).unwrap();
+        pending = page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["state"] == "pending")
+            .cloned();
+        if pending.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let pending = pending.expect("real Broker approval");
+    f.host
+        .agents
+        .store
+        .resolve_pending(
+            &scope,
+            "answer",
+            pending["id"].as_str().unwrap(),
+            Some("once"),
+            None,
+        )
+        .unwrap();
+    f.host.agents.human_response_changed();
+    let mut result = Value::Null;
+    for _ in 0..500 {
+        result = f.host.agents.state(&scope).unwrap();
+        if !matches!(
+            result["state"].as_str(),
+            Some("running" | "waiting_for_user" | "finishing" | "stopping")
+        ) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(result["state"], "completed", "{result}");
+    assert!(injected.load(Ordering::Acquire));
+    let info = request_actor(
+        &real,
+        Request {
+            operation: Operation::Poll as i32,
+            client: 1,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .info
+    .unwrap();
+    let shell: Value = serde_json::from_str(&info.shell_status).unwrap();
+    assert_eq!(
+        shell["host_input_boundary"]["input_revision"], 1,
+        "refused action never reached PTY writer"
+    );
+    let history = f.host.agents.store.history(&scope, None).unwrap();
+    let refused = history
+        .items
+        .iter()
+        .flat_map(|item| item.value["updates"].as_array().into_iter().flatten())
+        .filter_map(|update| update["result_record_id"].as_str())
+        .any(|record| {
+            f.host
+                .agents
+                .store
+                .record_page(&scope, record, "body", None, 12288)
+                .unwrap()["body"]
+                .as_str()
+                .unwrap_or("")
+                .contains("authorization_input_changed")
+        });
+    assert!(
+        refused,
+        "Actor rejection was archived as a model tool result"
+    );
+    // Close only the isolated test terminal and release the proxy thread.
+    let closed = super::super::dispatch(
+        &f.host,
+        Request {
+            operation: Operation::Close as i32,
+            client: 1,
+            session: created.id,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(closed.error.is_empty());
+    drop(backend);
+    drop(f);
+    shim.join().unwrap();
+    server.abort();
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn skill_default_cwd_and_native_observation_follow_real_session_directory_and_revoke_stale_cwd()
+ {
+    use ai_terminal_agent_runtime::{
+        host::Budget,
+        model::{Connection, Protocol},
+    };
+    let f = Fixture::new();
+    let owner = f.host.account.owner();
+    let provider = Provider {
+        id: "test".into(),
+        name: "local stub".into(),
+        connection: Connection {
+            protocol: Protocol::OpenaiChat,
+            endpoint: "http://127.0.0.1:1".into(),
+            api_version: None,
+        },
+        catalog_url: None,
+        secret_ref: None,
+        credential_revision: 0,
+        enabled: true,
+    };
+    let mut config = OwnerConfig::default();
+    config
+        .providers
+        .insert(provider.id.clone(), provider.clone());
+    f.host
+        .config
+        .execute(
+            &owner,
+            crate::config::Command::Replace {
+                expected_revision: 0,
+                config,
+                secrets: Default::default(),
+            },
+        )
+        .unwrap();
+    let files=std::collections::BTreeMap::from([
+        ("SKILL.md".into(),STANDARD.encode("---\nname: cwd-check\ndescription: isolated directory test\n---\nRead the working directory.")),
+        ("scripts/cwd.sh".into(),STANDARD.encode("pwd\n"))]);
+    f.host
+        .config
+        .execute(
+            &owner,
+            crate::config::Command::SkillFiles {
+                id: "cwd-check".into(),
+                files,
+                expected_revision: 1,
+            },
+        )
+        .unwrap();
+    let next = f._dir.path().join("next");
+    std::fs::create_dir(&next).unwrap();
+    let created = super::super::dispatch(
+        &f.host,
+        Request {
+            operation: Operation::Create as i32,
+            client: 1,
+            cwd: f._dir.path().to_string_lossy().into_owned(),
+            command: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "printf READY; read -r line; cd -- \"$1\"; printf CHANGED; exec cat".into(),
+                "cwd-test".into(),
+                next.to_string_lossy().into_owned(),
+            ],
+            rows: 24,
+            cols: 80,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .info
+    .unwrap();
+    let actor = f.host.sessions.lock().unwrap()[&created.id].clone();
+    request_actor(
+        &actor,
+        Request {
+            operation: Operation::AttachDesktop as i32,
+            client: 1,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let view = f.host.config.snapshot(&owner);
+    let scope = f
+        .host
+        .agents
+        .store
+        .agent(&owner, &view.installation_id, Some(&created.id))
+        .unwrap();
+    let backend = Backend::new(
+        &f.host,
+        scope.clone(),
+        String::new(),
+        Arc::new(view.config),
+        view.revision,
+        provider,
+        None,
+        None,
+    )
+    .unwrap();
+    let root = f
+        .host
+        .agents
+        .store
+        .accept_user(&scope, "r", "test", json!({}))
+        .unwrap();
+    let (_cancel, receiver) = tokio::sync::watch::channel(false);
+    let context = ToolContext {
+        history_unit_id: root.user_message_id,
+        vision: false,
+        scope: scope.clone(),
+        run_id: root.run_id,
+        root_user_message_id: root.root_user_message_id,
+        action_id: "change-cwd".into(),
+        max_read_bytes: 4096,
+        budget: Arc::new(Budget::new(30, 10, 10000, scope.clone())),
+        cancel: receiver,
+        execution_gate: Arc::new(Mutex::new(true)),
+        authorization_check: None,
+    };
+    let args = json!({"skill_id":"user/cwd-check","action":"script","arguments":{"path":"scripts/cwd.sh","interpreter":"sh"}});
+    let before = backend
+        .action_descriptor(&context, "skill_action", &args)
+        .unwrap();
+    assert_eq!(
+        std::fs::canonicalize(before.cwd.unwrap()).unwrap(),
+        f._dir.path().canonicalize().unwrap()
+    );
+    let old_info = backend.info(&created.id).unwrap().info.unwrap();
+    let old_cwd = crate::process::cwd(&old_info).unwrap();
+    let observation = backend
+        .inspection_context(&context, &created.id, &old_cwd)
+        .unwrap();
+    backend
+        .write(
+            &context,
+            &created.id,
+            Request {
+                operation: Operation::AgentWrite as i32,
+                input_kind: 1,
+                text: "change".into(),
+                submit: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let next = next.canonicalize().unwrap();
+    for _ in 0..100 {
+        let info = backend.info(&created.id).unwrap().info.unwrap();
+        if crate::process::cwd(&info).as_ref() == Some(&next) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        observation.commit_authorization(None).is_err(),
+        "native spawn refuses a cached directory"
+    );
+    let after = backend
+        .action_descriptor(&context, "skill_action", &args)
+        .unwrap();
+    assert_eq!(std::fs::canonicalize(after.cwd.unwrap()).unwrap(), next);
+    let output = backend
+        .invoke(context.clone(), "skill_action", args)
+        .await
+        .unwrap();
+    assert_eq!(output.value["exit_code"], 0);
+    assert_eq!(
+        std::fs::canonicalize(output.observation.unwrap().body.trim()).unwrap(),
+        next
+    );
+    backend.finished();
+    super::super::dispatch(
+        &f.host,
+        Request {
+            operation: Operation::Close as i32,
+            client: 1,
+            session: created.id,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+}
