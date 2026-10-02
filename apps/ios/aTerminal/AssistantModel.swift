@@ -34,7 +34,7 @@ struct AgentItem: Identifiable {
     @Published private(set) var archives: [ChatArchive] = []
     @Published private(set) var items: [AgentItem] = []
     @Published var status = "连接 Desktop 后使用 AI"
-    @Published var draft = "" { didSet { if !restoringDraft { requestID = UUID().uuidString; saveDraft() } } }
+    @Published var draft = "" { didSet { if !restoringDraft && oldValue != draft { requestID = UUID().uuidString; saveDraft() } } }
     @Published var attachments: [AgentAttachment] = []
     @Published var submitting = false
     @Published var globalRows: [[String: Any]] = []

@@ -3,6 +3,7 @@ import SwiftUI
 struct AgentPendingCard: View {
     @ObservedObject var model: AssistantModel
     let item: AgentPending
+    @State private var detailsVisible = false
     @State private var answer = ""
     @FocusState private var answering: Bool
     var body: some View {
@@ -13,7 +14,16 @@ struct AgentPendingCard: View {
             if !item.actionable { Text("请求状态：" + item.state).foregroundColor(WorkspaceStyle.muted) }
             if item.kind == "approval" {
                 Text(item.tool + " · " + item.cwd).font(.caption).textSelection(.enabled)
-                Text(model.authorization.detailText[item.id] ?? item.arguments).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+                Text(item.arguments).font(.system(.callout, design: .monospaced)).lineLimit(8).textSelection(.enabled)
+                if let details = model.authorization.detailText[item.id] {
+                    Button("查看完整操作详情（已取齐）") { detailsVisible = true }.accessibilityIdentifier("authorization.details.open")
+                        .sheet(isPresented: $detailsVisible) {
+                            NavigationView {
+                                ScrollView { Text(details).font(.system(.callout, design: .monospaced)).textSelection(.enabled).padding() }
+                                    .navigationTitle("完整操作详情").toolbar { Button("关闭") { detailsVisible = false }.accessibilityIdentifier("authorization.details.close") }
+                            }
+                        }
+                }
                 if item.requiresDetails && !model.authorization.canApprove(item) {
                     Text(model.authorization.detailErrors[item.id] ?? "正在取齐完整操作详情，取齐后可以授权；也可以直接拒绝。")
                         .font(.caption).foregroundColor(WorkspaceStyle.muted).accessibilityIdentifier("authorization.details.status")
