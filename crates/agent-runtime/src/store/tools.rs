@@ -31,6 +31,8 @@ struct SearchCursor {
     source: i64,
     offset: usize,
 }
+type SearchEvent = (i64, String, String, i64, String);
+type SearchText = (Option<String>, String, i64, usize, Vec<u8>);
 impl Store {
     /// Bounded traversal of full retained event/record text. An empty page with a cursor
     /// means scanning is incomplete, rather than a claim that the query has no matches.
@@ -115,9 +117,7 @@ impl Store {
             }
             scanned += 1;
             let available = (256 * 1024 - scanned_bytes).min(65536);
-            let candidate: Option<(Option<String>, String, i64, usize, Vec<u8>)> = if cursor.source
-                < 0
-            {
+            let candidate: Option<SearchText> = if cursor.source < 0 {
                 if args.kind.as_ref().is_none_or(|kind| kind == &event_kind) {
                     Some(db.query_row("SELECT LENGTH(CAST(value AS BLOB)),SUBSTR(CAST(value AS BLOB),?2,?3) FROM events WHERE seq=?1",params![seq,cursor.offset as i64+1,available as i64],|r|Ok((None,event_kind.clone(),-1,r.get::<_,i64>(0)? as usize,r.get(1)?)))?)
                 } else {
