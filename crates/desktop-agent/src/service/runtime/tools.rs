@@ -289,14 +289,24 @@ impl Backend {
         let global = self.scope.session.is_none();
         let terminal = if !global || args.get("session_id").is_some() {
             let session = self.session(&args)?;
-            let info = self.info(&session)?.info.context("session_unavailable")?;
-            let hooks = shell(&info);
-            json!({"session_id":session,"desktop_attached":info.desktop_attached,"shell_foreground_proven":crate::process::shell_foreground(&info),"shell_hooks":{"available":hooks["evidence_source"]=="session_shell_hook","dialect":hooks["dialect"],"command_association":hooks["command_association"]==true,"evidence_source":hooks["evidence_source"],"trusted_for_authorization":false},"application_task_adapter":null,"application_completion":false})
+            if let Ok(reply) = self.info(&session)
+                && let Some(info) = reply.info
+            {
+                let hooks = shell(&info);
+                json!({"session_id":session,"available":true,"desktop_attached":info.desktop_attached,"shell_foreground_proven":crate::process::shell_foreground(&info),"shell_hooks":{"available":hooks["evidence_source"]=="session_shell_hook","dialect":hooks["dialect"],"command_association":hooks["command_association"]==true,"evidence_source":hooks["evidence_source"],"trusted_for_authorization":false},"application_task_adapter":null,"application_completion":false})
+            } else {
+                ensure!(
+                    self.scope.session.as_deref() == Some(session.as_str())
+                        || self.fences.lock().unwrap().contains_key(&session),
+                    "session_unavailable"
+                );
+                json!({"session_id":session,"available":false,"desktop_attached":false,"shell_foreground_proven":false,"shell_hooks":{"available":false,"trusted_for_authorization":false},"application_task_adapter":null,"application_completion":false})
+            }
         } else {
             Value::Null
         };
         Ok(ToolOutput::value(
-            json!({"role":if global{"global"}else{"session"},"tools":terminal_tools(global).iter().map(|t|t.name.as_str()).collect::<Vec<_>>(),"vision":context.vision,"visual":{"capture_source":"rendered_terminal","model_can_see_images":context.vision},"native_inspection":{"os_cwd_available":cfg!(unix),"source":"sidecar_read","max_elapsed_ms":30000},"native_program":{"source":"native_program","managed_dispatch":"direct_exec_env_clear","stdin_max_bytes":16000,"args_max_count":64,"max_elapsed_ms":30000,"permanent_scope":"pinned_leaf_program_args_stdin_cwd","pty_permanent_rules":false},"terminal":terminal,"authorization":self.host()?.agents.permission_capabilities(context)?,"budget":context.budget.tool_status()?,"limits":{"wait_ms":30000,"task_ids":32,"history_page":50,"shell_evidence":"observational","os_sandbox":false,"cwd_sandbox":false,"mcp_catalog_may_start_enabled_servers":true}}),
+            json!({"role":if global{"global"}else{"session"},"tools":terminal_tools(global).iter().map(|t|t.name.as_str()).collect::<Vec<_>>(),"vision":context.vision,"visual":{"capture_source":"rendered_terminal","model_can_see_images":context.vision},"native_inspection":{"os_cwd_available":cfg!(unix),"source":"sidecar_read","max_elapsed_ms":30000},"native_program":{"os_cwd_available":cfg!(unix),"source":"native_program","managed_dispatch":"direct_exec_env_clear","stdin_max_bytes":16000,"args_max_count":64,"max_elapsed_ms":30000,"permanent_scope":"pinned_leaf_program_args_stdin_cwd","pty_permanent_rules":false},"terminal":terminal,"authorization":self.host()?.agents.permission_capabilities(context)?,"budget":context.budget.tool_status()?,"limits":{"wait_ms":30000,"task_ids":32,"history_page":50,"shell_evidence":"observational","os_sandbox":false,"cwd_sandbox":false,"mcp_catalog_may_start_enabled_servers":true}}),
         ))
     }
     fn read_delta(&self, context: &ToolContext, args: Value) -> Result<ToolOutput> {

@@ -1,21 +1,35 @@
 {
-  "state": "In progress",
+  "state": "Completed owned implementation and local verification",
+  "run": "d51ef561-a773-416c-b35c-eb5e1cd13301",
+  "source_commits": [
+    "8eaf8bb",
+    "39fcb54",
+    "06b4c9d"
+  ],
   "implemented": [
-    "SQLite permissions/CAS, pending/question/TTL/restart recovery/exact rules",
-    "Host approval/ask_user and dynamic shared budget",
-    "Actor input boundary and one-shot commit permission",
-    "RPC/CLI/remote permissions plus long detail contract"
-  ],
-  "dependencies": [
-    "policy 5eb063c merged; preview followup pending",
-    "toolset c29f404 + fe8d656 merged"
-  ],
-  "next": [
-    "finish policy preview/whole language identity hookup",
-    "compile and fix owned parent modules",
-    "Host/Broker/RPC/CLI isolated regression tests"
+    "Store/Host/RPC/CLI permissions, persistent approval/question, exact once/always/deny, TTL and no replay",
+    "Shared active-time budget pause only for whole waiting tree; full inheritance without Session pollution; explicit full after deny affects new calls only",
+    "All PTY calls final Actor input revision/fence/cwd check; unknown raw/typeahead cannot claim empty",
+    "Managed run_program directexec/envclear/bounded stdin+literalargs/current OS cwd/real output+exit+durable command/result_record_id",
+    "Only native leaf executable hash/args/stdin/cwd has v3 permanent rule; PTY never permanent, v2 rules ineffective",
+    "Readonly transport users cannot approve/mutate/revoke; known closed Session capabilities remain readable",
+    "Dynamic Skill current cwd, HTTP MCP remote cwd unknown, extension disable/version/credentials revoke and final commit gate"
   ],
   "verification": [
-    "initial compile found toolset usize ToSql; followup merged; no passing claim yet"
+    "Runtime99/99 lib passed; final human wait cancel recheck Host11/11 focus passed",
+    "Desktop57/57 lib passed including actual Broker/Actor race and native group cancellation, scope/CAS/legacy/remote readonly",
+    "CLI2 parse tests and CLI3 actual daemon/local HTTP/PTY/native tests passed; native tee always->auto->revoke->deny->regrant->revoke marker exact and same rule ID",
+    "Two lib strict clippy --tests and CLI bin/test strict clippy passed on final owned source",
+    "cargo fmt all check and git diff check passed; jobs2/testthreads2"
+  ],
+  "remaining_coordinator_scope": [
+    "Independent encrypted Review/actual Bash/Zsh override marker followup",
+    "Final main merge/test and mobile UI acceptance"
+  ],
+  "limitations": [
+    "No paid provider or existing account/terminal used",
+    "PowerShell unavailable, not runtime tested",
+    "No physical device or OS/cwd sandbox claim",
+    "Native max30s/bounded output; unknown exit/cancel not replayed"
   ]
 }
