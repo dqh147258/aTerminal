@@ -7,6 +7,13 @@ pub fn definitions(global: bool) -> Vec<ToolDefinition> {
     let ids = json!({"type":"array","minItems":1,"maxItems":32,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":36}});
     let mut specs = vec![
         (
+            "inspect_command",
+            "Run a strictly parsed read-only command as a fixed absolute native program in the Session's OS-observed cwd. Does not evaluate Shell aliases/functions/PATH or change PTY input. Bounded stdout/stderr/exit_code evidence has source=sidecar_read; unknown syntax is rejected, so use run_command for approval.",
+            json!({"command":{"type":"string","minLength":1,"maxLength":16000}}),
+            vec!["command"],
+            true,
+        ),
+        (
             "run_command",
             "Submit a complete command through the existing PTY and authorization gate. Returns command_id/accepted, NOT completion. Only a matching shell sequence and exact command can establish completion; unknown TUI tasks stay unknown.",
             json!({"command":{"type":"string","minLength":1,"maxLength":16000}}),
@@ -106,7 +113,8 @@ pub fn extend_catalog(tools: &mut Vec<ToolDefinition>, global: bool) {
 pub fn is_read(name: &str) -> bool {
     matches!(
         name,
-        "get_command_result"
+        "inspect_command"
+            | "get_command_result"
             | "wait_command"
             | "list_agent_tasks"
             | "get_agent_tasks"
@@ -444,7 +452,25 @@ mod toolset_tests {
         let fixture = Fixture::new();
         let task = fixture.task(&fixture.child);
         let foreign = fixture.host.store.agent("foreign", "d", Some("s")).unwrap();
-        let bad = fixture.task(&foreign);
+        let foreign_global = fixture.host.store.agent("foreign", "d", None).unwrap();
+        let foreign_root = fixture
+            .host
+            .store
+            .accept_user(&foreign_global, "foreign_root", "foreign", json!({}))
+            .unwrap();
+        let bad = fixture
+            .host
+            .store
+            .delegate(
+                &foreign,
+                &foreign_root.root_user_message_id,
+                "foreign_task",
+                "foreign",
+                json!({}),
+                None,
+            )
+            .unwrap()
+            .run_id;
         for ids in [
             vec![task.clone(), task.clone()],
             vec![task.clone(), bad],

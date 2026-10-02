@@ -157,3 +157,229 @@ pub(crate) fn shell_foreground(info: &ai_terminal_protocol::local::SessionInfo) 
         false
     }
 }
+
+/// A bounded native read selected by the policy's fixed-program plan, never Shell source.
+pub(crate) struct ReadCommandResult {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
+    pub exit_code: Option<i32>,
+    pub elapsed_ms: u64,
+}
+pub(crate) async fn inspect(
+    context: &ai_terminal_agent_runtime::host::ToolContext,
+    program: &std::path::Path,
+    argv: &[String],
+    cwd: &std::path::Path,
+) -> anyhow::Result<ReadCommandResult> {
+    use anyhow::{Context as _, ensure};
+    use process_wrap::tokio::*;
+    use std::{
+        process::Stdio,
+        time::{Duration, Instant},
+    };
+    use tokio::io::AsyncReadExt;
+    ensure!(
+        program.is_absolute() && cwd.is_absolute(),
+        "inspect_requires_absolute_program_and_cwd"
+    );
+    ensure!(
+        argv.len() <= 128 && argv.iter().map(String::len).sum::<usize>() <= 16000,
+        "inspect_argument_limit"
+    );
+    // Clear program-specific startup injection, loaders, pagers and locale-dependent parsing.
+    let mut command = CommandWrap::with_new(program, |command| {
+        command
+            .args(argv)
+            .current_dir(cwd)
+            .env_clear()
+            .env("LC_ALL", "C")
+            .env("LANG", "C")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+    });
+    #[cfg(unix)]
+    command.wrap(ProcessGroup::leader());
+    #[cfg(windows)]
+    command.wrap(JobObject);
+    command.wrap(KillOnDrop);
+    context.check_authorization()?;
+    let start = Instant::now();
+    let mut child = {
+        let gate = context.execution_gate.lock().unwrap();
+        ensure!(
+            *gate && !*context.cancel.borrow(),
+            "cancelled_before_inspect_spawn"
+        );
+        context.commit_authorization(None)?;
+        command.spawn()?
+    };
+    let stdout = child.stdout().take().context("inspect_stdout_missing")?;
+    let stderr = child.stderr().take().context("inspect_stderr_missing")?;
+    let out_limit = context.max_read_bytes.clamp(4, 65536);
+    let err_limit = 8192usize;
+    let mut out = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        stdout
+            .take(out_limit as u64 + 1)
+            .read_to_end(&mut bytes)
+            .await
+            .map(|_| bytes)
+    });
+    let mut err = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        stderr
+            .take(err_limit as u64 + 1)
+            .read_to_end(&mut bytes)
+            .await
+            .map(|_| bytes)
+    });
+    let mut cancelled = context.cancel.clone();
+    let result = {
+        let work = async {
+            let status = child.wait().await?;
+            let stdout = (&mut out).await??;
+            let stderr = (&mut err).await??;
+            Ok::<_, anyhow::Error>((status, stdout, stderr))
+        };
+        tokio::pin!(work);
+        loop {
+            let remaining = match context.budget.remaining() {
+                Ok(value) => value,
+                Err(error) => break Err(error),
+            };
+            if *cancelled.borrow() {
+                break Err(anyhow::anyhow!("cancelled"));
+            }
+            if start.elapsed() >= Duration::from_secs(30) {
+                break Err(anyhow::anyhow!("inspect_timeout"));
+            }
+            tokio::select! {biased;
+                _=cancelled.wait_for(|value|*value)=>break Err(anyhow::anyhow!("cancelled")),
+                result=&mut work=>break result,
+                _=tokio::time::sleep(remaining.min(Duration::from_millis(100)))=>{}
+            }
+        }
+    };
+    // End borrows before kill/abort. Dropping a cancelled runner also kills its process group.
+    if result.is_err() {
+        let _ = child.start_kill();
+        out.abort();
+        err.abort();
+    }
+    let (status, mut stdout, mut stderr) = result?;
+    let stdout_truncated = stdout.len() > out_limit;
+    let stderr_truncated = stderr.len() > err_limit;
+    stdout.truncate(out_limit);
+    stderr.truncate(err_limit);
+    context.budget.remaining()?;
+    ensure!(!*cancelled.borrow(), "cancelled");
+    context.budget.read(stdout.len() + stderr.len())?;
+    Ok(ReadCommandResult {
+        stdout,
+        stderr,
+        stdout_truncated,
+        stderr_truncated,
+        exit_code: status.code(),
+        elapsed_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
+#[cfg(test)]
+mod toolset_tests {
+    use super::*;
+    use ai_terminal_agent_runtime::{
+        host::{Budget, ToolContext},
+        store::Store,
+    };
+    use serde_json::json;
+    use std::sync::{Arc, Mutex};
+    fn context(temp: &tempfile::TempDir) -> (ToolContext, tokio::sync::watch::Sender<bool>) {
+        let store = Store::open(&temp.path().join("state/db")).unwrap();
+        let scope = store.agent("o", "d", Some("s")).unwrap();
+        let root = store
+            .accept_user(&scope, "r", "inspect", json!({}))
+            .unwrap();
+        let (cancel, receiver) = tokio::sync::watch::channel(false);
+        (
+            ToolContext {
+                history_unit_id: root.user_message_id,
+                vision: false,
+                scope: scope.clone(),
+                run_id: root.run_id,
+                root_user_message_id: root.root_user_message_id,
+                action_id: "inspect".into(),
+                max_read_bytes: 1024,
+                budget: Arc::new(Budget::new(30, 10, 10000, scope)),
+                cancel: receiver,
+                execution_gate: Arc::new(Mutex::new(true)),
+                authorization_check: None,
+            },
+            cancel,
+        )
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn native_inspection_uses_observed_directory_and_bounded_streams() {
+        let temp = tempfile::tempdir().unwrap();
+        let (context, _cancel) = context(&temp);
+        let result = inspect(&context, std::path::Path::new("/bin/pwd"), &[], temp.path())
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(
+            String::from_utf8(result.stdout).unwrap().trim(),
+            temp.path().canonicalize().unwrap().to_string_lossy()
+        );
+        let path = temp.path().join("large");
+        std::fs::write(&path, vec![b'x'; 128 * 1024]).unwrap();
+        let result = inspect(
+            &context,
+            std::path::Path::new("/bin/cat"),
+            &[path.to_string_lossy().into_owned()],
+            temp.path(),
+        )
+        .await
+        .unwrap();
+        assert!(result.stdout_truncated);
+        assert_eq!(result.stdout.len(), 1024);
+        assert!(result.stderr.len() <= 8192);
+        let missing = inspect(
+            &context,
+            std::path::Path::new("/bin/cat"),
+            &["missing".into()],
+            temp.path(),
+        )
+        .await
+        .unwrap();
+        assert_ne!(missing.exit_code, Some(0));
+        assert!(!missing.stderr.is_empty());
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn native_inspection_cancellation_kills_without_waiting_for_process_exit() {
+        let temp = tempfile::tempdir().unwrap();
+        let (context, cancel) = context(&temp);
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            cancel.send(true).unwrap();
+        });
+        let start = std::time::Instant::now();
+        assert_eq!(
+            inspect(
+                &context,
+                std::path::Path::new("/bin/sleep"),
+                &["30".into()],
+                temp.path()
+            )
+            .await
+            .err()
+            .unwrap()
+            .to_string(),
+            "cancelled"
+        );
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    }
+}
