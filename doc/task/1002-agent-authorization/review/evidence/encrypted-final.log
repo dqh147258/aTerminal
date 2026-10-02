@@ -1,0 +1,24 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.28s
+     Running tests/authorization_review.rs (target/debug/deps/authorization_review-cefb11d0e2977f97)
+
+running 18 tests
+test encrypted_explicit_full_overrides_prior_deny_only_for_a_new_action ... ok
+test encrypted_full_releases_approval_but_preserves_question_and_cancellation ... ok
+test encrypted_human_wait_pauses_active_time_without_refreshing_call_budgets ... ok
+test encrypted_legacy_v2_rule_cannot_authorize_a_new_pty_action ... ok
+test encrypted_long_action_requires_exact_details_ack_and_preserves_target ... ok
+test encrypted_manual_preemption_blocks_a_previously_pending_action ... ok
+test encrypted_mcp_annotations_do_not_approve_and_calls_are_once_cancel_or_full ... ok
+test encrypted_native_inspection_is_usable_without_touching_shell_alias_or_draft ... ok
+test encrypted_native_permanent_rule_ignores_bash_and_zsh_slash_functions ... ok
+test encrypted_native_results_unknown_full_and_cancel_observe_process_effects ... ok
+test encrypted_native_rules_bind_stdin_args_and_actual_cwd ... ok
+test encrypted_once_deny_and_two_phone_replay_observe_real_pty ... ok
+test encrypted_real_readonly_grant_cannot_mutate_or_forge_rpc_authority ... ok
+test encrypted_rule_regrant_remains_revocable_and_parameter_exact ... ok
+test encrypted_running_native_get_wait_and_unrelated_pty_input_preserve_real_exit ... ok
+test encrypted_shared_tree_pauses_only_when_all_children_are_human_blocked ... ok
+test encrypted_skill_helper_mutation_rejects_snapshot_even_with_full_and_keeps_native_rules ... ok
+test encrypted_split_input_and_enter_are_separately_gated ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 107.33s

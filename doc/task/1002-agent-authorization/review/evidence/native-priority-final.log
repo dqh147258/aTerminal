@@ -1,0 +1,7 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.28s
+     Running tests/authorization_review.rs (target/debug/deps/authorization_review-cefb11d0e2977f97)
+
+running 1 test
+test encrypted_native_permanent_rule_ignores_bash_and_zsh_slash_functions ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 8.45s

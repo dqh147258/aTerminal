@@ -1,0 +1,11 @@
+{
+  "review_head": "a7fabe59da9ad2de4bed6bd41745092b206a58b8",
+  "runtime_commit": "45ab2d4",
+  "cargo_jobs": 2,
+  "test_threads": 1,
+  "required_ignored_scenarios": 18,
+  "provider": "local deterministic SSE fixture",
+  "accounts": "disposable temporary directory",
+  "physical_device_tests": false,
+  "paid_provider_calls": false
+}

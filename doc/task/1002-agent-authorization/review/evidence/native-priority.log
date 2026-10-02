@@ -1,0 +1,22 @@
+   Compiling ai-terminal v0.1.0 (/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/crates/desktop-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.86s
+     Running tests/authorization_review.rs (target/debug/deps/authorization_review-cefb11d0e2977f97)
+
+running 3 tests
+test encrypted_native_permanent_rule_ignores_bash_and_zsh_slash_functions ... FAILED
+test encrypted_rule_regrant_remains_revocable_and_parameter_exact ... ok
+test encrypted_running_native_get_wait_and_unrelated_pty_input_preserve_real_exit ... ok
+
+failures:
+
+---- encrypted_native_permanent_rule_ignores_bash_and_zsh_slash_functions stdout ----
+Preserved failed isolated fixture evidence: /var/folders/85/nscyc5g90sn18qw0_2l1qnt40000gn/T/aterminal-authorization-review-f39c26d51f8e71d3
+Error: PTY marker auth-review-dispatch.log mismatch: Some("original\n")
+
+
+failures:
+    encrypted_native_permanent_rule_ignores_bash_and_zsh_slash_functions
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 15 filtered out; finished in 25.98s
+
+error: test failed, to rerun pass `-p ai-terminal --test authorization_review`

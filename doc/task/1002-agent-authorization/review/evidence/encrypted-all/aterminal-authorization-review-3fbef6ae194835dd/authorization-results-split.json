@@ -1,0 +1,1 @@
+[{"call_id":"auth-split-0","provider_call_id":"auth-split-0","result":{"accepted":true,"command_completion":"unknown","session_id":"677549714057f618"}},{"call_id":"auth-split-1","provider_call_id":"auth-split-1","result":{"action_id":"01a0fdcb-85d9-7279-a90c-71e38149afc9","error":"authorization_denied"}}]

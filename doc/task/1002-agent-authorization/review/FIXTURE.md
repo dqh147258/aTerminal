@@ -79,6 +79,8 @@ cargo +stable build -p ai-terminal --bin aTerminal --example account_demo
 AUTH_REVIEW_EVIDENCE_DIR=/private/tmp/authorization-rpc-evidence cargo +stable test -p ai-terminal --test authorization_review -- --ignored --test-threads=1
 ```
 
-测试成功时仅导出合成模型观测和 marker，不导出账号凭据或数据库；失败时停止 fixture 进程并保留其私有临时目录供排查。此前六个场景通过 compile-check；新 native/MCP 场景只有 rustfmt/diff 检查，等待 runtime 提供最终 API stage 并释放 Cargo 窗口后编译和实际执行。
+测试成功时仅导出合成模型观测和 marker，不导出账号凭据或数据库；失败时停止 fixture 进程并保留其私有临时目录供排查。2026-10-03 最终 runtime `45ab2d4` 上18个场景已实际全通过（0 ignored），严格 clippy/fmt/diff 通过，窗口已释放。详细证据和保留的 fixture 失败日志见 [RESULTS.md](RESULTS.md)。
+
+确定性模型只对已有 observe_terminal_after_uncertain_action 进行安全原生观察并用新的 toolcall ID 重提，保留原错误与 provider_call_id；不会重试被拒动作，不自行批准。正常 PTY accepted 不构成完成证据，因此跨 Run 写动作可能需要该步骤。所有 marker/退出码仍独立读取真实结果。
 
 本地设施构建通过不代表新授权实现通过。阶段 2 只在指定集成 commit 上运行，物理设备和线上供应商不在此次证据范围。

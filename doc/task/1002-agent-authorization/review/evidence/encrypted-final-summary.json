@@ -1,0 +1,233 @@
+{
+  "tests": 18,
+  "passed": 18,
+  "failed": 0,
+  "ignored": 0,
+  "elapsed_seconds": 107.33,
+  "runs": [
+    {
+      "directory": "aterminal-authorization-review-28fc510dec7a2330",
+      "scenarios": [
+        "active-budget",
+        "human-budget"
+      ],
+      "markers": {},
+      "passed": true
+    },
+    {
+      "directory": "aterminal-authorization-review-3ed9758b20eb2e0a",
+      "scenarios": [
+        "tree-child-active",
+        "tree-child-question",
+        "tree-root"
+      ],
+      "markers": {},
+      "passed": true
+    },
+    {
+      "directory": "aterminal-authorization-review-3f934277a868a463",
+      "scenarios": [
+        "inspection",
+        "inspection-attack"
+      ],
+      "markers": {
+        "auth-review-inspection-source.log": "inspection\n"
+      },
+      "passed": true
+    },
+    {
+      "directory": "aterminal-authorization-review-4b1ca910dea05552",
+      "scenarios": [
+        "dispatch-change",
+        "dispatch-grant",
+        "dispatch-pty",
+        "dispatch-reuse"
+      ],
+      "markers": {
+        "auth-review-dispatch-proof.log": "override\n",
+        "auth-review-dispatch.log": "original\noriginal\n"
+      },
+      "passed": true
+    },
+    {
+      "directory": "aterminal-authorization-review-4fabd9096bb1586c",
+      "scenarios": [
+        "readonly-denied",
+        "readonly-question"
+      ],
+      "markers": {},
+      "passed": true
+    },
+    {
+      "directory": "aterminal-authorization-review-5c1888436417ba77",
+      "scenarios": [
+        "after-regrant-revoke",
+        "always-0",
+        "always-1",
+        "rule-match-0",
+        "rule-match-1"
+      ],
+      "markers": {},
+      "passed": true
+    },
+    {
+      "directory": "aterminal-authorization-review-60df50ccbe916e5c",
+      "scenarios": [
+        "native-concurrent",
+        "native-observer"
+      ],
+      "markers": {
+        "auth-review-concurrent-pty.log": "pty\n",
+        "auth-review-concurrent-start.log": "started\n",
+        "auth-review-concurrent-native.log": "done\n"
+      },
+      "passed": true
+    },
+    {
+      "directory": "aterminal-authorization-review-6204bd56ae56907",
+      "scenarios": [
+        "mcp-cancel",
+        "mcp-deny",
+        "mcp-full",
+        "mcp-once"
+      ],
+      "markers": {
+        "auth-review-mcp.log": "once\nfull\n"
+      },
+      "passed": true
+    },
+    {
+      "directory": "aterminal-authorization-review-6720c927f3cfa4bd",
+      "scenarios": [
+        "deny",
+        "once"
+      ],
+      "markers": {
+        "auth-review-once.log": "once\n"
+      },
+      "passed": true
+    },
+    {
+      "directory": "aterminal-authorization-review-6955709b4a353a5e",
+      "scenarios": [
+        "preempt"
+      ],
+      "markers": {
+        "auth-review-manual.log": "manual\n"
+      },
+      "passed": true
+    },
+    {
+      "directory": "aterminal-authorization-review-708e3bc2b8dbe851",
+      "scenarios": [
+        "deny-then-full"
+      ],
+      "markers": {
+        "auth-review-deny-then-full.log": "authorized\n"
+      },
+      "passed": true
+    },
+    {
+      "directory": "aterminal-authorization-review-814776f95088b757",
+      "scenarios": [
+        "details"
+      ],
+      "markers": {
+        "auth-review-details.log": "ordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinaryordinary\n"
+      },
+      "passed": true
+    },
+    {
+      "directory": "aterminal-authorization-review-8d1cf827dffa8bea",
+      "scenarios": [
+        "native-args-change",
+        "native-cwd-change",
+        "native-cwd-transition",
+        "native-exact",
+        "native-stdin-change"
+      ],
+      "markers": {
+        "auth-review-exact.log": "original\nchanged\n"
+      },
+      "passed": true
+    },
+    {
+      "directory": "aterminal-authorization-review-9278add1fede41f0",
+      "scenarios": [
+        "v2-reuse",
+        "v3-probe"
+      ],
+      "markers": {},
+      "passed": true
+    },
+    {
+      "directory": "aterminal-authorization-review-ada3dc7129036f77",
+      "scenarios": [
+        "split"
+      ],
+      "markers": {},
+      "passed": true
+    },
+    {
+      "directory": "aterminal-authorization-review-c38a1d21a43dfd2c",
+      "scenarios": [
+        "native-cancel",
+        "native-exit-one",
+        "native-output",
+        "native-unknown-full"
+      ],
+      "markers": {
+        "auth-review-unknown-full.log": "unknown\n",
+        "auth-review-native-output.log": "native stdout\n",
+        "auth-review-native-start.log": "started\n"
+      },
+      "passed": true
+    },
+    {
+      "directory": "aterminal-authorization-review-cb259fadd6210af9",
+      "scenarios": [
+        "tree-child-human",
+        "tree-child-question",
+        "tree-root"
+      ],
+      "markers": {},
+      "passed": true
+    },
+    {
+      "directory": "aterminal-authorization-review-d73feaeea02bac5e",
+      "scenarios": [
+        "skill-helper"
+      ],
+      "markers": {
+        "auth-review-native-after-skill.log": "native\nnative\n"
+      },
+      "passed": true
+    },
+    {
+      "directory": "aterminal-authorization-review-ec6c0a9be4dea759",
+      "scenarios": [
+        "dispatch-change",
+        "dispatch-grant",
+        "dispatch-pty",
+        "dispatch-reuse"
+      ],
+      "markers": {
+        "auth-review-dispatch-proof.log": "override\n",
+        "auth-review-dispatch.log": "original\noriginal\n"
+      },
+      "passed": true
+    },
+    {
+      "directory": "aterminal-authorization-review-f86915c68809827b",
+      "scenarios": [
+        "cancel-pending",
+        "full-release",
+        "question"
+      ],
+      "markers": {
+        "auth-review-full.log": "full\n"
+      },
+      "passed": true
+    }
+  ]
+}
