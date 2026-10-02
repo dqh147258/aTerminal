@@ -1,6 +1,8 @@
 # 独立授权审查与验收
 
-2026-10-02；阶段 1 已完成，阶段 2 等待协调者提供集成 commit。当前审查基线为 `3f8ebe0c0ff069a471a50a9f336abad9f07444c9`。这份清单不是实现通过报告；新实现尚未合入此 worktree，未运行授权行为验收。
+2026-10-02；当前处于阶段 2 独立源码 Review。已将协调者指定的集成 commit `8a1d18f` 合入此 review 分支，未覆盖 root 权威合同。原始审查基线为 `3f8ebe0c0ff069a471a50a9f336abad9f07444c9`。十个独立加密 RPC 场景源码已保存于 `d125bf0`；后续 MCP/deny→full/dispatch 场景继续补充。大 Cargo 窗口当前属于 runtime，尚未运行这些行为测试。
+
+当前阻止最终 Review 完成的项目：新 run_program 永久闭环、MCP commit 序列化 R16、deny→full 行为 R14，以及必要加密 RPC 和移动端真实 UI 验收。R9/R10/R13 已见集成源码修复，仍需行为验收。所有测试结果必须区分源码审查、独立本地 Shell 复现、加密 RPC、模拟器，不把本地 Shell 复现当作完整永久规则链通过。
 
 采用主本 `/Volumes/Code/My/aTerminal/doc/task/1002-agent-authorization/PLAN.md` 与 `CONTRACT.md` 的现有授权和 High 验证强度，不新增用户审批。仅编辑 review 文档、独立新增测试文件与协调者明确分配的两个 fixture 文件。不合并 main、不清理 worktree、不使用生产账号/终端或付费模型。
 
@@ -70,6 +72,28 @@ runtime 未提交的 `action_descriptor` 仅 hash 第一个绝对路径 token，
 
 policy 初版 `5eb063c` 把所有普通 operands、文本、路径和未知 MCP 参数隐藏。例如 `rm /tmp/a` 与 `rm /tmp/b` 的预览相同，用户无法理解批准对象。协调者已否决并安排可读 preview followup；普通命令、参数、路径应可读，仅敏感 key/flag/known secret 脱敏。过长动作的新 `approval_details` 分页和完整详情 ack 必须在服务端、CLI、Android、iOS 同时生效；未读齐不能 once/always，deny/stop 应仍可达。
 
+### R13：结构化 once/always 的输入证明在末端可能不检查（高，待修）
+
+恢复后读取 runtime 的 `user_interaction.rs`：`check`/`commit` 仅在 `initially_safe && run_command` 时检查输入 revision/空行，最终合同中 PTY run_command 全部 RequiresApproval，因此这些条件不会成立。永久指纹按设计不含瞬时 revision，common 使用初始 rule_eligible；若另一 Agent 在 pending 等待期间向同 Session 写半行而不改变 manual_revision，旧 grant 仍可能把命令追加到不同 draft。需绑定每次确切动作的 Actor input_revision，结构化输入的已有证明在消费前重新核对；规则命中也必须重新确认当前 can_always。不要拿终端输出 screen revision 代替输入 revision，避免无关输出造成假冲突。本项已通过持久 message 报协调者；CLI direct send 的进程核验失败，未把它当作执行者未恢复的证据。
+
+在 `8a1d18f` 中已见 `action_fence` 绑定 epoch/manual/input_revision，所有 PTY write 的 Actor commit 比对 fence，规则使用时重查 can_always；empty_evidence 只接受初始零输入或完整提交/sequence/command 匹配。runtime 的真实 Actor proxy 竞态测试已由协调者报告通过，独立测试仍待运行。
+
+### R14：显式 full 未覆盖同 Run 的风险拒绝缓存（中，待验）
+
+`approve_action` 先查 action_denied 再判断 full，导致用户同 Run 拒绝后开启 full，后续新的相同参数 toolcall 仍被旧拒绝缓存挡住。结论：原拒绝动作不重放，后续新调用按当前真实用户 full 放行风险门控；Forbidden、scope、fence、取消和只读仍优先。协调者已接受，runtime 正修；独立 encrypted 测试使用 deny→question 暂停→真实 full 开启→真实 answer→新的同参数动作，并要求只有一行实际 marker。
+
+### R15：绝对程序文件 hash 无法固定 Shell function dispatch（高，已本地复现）
+
+隔离 Bash `--noprofile --norc` 和 Zsh `-f` 实际可定义带 slash 的 `/bin/echo` function。前后提交完全相同 `/bin/echo original >> marker.log`，系统 `/bin/echo` 的文件 SHA256 不变，而 marker 从 `original` 变为 `override`，并产生 function-hit 文件。证据 [shell-dispatch.json](evidence/shell-dispatch.json)。Bash slash alias 被拒，Zsh slash alias 成立；不要把 Bash alias 也报告为成立。`command /bin/echo` wrapper 也可被 function command() 覆盖。
+
+完整 Host 永久规则跨 Run 验收尚未运行，不能仅凭 Shell 复现声称完整 grant 链已复现；但现有 descriptor 只固定 program bytes，没有实际解析状态，其身份保证不足。已向 root/runtime 提交最小提案：显式 native 固定程序/argv/redirs 分支提供永久能力，普通 PTY 保留 once/full。正式接口由 root 决定后再更新测试；不擅自修改 runtime/policy 所有源码。
+
+root 已定案：独立 `run_program {program,args,stdin?}` 直接原生执行，env_clear/实际 cwd/末端许可/进程组管理，可靠 leaf 实际 hash 可永久；未知/解释器仍可 once/full。PTY run_command/input/keys 永远 can_always=false，namespace v3 失配旧 v2。此前 execution=pty|native 建议未采用，保留为历史。测试已改 native tee+stdin 精确行数，并分别在 Bash/Zsh 定义 slash-function 后重用 native 规则；普通 PTY 的同名调用仍须新审批。
+
+### R16：MCP 最终 permit consumption 未受 execution_gate 序列化（高，待修）
+
+集成 `extensions.rs::call` 在 lazy catalog 后复核并消费 permit，但消费时没有与 set_permissions/revoke_rule 共用 execution_gate。common 的权限读取与 consumed 标记间仍可穿插撤权完成。已建议 gate 外 check、gate 内短时检查取消/门状态并 commit_once，随后释放 gate 做 async MCP 请求；commit 为动作启动的线性点，不持 std Mutex 跨 await，不在 gate 内递归 check。已成功 CLI send 当前 runtime，并持久通知 root。
+
 ## 阶段 2 必要验收矩阵
 
 每项要记录测试名、被测 commit、行为证据与结果；下列均为待执行。
@@ -97,6 +121,7 @@ policy 初版 `5eb063c` 把所有普通 operands、文本、路径和未知 MCP 
 | A19 | 再授权后撤销 | always/revoke/always 后公开 rule ID 仍可撤销，随后同命令再出现审批且没有自动副作用 |
 | A20 | 可变执行目标 | 解释器脚本、wrapper、compound 不因首个绝对程序 hash 获得不完整的永久匹配；身份未固定时 can_always=false |
 | A21 | 可读详情与 ack | 普通危险操作的实际目标和参数可辨认；敏感值脱敏；分页读齐且ack绑定确切pending才能once/always，过期/错scope/错fingerprint不接受 |
+| A22 | Agent 输入竞态 | pending 创建后另一个合法 Agent 改输入draft，旧结构化grant不沿用改变前的inputproof；人工和Agent输入版本均有覆盖 |
 
 ## 验收设施和证据边界
 
@@ -110,4 +135,4 @@ policy 初版 `5eb063c` 把所有普通 operands、文本、路径和未知 MCP 
 
 ## 恢复入口
 
-fixture 所有权已确认；使用方法见 [FIXTURE.md](FIXTURE.md)。等待协调者提供可合并的集成 commit，只合并指定 commit 到本分支，核对 R1–R8 的最终实现，补充独立行为测试并执行 A01–A18 的必要覆盖。存在实质未修问题时保持 blocked/running，不报告 completed。
+fixture 所有权已确认；使用方法见 [FIXTURE.md](FIXTURE.md)。当前管理 run 为 `a290fb98-ccb2-445b-ba2b-424973ce62d0`；只能向当前 runtime 发直接任务消息，不唤醒已完成或排队执行者。待 root 确认 native 永久接口、runtime 提供最终 commit 并释放 Cargo 窗口后，合指定 commit、构建同版 example、显式运行全部 ignored 加密 RPC 测试。Android/iOS 真实 UI 由 root 在最多两个活跃执行者限制内安排。存在实质未修问题时保持 blocked/running，不报告 completed。

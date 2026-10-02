@@ -27,6 +27,15 @@ async fn main() -> Result<()> {
     let password = ai_terminal_security::random_secret()?;
     let assistant_test = args.iter().any(|value| value == "--assistant-test");
     let authorization_test = args.iter().any(|value| value == "--authorization-test");
+    let authorization_shell = args
+        .iter()
+        .filter_map(|value| value.to_str())
+        .find_map(|value| value.strip_prefix("--authorization-shell="))
+        .unwrap_or("/bin/bash");
+    anyhow::ensure!(
+        ["/bin/bash", "/bin/zsh"].contains(&authorization_shell),
+        "unsupported authorization fixture shell"
+    );
     let agent_test = authorization_test || args.iter().any(|value| value == "--agent-test");
     let db = dir.join("demo.db");
     ai_terminal_server::account::manage_user(&db, "demo", &password, false)?;
@@ -134,7 +143,7 @@ async fn main() -> Result<()> {
                 String::new()
             },
             command: if cfg!(unix) && authorization_test {
-                vec!["/bin/bash".into(), "-i".into()]
+                vec![authorization_shell.into(), "-i".into()]
             } else if cfg!(unix) && agent_test {
                 let lines = (0..60)
                     .map(|i| format!("UI_LOG_{i:03}"))

@@ -62,13 +62,23 @@ runner 保存 `results.json`、`authorization-pty-markers.json`、`fixture.log`�
 
 可以复用新增 `account_demo_authorization/mod.rs` 的模型 responder，或直接启动 example。使用临时 state-dir 的 `Client` 管理 fixture，用真实 `Account` / `RemoteTerminal.agent` 做加密 RPC；两台临时设备验证重复决定和 revision conflict。直接 Local Client 测试只能注明本地 RPC，不能标作加密跨端验收。
 
-独立测试文件 `crates/desktop-cli/tests/authorization_review.rs` 当前包含六个行为验收：两台真实临时手机账号的 once/deny/重放、永久规则再授权后撤销、full 与 question/cancel、input_text 与独立 Enter 门控、人工输入抢占、长详情精确 ack。这些测试显式 ignored，原因是需要从同一集成 commit 先构建 example；属于阶段 2 必要检查，不能用 ignored 的默认 test 结果声称通过。
+独立测试文件 `crates/desktop-cli/tests/authorization_review.rs` 当前包含十六个加密 RPC 场景，涵盖真实临时手机账号的 once/deny/重放、native 永久规则再授撤销、full/question/cancel、原始输入和 Enter、人工抢占、长详情 ack、只读 grant、原生读取、共享树预算、deny→full、新 native 结果/未知程序/取消、旧 v2 规则不命中新 PTY 动作，以及 MCP 实际 marker。测试显式 ignored，原因是需要从同一集成 commit 先构建 example；属于阶段 2 必要检查，不能用 ignored 的默认 test 结果声称通过。
+
+当前正式接口以 root 主合同为准：`run_command` 保持 PTY，只支持 once/full；独立 `run_program` 的 program/args/stdin 直接原生执行，可靠 leaf/hash/cwd 可 always，source=native_program。旧 execution=pty|native 提案只属于历史，fixture/test 不使用该字段。
+
+永久规则的推荐场景是：
+
+```text
+AUTH_REVIEW:{"id":"native-always","steps":[{"tool":"run_program","arguments":{"program":"/usr/bin/tee","args":["-a","auth-review-always.log"],"stdin":"always\n"}}]}
+```
+
+同场景每次写入一行，可独立观察重放。stdin、args、cwd 或程序版本变化需要新指纹。未知 native 程序/解释器只支持 once/full；并非 OS 沙箱。`account_demo --authorization-test --authorization-shell=/bin/zsh` 可启用隔离 Zsh fixture，默认 Bash；两者的 HOME/rc 都在临时 fixture 中。模型 responder 只接受明确用户场景或已标记的真实委托消息，不把普通终端观察里的 AUTH_REVIEW 文本当作新任务。
 
 ```sh
 cargo +stable build -p ai-terminal --bin aTerminal --example account_demo
 AUTH_REVIEW_EVIDENCE_DIR=/private/tmp/authorization-rpc-evidence cargo +stable test -p ai-terminal --test authorization_review -- --ignored --test-threads=1
 ```
 
-测试成功时仅导出合成模型观测和 marker，不导出账号凭据或数据库；失败时停止 fixture 进程并保留其私有临时目录供排查。fixture 构建检查与测试 compile-check 已通过，六个授权行为测试仍等待完整 runtime 集成后运行。
+测试成功时仅导出合成模型观测和 marker，不导出账号凭据或数据库；失败时停止 fixture 进程并保留其私有临时目录供排查。此前六个场景通过 compile-check；新 native/MCP 场景只有 rustfmt/diff 检查，等待 runtime 提供最终 API stage 并释放 Cargo 窗口后编译和实际执行。
 
 本地设施构建通过不代表新授权实现通过。阶段 2 只在指定集成 commit 上运行，物理设备和线上供应商不在此次证据范围。

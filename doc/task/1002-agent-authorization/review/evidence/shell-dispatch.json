@@ -1,0 +1,34 @@
+{
+  "scope": "isolated local shell resolution; Host permanent-rule integration not yet run",
+  "cases": [
+    {
+      "shell": "/bin/bash",
+      "startup_args": [
+        "--noprofile",
+        "--norc"
+      ],
+      "identical_command": "/bin/echo original >> marker.log",
+      "program_sha256_before": "307e57488334711e3c040fbe0c06ea99cc9e652c1f095bc6eaceddc90cb5d703",
+      "program_sha256_after": "307e57488334711e3c040fbe0c06ea99cc9e652c1f095bc6eaceddc90cb5d703",
+      "marker": "original\noverride\n",
+      "function_hit": true,
+      "stderr": "",
+      "exit_code": 0,
+      "definition": "function /bin/echo() { /usr/bin/touch function-hit.log; /usr/bin/printf \"override\\n\"; }"
+    },
+    {
+      "shell": "/bin/zsh",
+      "startup_args": [
+        "-f"
+      ],
+      "identical_command": "/bin/echo original >> marker.log",
+      "program_sha256_before": "307e57488334711e3c040fbe0c06ea99cc9e652c1f095bc6eaceddc90cb5d703",
+      "program_sha256_after": "307e57488334711e3c040fbe0c06ea99cc9e652c1f095bc6eaceddc90cb5d703",
+      "marker": "original\noverride\n",
+      "function_hit": true,
+      "stderr": "",
+      "exit_code": 0,
+      "definition": "function /bin/echo { /usr/bin/touch function-hit.log; /usr/bin/printf \"override\\n\"; }"
+    }
+  ]
+}

@@ -36,6 +36,18 @@ fn text(message: &Value) -> String {
         })
 }
 
+fn scenario_text(message: &Value) -> Option<String> {
+    let content = text(message);
+    if content.starts_with("AUTH_REVIEW:") {
+        return Some(content);
+    }
+    let delegated = content.strip_prefix("Task delegated within the authenticated user run: ")?;
+    let delegated: Value = serde_json::from_str(delegated).ok()?;
+    let message = delegated["message"].as_str()?;
+    (delegated["source"] == "delegated_task" && message.starts_with("AUTH_REVIEW:"))
+        .then(|| message.to_owned())
+}
+
 // Later steps can consume exact IDs returned by earlier tools without asking
 // the model to invent command/task IDs. The fixture never fabricates results.
 fn arguments(value: &Value, scenario: &str, results: &[Value]) -> Result<Value> {
@@ -83,8 +95,7 @@ pub(super) fn respond(body: &Value, dir: &Path) -> Result<Option<axum::response:
         .enumerate()
         .rev()
         .filter(|(_, message)| message["role"] == "user")
-        .map(|(index, message)| (index, text(message)))
-        .find(|(_, text)| text.starts_with("AUTH_REVIEW:"))
+        .find_map(|(index, message)| scenario_text(message).map(|text| (index, text)))
     else {
         return Ok(None);
     };
