@@ -100,7 +100,13 @@ struct ChatPanel: View {
                 }
                 .onChange(of: model.authorization.pending.contains(where: { $0.actionable })) { waiting in
                     if !waiting && pendingNavigationActive && !model.browsing {
-                        pendingNavigationActive = false; proxy.scrollTo("chat.bottom", anchor: .bottom)
+                        pendingNavigationActive = false
+                        DispatchQueue.main.async {
+                            if !model.authorization.pending.contains(where: { $0.actionable }) {
+                                if let id = model.items.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+                                else { proxy.scrollTo("chat.bottom", anchor: .bottom) }
+                            }
+                        }
                     }
                 }
                 .onChange(of: model.target) { _ in firstRender = true; pendingNavigationActive = false }
