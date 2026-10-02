@@ -289,12 +289,13 @@ impl Backend {
         let terminal = if !global || args.get("session_id").is_some() {
             let session = self.session(&args)?;
             let info = self.info(&session)?.info.context("session_unavailable")?;
-            json!({"session_id":session,"desktop_attached":info.desktop_attached,"shell_hooks":shell(&info),"application_task_adapter":null,"application_completion":false})
+            let hooks = shell(&info);
+            json!({"session_id":session,"desktop_attached":info.desktop_attached,"shell_hooks":{"available":hooks["evidence_source"]=="session_shell_hook","dialect":hooks["dialect"],"command_association":hooks["command_association"]==true,"evidence_source":hooks["evidence_source"],"trusted_for_authorization":false},"application_task_adapter":null,"application_completion":false})
         } else {
             Value::Null
         };
         Ok(ToolOutput::value(
-            json!({"role":if global{"global"}else{"session"},"tools":terminal_tools(global).iter().map(|t|t.name.as_str()).collect::<Vec<_>>(),"vision":context.vision,"terminal":terminal,"authorization":self.host()?.agents.permission_capabilities(context)?,"budget":context.budget.tool_status()?,"limits":{"wait_ms":30000,"task_ids":32,"history_page":50,"shell_evidence":"observational","os_sandbox":false,"cwd_sandbox":false,"mcp_catalog_may_start_enabled_servers":true}}),
+            json!({"role":if global{"global"}else{"session"},"tools":terminal_tools(global).iter().map(|t|t.name.as_str()).collect::<Vec<_>>(),"vision":context.vision,"visual":{"capture_source":"rendered_terminal","model_can_see_images":context.vision},"native_inspection":{"os_cwd_available":cfg!(unix),"source":"sidecar_read","max_elapsed_ms":30000},"terminal":terminal,"authorization":self.host()?.agents.permission_capabilities(context)?,"budget":context.budget.tool_status()?,"limits":{"wait_ms":30000,"task_ids":32,"history_page":50,"shell_evidence":"observational","os_sandbox":false,"cwd_sandbox":false,"mcp_catalog_may_start_enabled_servers":true}}),
         ))
     }
     fn read_delta(&self, context: &ToolContext, args: Value) -> Result<ToolOutput> {
@@ -448,5 +449,315 @@ mod toolset_tests {
             ..view.clone()
         };
         assert_eq!(delta_state(Some(&view), &resized, 5).0, "refetch_required");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod toolset_broker_tests {
+    use super::*;
+    use ai_terminal_agent_runtime::{
+        host::{AgentHost, Budget},
+        model::{Connection, Protocol},
+        store::Store,
+    };
+    use portable_pty::{PtySize, native_pty_system};
+    use std::{io::Write, sync::atomic::AtomicU64};
+    struct Fixture {
+        backend: Arc<Backend>,
+        context: ToolContext,
+        cancel: tokio::sync::watch::Sender<bool>,
+        host: Arc<Host>,
+        revision: Arc<AtomicU64>,
+        _temp: tempfile::TempDir,
+    }
+    impl Fixture {
+        fn new() -> Self {
+            let temp = tempfile::tempdir().unwrap();
+            let state = temp.path().join("state");
+            secure_dir(&state).unwrap();
+            let store = Arc::new(Store::open(&state.join("data/db")).unwrap());
+            let scope = store.agent("owner", "desktop", Some("s")).unwrap();
+            let root = store
+                .accept_user(&scope, "r", "fixture", json!({}))
+                .unwrap();
+            let host = Arc::new(Host {
+                agents: AgentHost::new(store, tokio::runtime::Handle::current()),
+                state_dir: state.clone(),
+                account: crate::account::AccountManager::new(&state).unwrap(),
+                config: crate::config::ConfigService::open(&state).unwrap(),
+                assistant: crate::assistant::Assistant::default(),
+                sessions: Mutex::new(HashMap::new()),
+                session_order: Mutex::new(vec!["s".into()]),
+                recent_directories: Mutex::new(crate::recent_directories::RecentDirectories::new(
+                    &state,
+                )),
+                owners: Mutex::new(HashMap::from([("s".into(), "owner".into())])),
+                stop: Arc::new(AtomicBool::new(false)),
+                workers: AtomicUsize::new(0),
+            });
+            let original = temp.path().join("shell-config");
+            std::fs::create_dir(&original).unwrap();
+            std::fs::write(
+                original.join(".bashrc"),
+                "PS1='fixture> '; HISTCONTROL=; HISTIGNORE=;\n",
+            )
+            .unwrap();
+            let (integration, mut command) =
+                crate::shell::Integration::prepare(temp.path(), &["/bin/bash".into()]).unwrap();
+            command.env("HOME", &original);
+            command.cwd(temp.path());
+            let pair = native_pty_system()
+                .openpty(PtySize {
+                    rows: 24,
+                    cols: 80,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .unwrap();
+            let mut child = pair.slave.spawn_command(command).unwrap();
+            drop(pair.slave);
+            let mut reader = pair.master.try_clone_reader().unwrap();
+            std::thread::spawn(move || {
+                let _ = std::io::copy(&mut reader, &mut std::io::sink());
+            });
+            let mut writer = pair.master.take_writer().unwrap();
+            let start = Instant::now();
+            while integration.observation().is_none() {
+                assert!(start.elapsed() < Duration::from_secs(5));
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let (actor, requests) = mpsc::sync_channel::<ActorMessage>(16);
+            let revision = Arc::new(AtomicU64::new(10));
+            let observed = revision.clone();
+            std::thread::spawn(move || {
+                // This is a protocol-local actor stub around a real isolated PTY; no live
+                // Desktop, account or model is contacted. Initial draft is known empty.
+                for message in requests {
+                    let mut observation = integration.observation().unwrap_or(Value::Null);
+                    observation["host_input_boundary"] =
+                        json!({"input_buffer_empty":observation["phase"]=="prompt"});
+                    let info = SessionInfo {
+                        id: "s".into(),
+                        epoch: 1,
+                        manual_revision: 2,
+                        control_epoch: 3,
+                        desktop_attached: true,
+                        shell_status: observation.to_string(),
+                        ..Default::default()
+                    };
+                    if message.request.operation == Operation::AgentWrite as i32 {
+                        assert!(
+                            message
+                                .gate
+                                .as_ref()
+                                .is_none_or(|gate| *gate.lock().unwrap())
+                        );
+                        writer
+                            .write_all(format!("{}\r", message.request.text).as_bytes())
+                            .unwrap();
+                        writer.flush().unwrap();
+                        observed.fetch_add(1, Ordering::AcqRel);
+                    }
+                    let _ = message.reply.send(Reply {
+                        info: Some(info),
+                        snapshot: Some(Snapshot {
+                            epoch: 1,
+                            revision: observed.load(Ordering::Acquire),
+                            rows: 24,
+                            cols: 80,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    });
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                drop(pair.master);
+            });
+            host.sessions.lock().unwrap().insert("s".into(), actor);
+            let backend = Backend::new(
+                &host,
+                scope.clone(),
+                "device".into(),
+                Arc::new(OwnerConfig::default()),
+                1,
+                Provider {
+                    id: "fixture".into(),
+                    name: "fixture".into(),
+                    connection: Connection {
+                        protocol: Protocol::OpenaiChat,
+                        endpoint: "http://localhost".into(),
+                        api_version: None,
+                    },
+                    catalog_url: None,
+                    secret_ref: None,
+                    credential_revision: 1,
+                    enabled: true,
+                },
+                None,
+                None,
+            )
+            .unwrap();
+            let (cancel, receiver) = tokio::sync::watch::channel(false);
+            let context = ToolContext {
+                history_unit_id: root.user_message_id,
+                vision: false,
+                scope: scope.clone(),
+                run_id: root.run_id,
+                root_user_message_id: root.root_user_message_id,
+                action_id: "command".into(),
+                max_read_bytes: 4096,
+                budget: Arc::new(Budget::new(30, 10, 10000, scope)),
+                cancel: receiver,
+                execution_gate: Arc::new(Mutex::new(true)),
+                authorization_check: None,
+            };
+            Self {
+                backend,
+                context,
+                cancel,
+                host,
+                revision,
+                _temp: temp,
+            }
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            self.host.sessions.lock().unwrap().clear();
+        }
+    }
+    #[tokio::test]
+    async fn submitted_command_returns_actual_correlated_pty_exit_and_persistent_result() {
+        let fixture = Fixture::new();
+        let accepted = fixture
+            .backend
+            .invoke_added(&fixture.context, "run_command", json!({"command":"false"}))
+            .await
+            .unwrap()
+            .unwrap()
+            .value;
+        assert_eq!(accepted["accepted"], true);
+        assert_eq!(accepted["completion"], "unknown");
+        let id = accepted["command_id"].as_str().unwrap();
+        let completed = fixture
+            .backend
+            .invoke_added(
+                &fixture.context,
+                "wait_command",
+                json!({"command_id":id,"timeout_ms":30000}),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .value;
+        assert_eq!(completed["state"], "completed");
+        assert_eq!(completed["exit_code"], 1);
+        assert_eq!(completed["timed_out"], false);
+        assert_eq!(completed["shell_evidence"]["command"], "false");
+        assert!(completed["evidence_event_id"].is_string());
+        fixture
+            .host
+            .agents
+            .store
+            .finish_run(&fixture.context.scope, &fixture.context.run_id, "completed")
+            .unwrap();
+        let old = fixture
+            .backend
+            .invoke_added(
+                &fixture.context,
+                "get_command_result",
+                json!({"command_id":id}),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .value;
+        assert_eq!(old["exit_code"], 1);
+        assert_eq!(old["application_task"]["state"], "unknown");
+    }
+    #[tokio::test]
+    async fn terminal_wait_sees_updates_before_wait_timeout_and_cancel() {
+        let fixture = Fixture::new();
+        fixture.revision.store(11, Ordering::Release);
+        let changed = fixture
+            .backend
+            .invoke_added(
+                &fixture.context,
+                "wait_terminal",
+                json!({"after_revision":10,"timeout_ms":30000}),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .value;
+        assert_eq!(changed["changed"], true);
+        assert_eq!(changed["timed_out"], false);
+        assert!(changed["elapsed_ms"].as_u64().unwrap() < 1000);
+        let timeout = fixture
+            .backend
+            .invoke_added(
+                &fixture.context,
+                "wait_terminal",
+                json!({"after_revision":11,"timeout_ms":10}),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .value;
+        assert_eq!(timeout["timed_out"], true);
+        assert_eq!(timeout["changed"], false);
+        let cancel = fixture.cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            cancel.send(true).unwrap();
+        });
+        assert_eq!(
+            fixture
+                .backend
+                .invoke_added(
+                    &fixture.context,
+                    "wait_terminal",
+                    json!({"after_revision":11,"timeout_ms":30000})
+                )
+                .await
+                .err()
+                .unwrap()
+                .to_string(),
+            "cancelled"
+        );
+    }
+    #[tokio::test]
+    async fn capabilities_report_bound_role_nonvision_and_budget() {
+        let fixture = Fixture::new();
+        let value = fixture
+            .backend
+            .invoke_added(&fixture.context, "get_capabilities", json!({}))
+            .await
+            .unwrap()
+            .unwrap()
+            .value;
+        assert_eq!(value["role"], "session");
+        assert_eq!(value["vision"], false);
+        assert_eq!(value["terminal"]["application_completion"], false);
+        assert_eq!(value["terminal"]["session_id"], "s");
+        assert!(
+            value["tools"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("run_command"))
+        );
+        assert!(value["budget"]["remaining_ms"].is_number());
+        assert!(
+            fixture
+                .backend
+                .invoke_added(
+                    &fixture.context,
+                    "get_capabilities",
+                    json!({"session_id":"other"})
+                )
+                .await
+                .is_err()
+        );
     }
 }
