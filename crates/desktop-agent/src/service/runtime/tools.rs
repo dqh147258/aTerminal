@@ -80,6 +80,7 @@ impl Backend {
     ) -> Result<Option<ToolOutput>> {
         check(context)?;
         let result = match name {
+            "inspect_command" => self.inspect_command(context, args).await?,
             "run_command" => self.run_command(context, args)?,
             "get_command_result" => self.get_command_result(context, args)?,
             "wait_command" => self.wait_command(context, args).await?,
@@ -95,6 +96,43 @@ impl Backend {
         };
         check(context)?;
         Ok(Some(result))
+    }
+    async fn inspect_command(&self, context: &ToolContext, args: Value) -> Result<ToolOutput> {
+        let session = self.session(&args)?;
+        let command = args["command"].as_str().context("command_required")?;
+        self.authorize(false).await?;
+        check(context)?;
+        let info = self.info(&session)?.info.context("session_unavailable")?;
+        let cwd = crate::process::cwd(&info).context("current_session_cwd_unavailable")?;
+        let plan = ai_terminal_agent_runtime::authorization::inspect_command_plan(command)
+            .context("inspect_command_not_readonly; use run_command to request authorization")?;
+        check(context)?;
+        let result = crate::process::inspect(
+            context,
+            std::path::Path::new(&plan.program),
+            &plan.args,
+            &cwd,
+        )
+        .await?;
+        self.authorize(false).await?;
+        let stdout = encoded_stream(&result.stdout);
+        let stderr = encoded_stream(&result.stderr);
+        let body = serde_json::to_string(
+            &json!({"stdout":stdout,"stderr":stderr,"exit_code":result.exit_code,"stdout_truncated":result.stdout_truncated,"stderr_truncated":result.stderr_truncated}),
+        )?;
+        let metadata = json!({"source":"sidecar_read","session_id":session,"program":plan.program,"argv":plan.args,"cwd":cwd,"exit_code":result.exit_code,"stdout_truncated":result.stdout_truncated,"stderr_truncated":result.stderr_truncated,"elapsed_ms":result.elapsed_ms,"pty_unchanged":true});
+        Ok(ToolOutput {
+            value: metadata.clone(),
+            observation: Some(Observation {
+                kind: "sidecar_read".into(),
+                metadata,
+                body: body.clone(),
+                model_body: Some(body),
+                binary: false,
+                record_id: None,
+            }),
+            outcome: None,
+        })
     }
     fn run_command(&self, context: &ToolContext, args: Value) -> Result<ToolOutput> {
         let id = self.session(&args)?;
@@ -295,6 +333,12 @@ impl Backend {
         Ok(ToolOutput::value(
             json!({"session_id":session,"after_revision":after,"revision":current.revision,"epoch":current.epoch,"state":state,"reason":reason,"refetch_required":state=="refetch_required","next_read":if state=="refetch_required"{json!({"mode":"tail"})}else{Value::Null},"text":"","completion":"unknown","max_read_bytes":context.max_read_bytes}),
         ))
+    }
+}
+fn encoded_stream(bytes: &[u8]) -> Value {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => json!({"encoding":"utf8","text":text}),
+        Err(_) => json!({"encoding":"base64","data":STANDARD.encode(bytes)}),
     }
 }
 fn delta_state(
