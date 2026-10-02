@@ -297,9 +297,12 @@ impl AgentHost {
             assessment.reason
         );
         ensure!(
-            !self
-                .store
-                .action_denied(&context.scope, &context.run_id, &assessment.fingerprint)?,
+            mode["full_authorization"] == true
+                || !self.store.action_denied(
+                    &context.scope,
+                    &context.run_id,
+                    &assessment.fingerprint
+                )?,
             "authorization_denied"
         );
         let mut once = false;
@@ -731,6 +734,141 @@ mod tests {
             .unwrap();
         fixture.host.human_response_changed();
         assert_eq!(fixture.settle().await["state"], "completed");
+    }
+    #[tokio::test]
+    async fn explicit_full_after_deny_allows_new_call_without_replaying_denied_action() {
+        let fixture = Fixture::new(vec![
+            ("input_text", raw()),
+            ("ask_user", json!({"question":"Continue?"})),
+            ("input_text", raw()),
+        ]);
+        fixture.start("root", 5, true);
+        let denied = fixture.pending().await;
+        fixture.answer(&denied, "deny");
+        let question = fixture.pending().await;
+        assert_eq!(question["kind"], "question");
+        assert_eq!(fixture.backend.writes.load(Ordering::Acquire), 0);
+        fixture
+            .host
+            .set_permissions(&fixture.scope, 0, None, Some(true))
+            .unwrap();
+        fixture
+            .host
+            .store
+            .resolve_pending(
+                &fixture.scope,
+                "question-response",
+                question["id"].as_str().unwrap(),
+                None,
+                Some(json!("Continue")),
+            )
+            .unwrap();
+        fixture.host.human_response_changed();
+        assert_eq!(fixture.settle().await["state"], "completed");
+        assert_eq!(
+            fixture.backend.writes.load(Ordering::Acquire),
+            1,
+            "only the new full-authorized call executes"
+        );
+        assert_eq!(fixture.model.calls.load(Ordering::Acquire), 4);
+        assert_eq!(
+            fixture
+                .host
+                .store
+                .poll_pending(&fixture.scope, denied["id"].as_str().unwrap())
+                .unwrap()["response"]["decision"],
+            "deny"
+        );
+    }
+    #[tokio::test]
+    async fn delegated_full_uses_root_permission_scope_without_polluting_session_conversation() {
+        let fixture = Fixture::new(vec![("ask_user", json!({"question":"Wait for child"}))]);
+        fixture
+            .host
+            .set_permissions(&fixture.scope, 0, None, Some(true))
+            .unwrap();
+        fixture.start("root", 5, true);
+        fixture.pending().await;
+        let job = fixture.host.jobs.lock().unwrap()[&fixture.scope.agent].clone();
+        let context = ToolContext {
+            history_unit_id: "delegate-unit".into(),
+            vision: false,
+            scope: fixture.scope.clone(),
+            run_id: job.run.clone(),
+            root_user_message_id: job.root.clone(),
+            action_id: "delegate-action".into(),
+            max_read_bytes: 4096,
+            budget: job.budget.clone(),
+            cancel: job.cancel.subscribe(),
+            execution_gate: job.execution_gate.clone(),
+            authorization_check: None,
+        };
+        let child = fixture
+            .host
+            .store
+            .agent("owner", "desktop", Some("child-session"))
+            .unwrap();
+        let child_model = Arc::new(ModelStub {
+            calls: AtomicU32::new(0),
+            actions: vec![(
+                "input_text".into(),
+                json!({"text":"touch file","submit":true}),
+            )],
+        });
+        let backend = fixture.backend.clone();
+        fixture
+            .host
+            .delegate(
+                &context,
+                child.clone(),
+                "delegated",
+                "perform child work",
+                json!({}),
+                move || {
+                    Ok(RunSnapshot {
+                        revision: 1,
+                        provider: Protocol::OpenaiChat,
+                        builder: RequestBuilder {
+                            settings: crate::model::RequestSettings {
+                                model: "stub".into(),
+                                temperature: None,
+                                max_tokens: 2048,
+                                additional_params: None,
+                            },
+                            system: "fixed".into(),
+                            tools: terminal_tools(false),
+                        },
+                        model: child_model,
+                        backend,
+                        context_window: 128000,
+                        max_rounds: 10,
+                        max_seconds: 5,
+                        allow_write: true,
+                        vision: false,
+                    })
+                },
+            )
+            .unwrap();
+        for _ in 0..100 {
+            if fixture.host.state(&child).unwrap()["state"] == "completed" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(fixture.host.state(&child).unwrap()["state"], "completed");
+        assert_eq!(fixture.backend.writes.load(Ordering::Acquire), 1);
+        assert_eq!(
+            fixture.host.store.permissions(&child).unwrap()["full_authorization"],
+            false
+        );
+        assert!(
+            fixture.host.store.pending(&child, None).unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        fixture.host.cancel(&fixture.scope).unwrap();
+        assert_eq!(fixture.settle().await["state"], "cancelled");
     }
     #[tokio::test]
     async fn cancelled_wait_never_executes_or_replays_old_pending() {

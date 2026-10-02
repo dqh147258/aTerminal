@@ -348,12 +348,16 @@ mod toolset_tests {
         };
         for invalid in [
             b"prompt\0zero\0/\0".as_slice(),
-            b"prompt\00\0/\00\0false\0bash:1".as_slice(),
+            b"prompt\x000\0/\x000\0false\0bash:1".as_slice(),
         ] {
             std::fs::write(directory.join("state"), invalid).unwrap();
             assert!(integration.observation().is_none());
         }
-        std::fs::write(directory.join("state"), b"prompt\01\0/\04\0false\0bash:1\0").unwrap();
+        std::fs::write(
+            directory.join("state"),
+            b"prompt\x001\0/\x004\0false\0bash:1\0",
+        )
+        .unwrap();
         assert_eq!(integration.observation().unwrap()["exit_code"], 1);
     }
 }

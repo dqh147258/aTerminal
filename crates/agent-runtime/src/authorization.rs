@@ -219,26 +219,41 @@ fn permanent_scope_known(action: &ActionDescriptor) -> bool {
         || !action.cwd.as_deref().is_some_and(absolute_cwd)
         || action.source == ToolSource::Unknown
         || !action.arguments.is_object()
-        || matches!(action.tool.as_str(), "input_text" | "send_keys")
+        || matches!(
+            action.tool.as_str(),
+            "run_command" | "input_text" | "send_keys"
+        )
     {
         return false;
     }
     // A registry build version alone cannot pin an external program or extension.
-    if action.tool == "run_command" {
-        let complete_input = action.shell_proof.as_ref().is_some_and(|proof| {
-            proof.at_prompt
-                && proof.input_buffer_empty
-                && proof.observed_revision == proof.current_revision
-        });
-        return known(&action.execution_identity)
-            && complete_input
-            && only_command_arguments(action)
-            && action
-                .arguments
-                .get("command")
-                .and_then(Value::as_str)
-                .and_then(fixed_command)
-                .is_some();
+    if action.tool == "run_program" {
+        return action.source == ToolSource::Builtin
+            && action.source_id == "aterminal/native-program.v3"
+            && known(&action.execution_identity)
+            && action.arguments["program"]
+                .as_str()
+                .is_some_and(native_leaf_program)
+            && action.arguments.as_object().is_some_and(|m| {
+                m.keys()
+                    .all(|k| matches!(k.as_str(), "program" | "args" | "stdin" | "session_id"))
+            })
+            && action.arguments["args"].as_array().is_some_and(|args| {
+                args.len() <= 64
+                    && args
+                        .iter()
+                        .all(|v| v.as_str().is_some_and(|s| !s.contains('\0')))
+                    && args
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::len)
+                        .sum::<usize>()
+                        <= 16000
+            })
+            && (action.arguments["stdin"].is_null()
+                || action.arguments["stdin"]
+                    .as_str()
+                    .is_some_and(|s| s.len() <= 16000));
     }
     if action.source != ToolSource::Builtin
         || matches!(action.tool.as_str(), "mcp_call" | "skill_action")
@@ -248,14 +263,14 @@ fn permanent_scope_known(action: &ActionDescriptor) -> bool {
     true
 }
 
-/// Stable v2 equality digest. v2 invalidates rules from the earlier PTY-name policy. Canonicalization sorts object keys recursively while
+/// Stable v3 equality digest. v3 invalidates all earlier PTY dispatch assumptions. Canonicalization sorts object keys recursively while
 /// preserving all array order, string bytes, nulls and numeric representations.
 /// No trimming, path normalization, shell rewriting or redaction is performed.
 /// Revisions are transient execution fences and deliberately not part of a rule.
 /// Changing this policy's semantics requires a new namespace to invalidate rules.
 pub fn stable_fingerprint(action: &ActionDescriptor) -> String {
     let material = json!({
-        "policy": "aterminal.authorization.v2",
+        "policy": "aterminal.authorization.v3",
         "account_id": action.account_id,
         "desktop_id": action.desktop_id,
         "tool": action.tool,
@@ -276,7 +291,7 @@ pub fn stable_fingerprint(action: &ActionDescriptor) -> String {
     });
     let mut canonical = String::new();
     canonical_json(&material, &mut canonical);
-    format!("v2:{}", blake3::hash(canonical.as_bytes()).to_hex())
+    format!("v3:{}", blake3::hash(canonical.as_bytes()).to_hex())
 }
 
 fn canonical_json(value: &Value, output: &mut String) {
@@ -440,6 +455,11 @@ pub struct Redirect {
     pub path: String,
 }
 
+/// Stable system utilities that can be dispatched directly with literal argv.
+/// Host source/identity and dispatch are mandatory; the name alone grants nothing.
+pub fn native_leaf_program(program: &str) -> bool {
+    matches!(program, "/usr/bin/tee" | "/bin/tee") || fixed_command(program).is_some()
+}
 /// Syntactic scope for a permanent rule, not proof of actual shell resolution.
 /// The Host must additionally pin/revalidate the effective program content and
 /// dispatch/configuration identity and a fresh complete shell input boundary.
@@ -628,6 +648,36 @@ fn ordinary_path(path: &str, cwd: &str) -> bool {
 }
 
 fn contains_permission_command(action: &ActionDescriptor) -> bool {
+    if action.tool == "run_program" {
+        let name = action.arguments["program"]
+            .as_str()
+            .unwrap_or("")
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or("")
+            .trim_end_matches(".exe");
+        let args = action.arguments["args"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        if name.eq_ignore_ascii_case("aterminal")
+            && args.iter().any(|v| v == "agents")
+            && args.iter().any(|v| {
+                v.as_str().is_some_and(|s| {
+                    matches!(
+                        s,
+                        "permissions"
+                            | "resolve"
+                            | "revoke-rule"
+                            | "set_permissions"
+                            | "revoke_rule"
+                    )
+                })
+            })
+        {
+            return true;
+        }
+    }
     if !matches!(action.tool.as_str(), "run_command" | "input_text") {
         return false;
     }
@@ -1117,6 +1167,42 @@ mod tests {
         descriptor
     }
 
+    fn native(program: &str, args: &[&str]) -> ActionDescriptor {
+        let mut action = action("");
+        action.tool = "run_program".into();
+        action.source_id = "aterminal/native-program.v3".into();
+        action.arguments = json!({"program":program,"args":args,"stdin":null});
+        action.shell_proof = None;
+        action
+    }
+    #[test]
+    fn managed_native_leaf_only_can_persist_and_v3_isolates_all_old_rules() {
+        let leaf = native("/usr/bin/tee", &["-a", "/tmp/marker"]);
+        assert!(assess(&leaf).can_always);
+        assert_eq!(assess(&leaf).risk, Risk::RequiresApproval);
+        assert!(stable_fingerprint(&leaf).starts_with("v3:"));
+        for program in ["/bin/sh", "/usr/bin/env", "/tmp/unknown"] {
+            assert!(!assess(&native(program, &["-c", "write"])).can_always);
+        }
+        let mut false_dispatch = leaf.clone();
+        false_dispatch.source_id = "user-shell".into();
+        assert!(!assess(&false_dispatch).can_always);
+        let mut no_hash = leaf.clone();
+        no_hash.execution_identity = None;
+        assert!(!assess(&no_hash).can_always);
+        let mut changed = leaf.clone();
+        changed.arguments["stdin"] = json!("marker");
+        assert_ne!(stable_fingerprint(&leaf), stable_fingerprint(&changed));
+        let mut cli = native(
+            "/Applications/aTerminal",
+            &["agents", "permissions", "--full-authorization", "true"],
+        );
+        cli.source = ToolSource::Unknown;
+        assert_eq!(assess(&cli).risk, Risk::Forbidden);
+        let mut raw = action("/bin/echo marker");
+        raw.execution_identity = Some("same-file-hash".into());
+        assert!(!assess(&raw).can_always);
+    }
     #[test]
     fn recognized_commands_have_positive_argument_grammars() {
         for command in [
@@ -1455,9 +1541,9 @@ mod tests {
 
     #[test]
     fn unknown_scope_or_execution_version_disables_permanent_rules() {
-        assert!(assess(&action("/bin/rm file")).can_always);
+        assert!(assess(&native("/bin/rm", &["file"])).can_always);
         for variant in 0..11 {
-            let mut a = action("/bin/rm file");
+            let mut a = native("/bin/rm", &["file"]);
             match variant {
                 0 => a.cwd = None,
                 1 => a.cwd = Some("".into()),
@@ -1522,7 +1608,10 @@ mod tests {
             "/bin/rm -- /tmp/marker",
             "/bin/mkdir /tmp/new-directory",
         ] {
-            assert!(assess(&action(command)).can_always, "{command}");
+            assert!(
+                !assess(&action(command)).can_always,
+                "PTY functions/aliases cannot be pinned: {command}"
+            );
             assert_eq!(
                 permanent_command_program(command),
                 Some(command.split(' ').next().unwrap().into())
@@ -1708,7 +1797,7 @@ mod tests {
             serialized["fingerprint"]
                 .as_str()
                 .unwrap()
-                .starts_with("v2:")
+                .starts_with("v3:")
         );
         assert_eq!(
             serde_json::to_value(PermissionMode::ReadOnly).unwrap(),
