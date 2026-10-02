@@ -94,6 +94,18 @@ root 已定案：独立 `run_program {program,args,stdin?}` 直接原生执行�
 
 集成 `extensions.rs::call` 在 lazy catalog 后复核并消费 permit，但消费时没有与 set_permissions/revoke_rule 共用 execution_gate。common 的权限读取与 consumed 标记间仍可穿插撤权完成。已建议 gate 外 check、gate 内短时检查取消/门状态并 commit_once，随后释放 gate 做 async MCP 请求；commit 为动作启动的线性点，不持 std Mutex 跨 await，不在 gate 内递归 check。已成功 CLI send 当前 runtime，并持久通知 root。
 
+`06b4c9d` 已见 gate 内同步 commit 修复；实际 MCP marker 测试仍待执行。当前集成源码也已修 R14 的显式 full 拒绝缓存优先级，并正式采用独立 run_program/v3，R15 的旧 PTY 永久入口已禁止。
+
+### R17：native 结果被旧 PTY 关联和失效逻辑污染（高，待修）
+
+`06b4c9d` 的 `Store::invalidate_command_writes` 对任何未 final 命令都置 unknown，包含仍在管理进程中运行的 native 行；`tools::command_result` 对 native 未 final 行仍调用 Shell correlate，因无 baseline 立即不可逆地 final=unknown。最终真实 native exit 无法更新。已成功报告 root/runtime，新增独立双 Agent 流程：Scene native 慢进程运行，Global 先 get_result、再在同 Session 写 PTY、最后 wait_result，必须保留真实 native completed/exit0 和独立两个 marker。
+
+分流后也需处理 restart：旧 native running 行不可因缺少活跃线程而永远 running。现 command 表没有持久 run_id，Store.open 尚未重置旧非 final native 状态，已向 runtime 报需要可靠 orphan/interrupted 恢复且不重放。
+
+### R18：远端 HTTP MCP 显示了未使用的本地 cwd（中，待修）
+
+`Extensions::authorization_descriptor` 把所有 MCP 的目录设为 binding.config.cwd 或冻结 Session cwd，但 streamable_http transport 没有使用这些本地目录，也不知道远端 cwd。审批可能显示错误的作用位置。建议 stdio 显示真实冻结 spawn 目录；HTTP cwd=None 并显示 unknown/remote。已成功 CLI send 当前 runtime。现独立 MCP 实际 marker 场景是 stdio，HTTP 目录准确性将以源码与聚焦测试核对。
+
 ## 阶段 2 必要验收矩阵
 
 每项要记录测试名、被测 commit、行为证据与结果；下列均为待执行。

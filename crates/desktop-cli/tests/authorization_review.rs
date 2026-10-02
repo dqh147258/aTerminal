@@ -1514,6 +1514,88 @@ async fn encrypted_native_results_unknown_full_and_cancel_observe_process_effect
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "Requires account_demo built from the same integrated commit; run explicitly with --ignored"]
+async fn encrypted_running_native_get_wait_and_unrelated_pty_input_preserve_real_exit() -> Result<()>
+{
+    let mut fixture = Fixture::start().await?;
+    let phone = fixture.phone().await?;
+    phone.full(true).await?;
+    let root = phone
+        .rpc_scope(
+            "",
+            json!({"action":"global_create","request_id":"native-concurrent-observer"}),
+        )
+        .await?;
+    let agent = root["scope"]["agent"]
+        .as_str()
+        .context("Observer scope absent")?
+        .to_owned();
+    let permissions = global_rpc(&phone, &agent, json!({"action":"permissions"})).await?;
+    global_rpc(&phone,&agent,json!({"action":"set_permissions","expected_revision":permissions["revision"],"full_authorization":true})).await?;
+    phone.send("native-concurrent",program_steps("/bin/sh",json!(["-c","/bin/echo started > auth-review-concurrent-start.log; /bin/sleep 5; /bin/echo done > auth-review-concurrent-native.log"]),None),None).await?;
+    fixture
+        .wait_marker("auth-review-concurrent-start.log", "started\n")
+        .await?;
+    let db = rusqlite::Connection::open(fixture.dir.join("data/agent.sqlite3"))?;
+    db.busy_timeout(Duration::from_secs(2))?;
+    let command_id:String=db.query_row("SELECT id FROM tool_commands WHERE json_extract(value,'$.source')='native_program' AND json_extract(value,'$.state')='running'",[],|row|row.get(0))?;
+    drop(db);
+    let scenario = json!({"id":"native-observer","steps":[
+        {"tool":"get_command_result","arguments":{"command_id":command_id}},
+        {"tool":"run_command","arguments":{"session_id":phone.session,"command":"/bin/echo pty > auth-review-concurrent-pty.log"}},
+        {"tool":"wait_command","arguments":{"command_id":command_id,"timeout_ms":10000}}
+    ]});
+    global_rpc(&phone,&agent,json!({"action":"send","request_id":"native-observer-start","permission_mode":"ask","message":format!("AUTH_REVIEW:{scenario}")})).await?;
+    fixture
+        .wait_marker("auth-review-concurrent-pty.log", "pty\n")
+        .await?;
+    ensure!(
+        phone.settled().await?["state"] == "completed",
+        "Concurrent native execution did not settle"
+    );
+    fixture
+        .wait_marker("auth-review-concurrent-native.log", "done\n")
+        .await?;
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let state = global_rpc(&phone, &agent, json!({"action":"state"})).await?;
+        if state["state"] == "completed" {
+            break;
+        }
+        ensure!(
+            state["state"] != "paused" && Instant::now() < deadline,
+            "Concurrent observer failed: {state}"
+        );
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    let results = fixture.results("native-observer")?;
+    let first = results
+        .iter()
+        .find(|value| value["call_id"] == "auth-native-observer-0")
+        .context("Live native result missing")?;
+    ensure!(
+        first["result"]["source"] == "native_program"
+            && matches!(
+                first["result"]["state"].as_str(),
+                Some("running" | "completed")
+            ),
+        "Live native result was forced through Shell unknown correlation: {first}"
+    );
+    let final_result = results
+        .iter()
+        .find(|value| value["call_id"] == "auth-native-observer-2")
+        .context("Native wait result missing")?;
+    ensure!(
+        final_result["result"]["state"] == "completed"
+            && final_result["result"]["exit_code"] == 0
+            && final_result["result"]["timed_out"] == false,
+        "PTY input or early get corrupted the managed native result: {final_result}"
+    );
+    fixture.finish()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "Requires account_demo built from the same integrated commit; run explicitly with --ignored"]
 async fn encrypted_mcp_annotations_do_not_approve_and_calls_are_once_cancel_or_full() -> Result<()>
 {
     let mut fixture = Fixture::start().await?;
