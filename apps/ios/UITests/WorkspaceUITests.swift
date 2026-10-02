@@ -600,3 +600,229 @@ final class LiveServiceUITests: XCTestCase {
         // No Agent send, terminal command, authentication, or credential/config dump.
     }
 }
+
+final class AuthorizationUITests: XCTestCase {
+    override func setUp() { continueAfterFailure = false }
+    private func open(_ scenario: String = "", large: Bool = false) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--workspace-fixture", "--settings-fixture", "--authorization-fixture", "--authorization-scenario=" + scenario, "--authorization-fixture-id=" + UUID().uuidString]
+        app.launchArguments += ["-UIPreferredContentSizeCategoryName", large ? "UICTContentSizeCategoryAccessibilityXXXL" : "UICTContentSizeCategoryL"]
+        app.launch()
+        app.buttons["workspace.global"].tap()
+        let row = app.buttons["global.select.fixture-global"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10)); row.tap()
+        XCTAssertTrue(app.buttons["authorization.open"].waitForExistence(timeout: 10))
+        return app
+    }
+    private func tap(_ id: String, _ app: XCUIApplication) {
+        let button = app.buttons[id]
+        XCTAssertTrue(button.waitForExistence(timeout: 10), id)
+        var previousAbove = false
+        for _ in 0..<20 {
+            if button.exists && button.isHittable && button.isEnabled { break }
+            let timeline = app.scrollViews["chat.timeline"]
+            let scroll = timeline.exists ? timeline : app.scrollViews.firstMatch
+            let exists = button.exists
+            let above = exists ? button.frame.midY < scroll.frame.midY : !previousAbove
+            let distance = exists ? abs(button.frame.midY - scroll.frame.midY) : 0
+            previousAbove = above
+            if distance > scroll.frame.height * 2 {
+                if above { scroll.swipeDown() } else { scroll.swipeUp() }
+            } else {
+                let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: above ? 0.2 : 0.8))
+                let end = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: above ? 0.8 : 0.2))
+                start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
+            }
+        }
+        XCTAssertTrue(button.exists && button.isHittable && button.isEnabled, id); button.tap()
+    }
+    private func wait(_ condition: @escaping () -> Bool) {
+        let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in condition() }, object: nil)], timeout: 10)
+        XCTAssertEqual(result, .completed)
+    }
+    func testPermanentRuleAndConversationFullAuthorization() {
+        let app = open()
+        XCTAssertTrue(app.staticTexts["目标 Session：fixture-delegated-session"].firstMatch.waitForExistence(timeout: 10))
+        tap("authorization.resolve.always", app)
+        tap("authorization.open", app)
+        let full = app.switches["authorization.full"]
+        XCTAssertTrue(full.waitForExistence(timeout: 10)); wait { full.isEnabled }
+        XCTAssertEqual(full.value as? String, "0"); full.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap(); wait { full.value as? String == "1" }
+        tap("authorization.close", app)
+        tap("authorization.open", app)
+        XCTAssertEqual(full.value as? String, "1")
+        full.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap(); wait { full.value as? String == "0" }
+        tap("authorization.revoke.fixture-rule", app)
+        wait { !app.buttons["authorization.revoke.fixture-rule"].exists }
+    }
+    func testOnceQuestionOptionAndFreeTextWithKeyboard() {
+        let app = open()
+        tap("authorization.resolve.once", app)
+        tap("authorization.option.0", app)
+        let answer = app.textFields["authorization.answer"]
+        XCTAssertEqual(answer.value as? String, "Markdown")
+        UITestInput.replace(answer, with: "Custom output", app: app)
+        if app.buttons["authorization.answer.keyboard"].exists { tap("authorization.answer.keyboard", app) }
+        else { tap("authorization.answer.send", app) }
+        wait { app.staticTexts["Fixture result: Custom output"].exists }
+        XCTAssertFalse(app.textFields["authorization.answer"].exists)
+    }
+    func testNonPermanentDenyAndStopAtLargeText() {
+        let app = open("nonpermanent", large: true)
+        let always = app.buttons["authorization.resolve.always"]
+        for _ in 0..<6 { if always.exists { break }; app.scrollViews["chat.timeline"].swipeDown() }
+        XCTAssertTrue(always.waitForExistence(timeout: 10))
+        XCTAssertFalse(always.isEnabled)
+        tap("authorization.resolve.deny", app)
+        tap("authorization.stop", app)
+        wait { app.staticTexts["Fixture result: cancelled"].exists }
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); screenshot.lifetime = .keepAlways; add(screenshot)
+    }
+    func testLongDetailsAreRequiredBeforeApproval() {
+        let app = open("long")
+        XCTAssertTrue(app.buttons["authorization.resolve.once"].waitForExistence(timeout: 10))
+        wait { app.buttons["authorization.resolve.once"].isEnabled }
+        XCTAssertTrue(app.staticTexts["Complete command: /usr/bin/printf literal detail end"].exists)
+        tap("authorization.resolve.once", app)
+        wait { app.staticTexts["Fixture result: once"].exists }
+    }
+    func testFailedDetailsKeepDenyAvailable() {
+        let app = open("long-failure")
+        XCTAssertTrue(app.staticTexts["authorization.details.status"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["authorization.resolve.once"].isEnabled)
+        XCTAssertFalse(app.buttons["authorization.resolve.always"].isEnabled)
+        tap("authorization.resolve.deny", app)
+        wait { app.staticTexts["Fixture result: deny"].exists }
+    }
+    func testReadOnlyDeviceCanBrowseButCannotRespond() {
+        let app = open("readonly")
+        XCTAssertTrue(app.buttons["authorization.resolve.once"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["authorization.resolve.once"].isEnabled)
+        XCTAssertFalse(app.buttons["authorization.resolve.deny"].isEnabled)
+        XCTAssertFalse(app.buttons["authorization.answer.send"].isEnabled)
+        tap("authorization.open", app)
+        XCTAssertTrue(app.staticTexts["authorization.readonly"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.switches["authorization.full"].isEnabled)
+    }
+    func testUnsupportedDesktopDoesNotFallBack() {
+        let app = open("unsupported")
+        XCTAssertTrue(app.staticTexts["authorization.error"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["chat.send"].isEnabled)
+        tap("authorization.open", app)
+        XCTAssertTrue(app.switches["authorization.full"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.switches["authorization.full"].isEnabled)
+    }
+}
+
+// Uses the production encrypted Agent channel. The runner supplies a disposable
+// account via the existing service-test login path and verifies PTY files itself.
+final class AuthorizationRpcUITests: XCTestCase {
+    private struct Context: Decodable { let session: String; let prefix: String; let stateDirectory: String }
+    override func setUp() { continueAfterFailure = false }
+    private func wait(_ timeout: TimeInterval = 40, file: StaticString = #filePath, line: UInt = #line, _ condition: @escaping () -> Bool) {
+        let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in condition() }, object: nil)], timeout: timeout)
+        XCTAssertEqual(result, .completed, file: file, line: line)
+    }
+    private func tap(_ id: String, _ app: XCUIApplication) {
+        let button = app.buttons[id]
+        XCTAssertTrue(button.waitForExistence(timeout: 30), id)
+        if !button.isHittable { app.scrollViews["chat.timeline"].swipeUp(velocity: .slow) }
+        button.tap()
+    }
+    private func open() throws -> (XCUIApplication, Context) {
+        guard let text = ProcessInfo.processInfo.environment["AI_TERMINAL_IOS_AUTHORIZATION_CONTEXT"],
+              let context = try? JSONDecoder().decode(Context.self, from: Data(text.utf8)),
+              UUID(uuidString: context.session) != nil,
+              context.prefix.range(of: "^ios-auth-[a-f0-9]{12}$", options: .regularExpression) != nil else {
+            throw XCTSkip("Dedicated authorization RPC fixture not supplied")
+        }
+        let app = XCUIApplication(); app.launchArguments = ["--service-test", "--local-login-fixture", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryL"]
+        app.launch()
+        XCTAssertTrue(app.buttons["workspace.drawer"].waitForExistence(timeout: 40))
+        tap("workspace.drawer", app)
+        XCTAssertTrue(app.buttons["session.select." + context.session].waitForExistence(timeout: 30))
+        tap("session.select." + context.session, app)
+        XCTAssertTrue(app.buttons["workspace.chat"].waitForExistence(timeout: 30))
+        tap("workspace.chat", app)
+        XCTAssertTrue(app.buttons["authorization.open"].waitForExistence(timeout: 30))
+        return (app, context)
+    }
+    private func task(_ suffix: String, tool: String = "run_command", arguments: [String: Any], context: Context, app: XCUIApplication) throws -> String {
+        let id = context.prefix + "-" + suffix
+        let value: [String: Any] = ["id": id, "steps": [["tool": tool, "arguments": arguments]]]
+        let text = "AUTH_REVIEW:" + String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
+        UITestInput.replace(app.textFields["chat.draft"], with: text, app: app)
+        wait { app.buttons["chat.send"].isEnabled }; tap("chat.send", app)
+        return id
+    }
+    private func done(_ id: String, _ app: XCUIApplication) {
+        wait(50) { app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "AUTH_REVIEW_DONE:" + id)).firstMatch.exists }
+    }
+    private func command(_ marker: String, file: String, context: Context) -> [String: Any] {
+        ["command": "/usr/bin/printf '\(marker)\\n' >> \(context.prefix)-\(file).log"]
+    }
+    private func notExecuted(_ suffix: String, context: Context) {
+        XCTAssertTrue(context.stateDirectory.hasPrefix("/"))
+        let root = URL(fileURLWithPath: context.stateDirectory, isDirectory: true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("account-fixture.json").path), "The test runner cannot observe the disposable Desktop")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(context.prefix + "-" + suffix + ".log").path), "Action executed before its approval")
+    }
+    private func setFull(_ full: Bool, app: XCUIApplication) {
+        tap("authorization.open", app)
+        let control = app.switches["authorization.full"]
+        XCTAssertTrue(control.waitForExistence(timeout: 20)); wait { control.isEnabled }
+        let expected = full ? "1" : "0"
+        if control.value as? String != expected { control.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap() }
+        wait { control.value as? String == expected }
+        tap("authorization.close", app)
+    }
+    func testEncryptedApprovalQuestionRulesFullAndRecovery() throws {
+        let (app, context) = try open()
+        setFull(false, app: app)
+        let once = try task("once", arguments: command("once", file: "once", context: context), context: context, app: app)
+        XCTAssertTrue(app.buttons["authorization.resolve.once"].waitForExistence(timeout: 30))
+        // Reopen the conversation while the Host is suspended; it must recover the request.
+        tap("panel.close", app); tap("workspace.chat", app)
+        XCTAssertTrue(app.buttons["authorization.resolve.once"].waitForExistence(timeout: 30))
+        notExecuted("once", context: context)
+        tap("authorization.resolve.once", app); done(once, app)
+        let denied = try task("deny", arguments: command("denied", file: "deny", context: context), context: context, app: app)
+        notExecuted("deny", context: context)
+        tap("authorization.resolve.deny", app); done(denied, app)
+        let question = try task("question", tool: "ask_user", arguments: ["question": "Choose output", "options": ["Markdown", "Plain text"]], context: context, app: app)
+        tap("authorization.option.0", app)
+        UITestInput.replace(app.textFields["authorization.answer"], with: "iOS custom answer", app: app)
+        let answerButton = app.buttons["authorization.answer.keyboard"].exists ? "authorization.answer.keyboard" : "authorization.answer.send"
+        tap(answerButton, app); done(question, app)
+        let exact: [String: Any] = ["program": "/usr/bin/tee", "args": ["-a", context.prefix + "-always.log"], "stdin": "always\n"]
+        let first = try task("always-first", tool: "run_program", arguments: exact, context: context, app: app)
+        XCTAssertTrue(app.buttons["authorization.resolve.always"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["authorization.resolve.always"].isEnabled, "Fixture command has no stable execution identity")
+        notExecuted("always", context: context)
+        tap("authorization.resolve.always", app); done(first, app)
+        let repeated = try task("always-repeat", tool: "run_program", arguments: exact, context: context, app: app)
+        done(repeated, app)
+        XCTAssertFalse(app.buttons["authorization.resolve.once"].exists, "Exact permanent rule failed")
+        tap("authorization.open", app)
+        let revoke = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "authorization.revoke.")).firstMatch
+        XCTAssertTrue(revoke.waitForExistence(timeout: 20)); revoke.tap()
+        wait { !revoke.exists }; tap("authorization.close", app)
+        let revoked = try task("revoked", tool: "run_program", arguments: exact, context: context, app: app)
+        tap("authorization.resolve.deny", app); done(revoked, app)
+        let regranted = try task("always-regrant", tool: "run_program", arguments: exact, context: context, app: app)
+        tap("authorization.resolve.always", app); done(regranted, app)
+        tap("authorization.open", app)
+        let secondRevoke = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "authorization.revoke.")).firstMatch
+        XCTAssertTrue(secondRevoke.waitForExistence(timeout: 20)); secondRevoke.tap()
+        wait { !secondRevoke.exists }; tap("authorization.close", app)
+        setFull(true, app: app)
+        let full = try task("full", arguments: command("full", file: "full", context: context), context: context, app: app)
+        done(full, app); XCTAssertFalse(app.buttons["authorization.resolve.once"].exists)
+        // A second independent Run inherits the same server-backed conversation toggle.
+        let secondFull = try task("full-second", arguments: command("full", file: "full", context: context), context: context, app: app)
+        done(secondFull, app); setFull(false, app: app)
+        let afterFull = try task("full-off", arguments: command("blocked", file: "full-off", context: context), context: context, app: app)
+        tap("authorization.resolve.deny", app); done(afterFull, app)
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); attachment.name = "encrypted-authorization-final"; attachment.lifetime = .keepAlways; add(attachment)
+    }
+}

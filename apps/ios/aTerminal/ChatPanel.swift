@@ -48,7 +48,7 @@ struct ChatPanel: View {
         VStack(spacing: compact ? 4 : 8) {
             if !compact {
             HStack {
-                Text(model.writeReason ?? model.status).font(.caption).foregroundColor(WorkspaceStyle.muted)
+                Text(model.agentConnectionReason ?? model.status).font(.caption).foregroundColor(WorkspaceStyle.muted)
                 Spacer()
                 Button("设置") { model.settingsVisible = true }
                 Button("停止") { model.cancel(core) }.disabled(!model.canCancel || model.submitting).accessibilityIdentifier("chat.stop")
@@ -69,6 +69,9 @@ struct ChatPanel: View {
                         Text(model.liveText).textSelection(.enabled).padding(10).frame(maxWidth: .infinity, alignment: .leading).background(WorkspaceStyle.surface).cornerRadius(8)
                     }
                     if !model.browsing {
+                        ForEach(model.authorization.pending) { item in
+                            AgentPendingCard(model: model, item: item).id(item.id)
+                        }
                         Color.clear.frame(height: 1).id("chat.bottom").onAppear { latestBottomVisible = true; model.markGlobalRead() }.onDisappear { latestBottomVisible = false }
                     }
                     if model.browsing && model.hasMore {
@@ -78,10 +81,14 @@ struct ChatPanel: View {
                     if model.browsing { Button("返回最新历史") { model.reset() } }
                 }
             }
+                .accessibilityIdentifier("chat.timeline")
                 .onChange(of: model.items.last?.id) { _ in
                     if !model.browsing && (firstRender || latestBottomVisible), !model.items.isEmpty { proxy.scrollTo("chat.bottom", anchor: .bottom); firstRender = false }
                 }
                 .onChange(of: model.liveText) { _ in if !model.browsing && latestBottomVisible { proxy.scrollTo("chat.bottom", anchor: .bottom) } }
+                .onChange(of: model.authorization.pending.first?.id) { id in
+                    if !model.browsing, let id { proxy.scrollTo(id, anchor: .top) }
+                }
                 .onChange(of: model.target) { _ in firstRender = true }
             }
             .simultaneousGesture(DragGesture().onEnded { gesture in if model.browsing && historyBottomVisible && gesture.translation.height < 0 { model.load() } })
@@ -95,7 +102,18 @@ struct ChatPanel: View {
                     }
                 } }
             }
-            Toggle("允许操作终端与扩展", isOn: $model.allowInput).font(.caption).disabled(model.submitting || model.writeReason != nil)
+            HStack {
+                Button { model.authorizationVisible = true } label: {
+                    Label(model.authorization.permissions == nil ? "授权状态待同步" : model.authorization.full ? "当前对话完全授权" : model.authorization.mode == "read_only" ? "只读模式" : "按需授权", systemImage: model.authorization.full ? "lock.open" : "lock.shield")
+                }.accessibilityIdentifier("authorization.open")
+                Spacer()
+                if !model.authorization.pending.isEmpty {
+                    Button("停止") { model.cancel(core) }.disabled(!model.canCancel).accessibilityIdentifier("authorization.stop")
+                }
+            }.font(.caption)
+            if !model.authorization.error.isEmpty {
+                Text(model.authorization.error).font(.caption).foregroundColor(WorkspaceStyle.danger).accessibilityIdentifier("authorization.error")
+            }
             HStack {
                 if compact {
                     Menu {
@@ -118,6 +136,7 @@ struct ChatPanel: View {
         .sheet(isPresented: $model.evidenceVisible) {
             NavigationView { ScrollView { if let image = model.image { Image(uiImage: image).resizable().scaledToFit() } else { Text(model.evidence).textSelection(.enabled).padding() } }.navigationTitle("证据原文").toolbar { Button("关闭") { model.evidenceVisible = false } } }
         }
+        .sheet(isPresented: $model.authorizationVisible) { AgentAuthorizationView(model: model) }
         .fullScreenCover(isPresented: $model.settingsVisible) { AgentSettingsView(model: model) }
     }
 }
