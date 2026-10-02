@@ -37,7 +37,7 @@ cargo +stable build -p ai-terminal --bin aTerminal --example account_demo
 python3 scripts/test-android-agent.py --serial emulator-5586 --authorization --output /private/tmp/authorization-ui-evidence
 ```
 
-执行前约定共享模拟器窗口。runner 安装当前 worktree 的 Debug/appTest APK，并启动 fixture，写入 Android app 私有文件 `agent-ui-fixture.json`，运行 `com.yxf.aterminal.AgentAuthorizationUiTest`。APK 构建和 Rust mobile FFI 同步由协调者/Android 执行者负责。
+执行前约定共享模拟器窗口。APK 必须使用 `-PauthorizationUiFixture=true` 构建，runner 授权模式默认包名 `com.yxf.aterminal.authorizationfixture`，可用 `--package` 显式指定另一隔离包；安装前通过 aapt 验证 app/test APK 包名，拒绝正常用户包。随后启动 fixture，写入 app 私有文件 `agent-ui-fixture.json`，运行 `com.yxf.aterminal.AgentAuthorizationRpcUiTest`。APK 构建和 Rust mobile FFI 同步由协调者/Android 执行者负责。
 
 测试输出 app 私有文件 `authorization-ui-results.json`，至少包含：
 
@@ -61,5 +61,14 @@ runner 保存 `results.json`、`authorization-pty-markers.json`、`fixture.log`�
 ## 独立 Rust 验收
 
 可以复用新增 `account_demo_authorization/mod.rs` 的模型 responder，或直接启动 example。使用临时 state-dir 的 `Client` 管理 fixture，用真实 `Account` / `RemoteTerminal.agent` 做加密 RPC；两台临时设备验证重复决定和 revision conflict。直接 Local Client 测试只能注明本地 RPC，不能标作加密跨端验收。
+
+独立测试文件 `crates/desktop-cli/tests/authorization_review.rs` 当前包含六个行为验收：两台真实临时手机账号的 once/deny/重放、永久规则再授权后撤销、full 与 question/cancel、input_text 与独立 Enter 门控、人工输入抢占、长详情精确 ack。这些测试显式 ignored，原因是需要从同一集成 commit 先构建 example；属于阶段 2 必要检查，不能用 ignored 的默认 test 结果声称通过。
+
+```sh
+cargo +stable build -p ai-terminal --bin aTerminal --example account_demo
+AUTH_REVIEW_EVIDENCE_DIR=/private/tmp/authorization-rpc-evidence cargo +stable test -p ai-terminal --test authorization_review -- --ignored --test-threads=1
+```
+
+测试成功时仅导出合成模型观测和 marker，不导出账号凭据或数据库；失败时停止 fixture 进程并保留其私有临时目录供排查。fixture 构建检查与测试 compile-check 已通过，六个授权行为测试仍等待完整 runtime 集成后运行。
 
 本地设施构建通过不代表新授权实现通过。阶段 2 只在指定集成 commit 上运行，物理设备和线上供应商不在此次证据范围。
