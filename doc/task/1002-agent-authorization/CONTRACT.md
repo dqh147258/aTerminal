@@ -27,6 +27,8 @@
 
 响应形态已与执行者对齐：`permissions` 直接返回 `{permission_mode,full_authorization,revision,can_mutate}`；`pending` / `rules` 返回 `{items,cursor,has_more}`（cursor 为不透明字符串或 null）；`state` 增加同结构的 `permissions` 与 `pending`；`resolve` 返回 `{pending,duplicate}`，`answer` 为字符串（选项直接提交选项文本）；`revoke_rule` 返回 `{revoked,rule_id}`。错误沿用现有 RPC 的 Reply.error 字符串，稳定标识如 `permission_revision_conflict`，客户端冲突后重读。pending.options 为字符串数组。`can_mutate` 来自真实用户设备 grant（可操作设备/本地 CLI=true，只读设备=false），仅辅助 UI；Host/bridge 仍独立校验。不能把终端控制租约当成 Agent 管理权限。`always_unavailable_reason` 可选，用于明确永久授权不可用原因。
 
+长详情具体接口已确定：pending 增 `requires_details` / `arguments_truncated`；`approval_details` 返回 `{pending_id,fingerprint,text,cursor,has_more,truncated:false}`，text 为已脱敏完整 JSON 的有界分页片段；`resolve` 支持 `fingerprint` / `details_ack`，需详情动作的 once/always 必须 details_ack=true 且 fingerprint 精确对应，deny 不要求详情。CLI 提供 approval-details 与 resolve --details-ack --fingerprint；详情 token 只关联用户展示，不增加模型执行能力。
+
 pending 的公共字段：`id`, `kind: approval|question`, `state`, `agent_id`, `run_id`, `session_id`, `created_at`, `expires_at`, `title`, `reason`；审批另有 `tool`, `arguments_preview`, `cwd`, `fingerprint`, `can_always`, `rule_preview`；问答另有 `question`, 可选 `options`。参数预览有界、秘密脱敏，Host 内部保留确切动作及指纹。UUID 不能当权限凭证。
 
 普通命令、文件路径和非秘密参数必须显示，不能把所有自由文本隐藏后要求用户批准。策略提供 `redacted_preview_with_secrets(&Value, &[String])->String` 与 `redacted_details_with_secrets(&Value, &[String])->Value`；Host 已知凭据参与脱敏，精确指纹始终使用原始参数。超过预览限额明确 `truncated/requires_details`，两端取得完整脱敏详情后才允许 once/always；deny 始终可用。详情/resolve 的具体确认字段由 runtime 执行者统一定义并通知两端，不能各端自行猜测。CLI 同样提供完整详情查看，非 TTY 不隐式批准。
@@ -60,6 +62,10 @@ Safe 范围：内置只读工具、纯等待、明确识别的简单安全命令
 
 规则 cwd 使用 `process::cwd` 的进程身份复核结果，不回退到 hook 或 initial_cwd。Shell hooks 本身标记 trusted_for_authorization=false，只能与 Host/OS 状态共同提供观察；空输入行需要明确输入边界（最后人工/Agent 输入与 prompt 事件的关联或实际行编辑器适配），无法确认则 proof=false 并审批，不能照屏幕提示符猜测。
 
+实际 Shell 的 aliases/functions/PATH 不能仅凭名字证明安全。为保证常规安全读取确实无需授权，新增 `inspect_command`：策略严格正向语法转换为固定绝对只读程序和字面 argv，Broker 在身份复核的当前 cwd 启动原生子进程（不经过 Shell、不改变 PTY draft/目录），归档 stdout/stderr/exit_code 并明确 source=sidecar_read。未知语法拒绝该读取工具，模型可改用正常 run_command 申请授权。这没有目录/OS 沙箱；它是可确定的读取执行入口。run_command 仍在原 PTY，不能用 command/builtin 字符串包装宣称解决任意用户函数覆盖。
+
+永久规则的 execution_identity 必须覆盖整个实际执行语言：仅 hash 第一个绝对程序不足以放行解释器脚本、env wrapper、compound 或动态环境表达式。初版仅为可固定的单个程序、字面 argv 和必要固定字面重定向生成稳定规则；外部脚本/解释器/复合或可变目标无法证明时 can_always=false。同字面命令但程序/配置版本改变仍重新审批。
+
 runtime 执行者负责 `lib.rs` 导出、Store persistence、Host gate、RPC、远程授权与 CLI；策略执行者仅新增自己的模块/测试，不编辑这些共享文件。工具执行者新增 helper 模块并尽早报告父模块要接的少量 hook；runtime 执行者负责接线，避免两个工作树全面覆盖父文件。
 
 ## 新工具及角色
@@ -68,6 +74,7 @@ runtime 执行者负责 `lib.rs` 导出、Store persistence、Host gate、RPC、
 
 | 工具 | 参数概要 | 角色与行为 |
 | --- | --- | --- |
+| `inspect_command` | `command`, Global 必填 `session_id` | 两者；严格固定程序的常规安全读取，在 Session 实际 cwd 原生执行，无 Shell 解析，返回归档 stdout/stderr/exit_code；不改终端输入/目录 |
 | `run_command` | `command`, Global 必填 `session_id` | 两者；在现有 PTY 提交完整命令，绑定输入状态和授权，返回 `command_id`/accepted，不能凭 accepted 宣称完成 |
 | `get_command_result` | `command_id` | 两者；同账号/Desktop，Session 限自身；返回 shell 命令状态、退出码、cwd 和证据来源/引用；无关联证据为 unknown |
 | `wait_command` | `command_id`, `timeout_ms` 1–30000 | 两者；取消/共享时限感知；超时不停止程序 |
