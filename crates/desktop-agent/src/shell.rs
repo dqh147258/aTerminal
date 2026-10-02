@@ -111,18 +111,21 @@ add-zsh-hook preexec __aterminal_preexec
 function global:prompt {
   $ok = $?; $nativeCode = $global:LASTEXITCODE
   $entry = Get-History -Count 1
-  $seq = 0; $line = ''; $code = $(if ($ok) { 0 } else { 1 })
+  $seq = 0; $line = ''; $code = 'unknown'
   if ($entry) {
     $seq = $entry.Id; $line = $entry.CommandLine
     $tokens = $null; $errors = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($line, [ref]$tokens, [ref]$errors)
     $statements = $ast.EndBlock.Statements
-    if ($statements.Count -eq 1 -and $statements[0] -is [System.Management.Automation.Language.PipelineAst] -and $statements[0].PipelineElements.Count -eq 1) {
+    if ($errors.Count -eq 0 -and $statements.Count -eq 1 -and $statements[0] -is [System.Management.Automation.Language.PipelineAst] -and -not $statements[0].Background -and $statements[0].PipelineElements.Count -eq 1) {
       $node = $statements[0].PipelineElements[0]
       if ($node -is [System.Management.Automation.Language.CommandAst]) {
         $name = $node.GetCommandName()
         $resolved = $(if ($name) { Get-Command $name -ErrorAction SilentlyContinue })
         if ($resolved -and $resolved.CommandType -eq 'Application') { $code = $nativeCode }
+        elseif ($resolved -and $resolved.CommandType -eq 'Cmdlet') { $code = $(if ($ok) { 0 } else { 1 }) }
+        # Aliases, functions, dynamic invocation and compound syntax cannot reuse
+        # LASTEXITCODE from a different native command; keep their code unknown.
       }
     } else { $code = 'unknown' }
   }
