@@ -820,10 +820,12 @@ final class AuthorizationRpcUITests: XCTestCase {
         }
         setFull(false, app: app)
         let once = try task("once", arguments: command("once", file: "once", context: context), context: context, app: app)
-        XCTAssertTrue(app.buttons["authorization.resolve.once"].waitForExistence(timeout: 30))
+        tap("authorization.pending.jump", app)
+        XCTAssertTrue(app.buttons["authorization.resolve.once"].exists)
         // Reopen the conversation while the Host is suspended; it must recover the request.
         tap("panel.close", app); tap("workspace.chat", app)
-        XCTAssertTrue(app.buttons["authorization.resolve.once"].waitForExistence(timeout: 30))
+        tap("authorization.pending.jump", app)
+        XCTAssertTrue(app.buttons["authorization.resolve.once"].exists)
         notExecuted("once", context: context)
         tap("authorization.resolve.once", app); done(once, app)
         let denied = try task("deny", arguments: command("denied", file: "deny", context: context), context: context, app: app)
@@ -838,7 +840,7 @@ final class AuthorizationRpcUITests: XCTestCase {
         let longText = String(repeating: "long-native-detail ", count: 350) + "\n"
         let longArguments: [String: Any] = ["program": "/usr/bin/tee", "args": [context.prefix + "-long.log"], "stdin": longText]
         let longID = try task("long", tool: "run_program", arguments: longArguments, context: context, app: app)
-        XCTAssertTrue(app.buttons["authorization.details.open"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["authorization.pending.jump"].waitForExistence(timeout: 30))
         notExecuted("long", context: context)
         tap("authorization.details.open", app)
         XCTAssertTrue(app.buttons["authorization.details.close"].waitForExistence(timeout: 20))
@@ -846,7 +848,8 @@ final class AuthorizationRpcUITests: XCTestCase {
         tap("authorization.resolve.once", app); done(longID, app)
         let exact: [String: Any] = ["program": "/usr/bin/tee", "args": ["-a", context.prefix + "-always.log"], "stdin": "always\n"]
         let first = try task("always-first", tool: "run_program", arguments: exact, context: context, app: app)
-        XCTAssertTrue(app.buttons["authorization.resolve.always"].waitForExistence(timeout: 30))
+        tap("authorization.pending.jump", app)
+        XCTAssertTrue(app.buttons["authorization.resolve.always"].exists)
         XCTAssertTrue(app.buttons["authorization.resolve.always"].isEnabled, "Fixture command has no stable execution identity")
         notExecuted("always", context: context)
         tap("authorization.resolve.always", app); done(first, app)
