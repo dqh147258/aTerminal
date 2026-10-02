@@ -1,0 +1,1 @@
+[{"call_id":"auth-inspection-attack-0","provider_call_id":"auth-inspection-attack-0","result":{"action_id":"01a0fdd0-f945-76e2-8d0d-7e841895a090","error":"inspect_command_not_readonly; use run_command to request authorization"}}]

@@ -115,7 +115,9 @@ pub(super) fn respond(body: &Value, dir: &Path) -> Result<Option<axum::response:
         .filter(|message| message["role"] == "tool")
         .map(|message| {
             let content = text(message);
-            json!({"call_id":message["tool_call_id"],"result":serde_json::from_str::<Value>(&content).unwrap_or(Value::String(content))})
+            let provider=message["tool_call_id"].as_str().unwrap_or_default();
+            let logical=provider.strip_suffix("-after-observe").unwrap_or(provider);
+            json!({"call_id":logical,"provider_call_id":provider,"result":serde_json::from_str::<Value>(&content).unwrap_or(Value::String(content))})
         })
         .collect::<Vec<_>>();
     let analysis = messages
@@ -159,8 +161,55 @@ pub(super) fn respond(body: &Value, dir: &Path) -> Result<Option<axum::response:
     }
     for (index, step) in scenario.steps.iter().enumerate() {
         let call_id = format!("auth-{}-{index}", scenario.id);
-        if results.iter().any(|result| result["call_id"] == call_id) {
-            continue;
+        let previous = results
+            .iter()
+            .rev()
+            .find(|result| result["call_id"] == call_id);
+        let mut provider_id = call_id.clone();
+        if let Some(previous) = previous {
+            if previous["result"]["error"] != "observe_terminal_after_uncertain_action" {
+                continue;
+            }
+            ensure!(
+                previous["provider_call_id"] == call_id,
+                "Fixture observation did not clear the existing action barrier"
+            );
+            let observation_id = format!("{call_id}-observe");
+            if let Some(observed) = results
+                .iter()
+                .rev()
+                .find(|result| result["call_id"] == observation_id)
+            {
+                ensure!(
+                    !observed["result"]["error"].is_string(),
+                    "Fixture native observation failed"
+                );
+                provider_id = format!("{call_id}-after-observe");
+            } else {
+                let mut args = json!({"command":"pwd"});
+                let global = body["tools"].as_array().is_some_and(|tools| {
+                    tools.iter().any(|tool| {
+                        tool["function"]["name"] == "inspect_command"
+                            && tool["function"]["parameters"]["required"]
+                                .as_array()
+                                .is_some_and(|required| {
+                                    required.iter().any(|field| field == "session_id")
+                                })
+                    })
+                });
+                if global {
+                    let config: Value =
+                        serde_json::from_slice(&std::fs::read(dir.join("account-fixture.json"))?)?;
+                    args["session_id"] = step
+                        .arguments
+                        .get("session_id")
+                        .cloned()
+                        .unwrap_or_else(|| config["session"].clone());
+                }
+                return Ok(Some(super::fixture_sse(
+                    json!({"role":"assistant","tool_calls":[{"index":0,"id":observation_id,"type":"function","function":{"name":"inspect_command","arguments":args.to_string()}}]}),
+                )));
+            }
         }
         ensure!(
             body["tools"].as_array().is_some_and(|tools| tools
@@ -170,7 +219,7 @@ pub(super) fn respond(body: &Value, dir: &Path) -> Result<Option<axum::response:
             step.tool
         );
         return Ok(Some(super::fixture_sse(json!({
-            "role":"assistant","tool_calls":[{"index":0,"id":call_id,"type":"function",
+            "role":"assistant","tool_calls":[{"index":0,"id":provider_id,"type":"function",
             "function":{"name":step.tool,"arguments":arguments(&step.arguments, &scenario.id, &captured)?.to_string()}}]
         }))));
     }

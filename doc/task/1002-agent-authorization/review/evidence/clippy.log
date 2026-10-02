@@ -1,0 +1,11 @@
+    Checking ai-terminal-protocol v0.1.0 (/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/crates/protocol)
+    Checking ai-terminal-security v0.1.0 (/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/crates/device-security)
+    Checking ai-terminal-transport v0.1.0 (/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/crates/transport)
+    Checking ai-terminal-agent-runtime v0.1.0 (/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/crates/agent-runtime)
+    Checking ai-terminal-remote v0.1.0 (/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/crates/remote)
+    Checking ai-terminal-engine v0.1.0 (/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/crates/terminal-engine)
+    Checking ai-terminal-server v0.1.0 (/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/crates/server)
+    Checking ai-terminal-mobile v0.1.0 (/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/crates/mobile-core)
+    Checking ai-terminal-agent v0.1.0 (/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/crates/desktop-agent)
+    Checking ai-terminal v0.1.0 (/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/crates/desktop-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.11s

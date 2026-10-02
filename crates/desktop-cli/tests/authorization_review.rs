@@ -1163,9 +1163,9 @@ async fn encrypted_native_permanent_rule_ignores_bash_and_zsh_slash_functions() 
             .wait_marker("auth-review-dispatch.log", "original\n")
             .await?;
         let definition = if shell.ends_with("bash") {
-            "function /usr/bin/tee() { /usr/bin/touch auth-review-function-hit.log; /bin/echo override; }; /usr/bin/true"
+            "function /usr/bin/tee() { /usr/bin/touch auth-review-function-hit.log; /bin/echo override; }; /usr/bin/tee probe > auth-review-dispatch-proof.log"
         } else {
-            "function /usr/bin/tee { /usr/bin/touch auth-review-function-hit.log; /bin/echo override; }; /usr/bin/true"
+            "function /usr/bin/tee { /usr/bin/touch auth-review-function-hit.log; /bin/echo override; }; /usr/bin/tee probe > auth-review-dispatch-proof.log"
         };
         phone
             .send("dispatch-change", command_steps(definition), None)
@@ -1182,7 +1182,23 @@ async fn encrypted_native_permanent_rule_ignores_bash_and_zsh_slash_functions() 
             phone.settled().await?["state"] == "completed",
             "Explicit Shell change failed"
         );
-        phone.send("dispatch-reuse", append, None).await?;
+        fixture
+            .wait_marker("auth-review-dispatch-proof.log", "override\n")
+            .await?;
+        ensure!(
+            fixture.dir.join("auth-review-function-hit.log").exists(),
+            "Shell slash-function was not actually installed and invoked"
+        );
+        fs::remove_file(fixture.dir.join("auth-review-function-hit.log"))?;
+        phone
+            .send(
+                "dispatch-reuse",
+                json!([
+                    {"tool":"inspect_command","arguments":{"command":"pwd"}},append[0].clone()
+                ]),
+                None,
+            )
+            .await?;
         ensure!(
             phone.settled().await?["state"] == "completed",
             "Native rule stopped working after unrelated Shell state changed"
@@ -1730,7 +1746,7 @@ async fn encrypted_skill_helper_mutation_rejects_snapshot_even_with_full_and_kee
     );
     let entry_before = fs::read(root.join("scripts/entry.sh"))?;
     let manifest_before = fs::read(root.with_extension("manifest.json"))?;
-    let skill = json!({"tool":"skill_action","arguments":{"skill_id":"review-skill","action":"script","arguments":{"path":"scripts/entry.sh","interpreter":"sh","cwd":"session"}}});
+    let skill = json!({"tool":"skill_action","arguments":{"skill_id":"user/review-skill","action":"script","arguments":{"path":"scripts/entry.sh","interpreter":"sh","cwd":"session"}}});
     let native = program_steps(
         "/usr/bin/tee",
         json!(["-a", "auth-review-native-after-skill.log"]),

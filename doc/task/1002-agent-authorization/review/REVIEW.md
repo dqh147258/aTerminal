@@ -1,8 +1,8 @@
 # 独立授权审查与验收
 
-2026-10-02；当前处于阶段 2 独立源码 Review。已将协调者指定的集成 commit `8a1d18f` 合入此 review 分支，未覆盖 root 权威合同。原始审查基线为 `3f8ebe0c0ff069a471a50a9f336abad9f07444c9`。十个独立加密 RPC 场景源码已保存于 `d125bf0`；后续 MCP/deny→full/dispatch 场景继续补充。大 Cargo 窗口当前属于 runtime，尚未运行这些行为测试。
+2026-10-03；**当前后端 Review 阶段 Completed**，有效结果与矩阵见 [RESULTS.md](RESULTS.md)。最终 runtime `45ab2d4` 已合，18 个必要加密 RPC 场景全部显式通过（0 ignored），相关严格 clippy/fmt/diff/runner 语法通过。Cargo 窗口已释放。未覆盖 root 权威合同，未修改生产实现来使测试通过。
 
-当前阻止最终 Review 完成的项目：新 run_program 永久闭环、MCP commit 序列化 R16、deny→full 行为 R14，以及必要加密 RPC 和移动端真实 UI 验收。R9/R10/R13 已见集成源码修复，仍需行为验收。所有测试结果必须区分源码审查、独立本地 Shell 复现、加密 RPC、模拟器，不把本地 Shell 复现当作完整永久规则链通过。
+root 已明确将 Android R20/R21、移动端原生 UI/RPC 与最终移动 diff/main 验收作为 `open transferred_required` 接管；这些仍是总体必要待办，不是可选项，不声明全部跨端 Review 无阻塞或整个任务 Completed。下列 R1–R19 为过程审查历史，最终状态与证据来源以 RESULTS 为准。
 
 采用主本 `/Volumes/Code/My/aTerminal/doc/task/1002-agent-authorization/PLAN.md` 与 `CONTRACT.md` 的现有授权和 High 验证强度，不新增用户审批。仅编辑 review 文档、独立新增测试文件与协调者明确分配的两个 fixture 文件。不合并 main、不清理 worktree、不使用生产账号/终端或付费模型。
 
@@ -114,7 +114,7 @@ user Skill descriptor 只读取入口脚本，缓存的 skill.version 来自 man
 
 ## 阶段 2 必要验收矩阵
 
-每项要记录测试名、被测 commit、行为证据与结果；下列均为待执行。
+本表保留阶段 2 原验收目标；最终实际证据、独立验收与实现者测试的区分及移动端必要转交状态见 RESULTS 当前矩阵，不再将以下目标视为全部未执行。
 
 | ID | 场景 | 可观察通过条件 |
 | --- | --- | --- |
@@ -153,4 +153,4 @@ user Skill descriptor 只读取入口脚本，缓存的 skill.version 来自 man
 
 ## 恢复入口
 
-fixture 所有权已确认；使用方法见 [FIXTURE.md](FIXTURE.md)。当前管理 run 为 `a290fb98-ccb2-445b-ba2b-424973ce62d0`；只能向当前 runtime 发直接任务消息，不唤醒已完成或排队执行者。待 root 确认 native 永久接口、runtime 提供最终 commit 并释放 Cargo 窗口后，合指定 commit、构建同版 example、显式运行全部 ignored 加密 RPC 测试。Android/iOS 真实 UI 由 root 在最多两个活跃执行者限制内安排。存在实质未修问题时保持 blocked/running，不报告 completed。
+使用方法见 [FIXTURE.md](FIXTURE.md)。本 run `a290fb98-ccb2-445b-ba2b-424973ce62d0` 的后端阶段已完成，最终源码、真实日志和 marker 提交后按任务 CLI completed 报告。移动必要事项已由 root 接管，最多两个执行者及构建错峰仍适用；如需最后移动复核，root 在相应执行者关闭后再恢复此任务。原 worktree/branch 保留，不自行清理或重启已关闭执行者。

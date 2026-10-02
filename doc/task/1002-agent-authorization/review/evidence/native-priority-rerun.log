@@ -1,0 +1,20 @@
+   Compiling ai-terminal v0.1.0 (/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/crates/desktop-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.02s
+     Running tests/authorization_review.rs (target/debug/deps/authorization_review-cefb11d0e2977f97)
+
+running 1 test
+test encrypted_native_permanent_rule_ignores_bash_and_zsh_slash_functions ... FAILED
+
+failures:
+
+---- encrypted_native_permanent_rule_ignores_bash_and_zsh_slash_functions stdout ----
+Preserved failed isolated fixture evidence: /var/folders/85/nscyc5g90sn18qw0_2l1qnt40000gn/T/aterminal-authorization-review-582faf3f7e00776e
+Error: Expected approval request missing: {"agent_id":"01a0fdbe-fa87-7688-bf8a-06ca97b97490","available":true,"config_revision":1,"error":null,"history_generation":0,"last_event_sequence":38,"live_text":"","pending":{"cursor":null,"has_more":false,"items":[]},"permissions":{"can_mutate":true,"full_authorization":false,"permission_mode":"ask","revision":0},"queued_messages":0,"root_user_message_id":"01a0fdbf-050b-70b7-8d80-68ec82a24424","run_id":"01a0fdbf-050b-70b7-8d80-68ed9ac20114","state":"completed"}
+
+
+failures:
+    encrypted_native_permanent_rule_ignores_bash_and_zsh_slash_functions
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 17 filtered out; finished in 19.00s
+
+error: test failed, to rerun pass `-p ai-terminal --test authorization_review`
