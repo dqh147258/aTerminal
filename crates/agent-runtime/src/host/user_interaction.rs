@@ -9,8 +9,24 @@ pub struct AuthorizationPermit {
     check: ExecutionCheck,
     commit: CommitCheck,
     consumed: AtomicBool,
+    command: Option<String>,
 }
 impl AuthorizationPermit {
+    /// A trusted native observation has no approval mutation, but still revalidates
+    /// identity/cwd at the actual spawn boundary and can only launch once.
+    pub fn observation(check: impl Fn() -> Result<()> + Send + Sync + 'static) -> Arc<Self> {
+        let check: ExecutionCheck = Arc::new(check);
+        let commit_check = check.clone();
+        Arc::new(Self {
+            check,
+            commit: Arc::new(move |_| commit_check()),
+            consumed: AtomicBool::new(false),
+            command: None,
+        })
+    }
+    pub fn submitted_command(&self) -> Option<&str> {
+        self.command.as_deref()
+    }
     pub fn check(&self) -> Result<()> {
         (self.check)()
     }
@@ -273,6 +289,7 @@ impl AgentHost {
             .snapshot
             .backend
             .action_descriptor(context, name, args)?;
+        let expected_fence = job.snapshot.backend.action_fence(context, name, args)?;
         let assessment = assess(&descriptor);
         ensure!(
             assessment.risk != Risk::Forbidden,
@@ -334,6 +351,9 @@ impl AgentHost {
         let expected = assessment_fingerprint(&descriptor);
         let check_common = common.clone();
         let check_descriptor = descriptor.clone();
+        let check_fence = expected_fence.clone();
+        let check_store = self.store.clone();
+        let check_authority = job.budget.permission_scope().clone();
         let check: ExecutionCheck = Arc::new(move || {
             check_common()?;
             let current = backend.action_descriptor(&check_context, &name, &args)?;
@@ -351,36 +371,65 @@ impl AgentHost {
                     "authorization_context_changed"
                 );
             }
-            // Transient prompt revisions are deliberately absent from permanent fingerprints,
-            // but the exact pending action still binds the revision observed before waiting.
-            if check_descriptor.tool == "run_command" && initially_safe {
+            ensure!(
+                backend.action_fence(&check_context, &name, &args)? == check_fence,
+                "authorization_input_changed"
+            );
+            if check_descriptor.tool == "run_command"
+                && !once
+                && !initially_safe
+                && check_store.permissions(&check_authority)?["full_authorization"] != true
+            {
                 ensure!(
-                    current.shell_proof.as_ref().map(|p| p.current_revision)
-                        == check_descriptor
-                            .shell_proof
-                            .as_ref()
-                            .map(|p| p.current_revision),
-                    "authorization_input_changed"
+                    assess(&current).can_always,
+                    "authorization_rule_scope_changed"
                 );
             }
             Ok(())
         });
+        let submitted_command = if descriptor.tool == "run_command" {
+            descriptor.arguments["command"].as_str().map(str::to_owned)
+        } else {
+            None
+        };
+        let commit_check = check.clone();
+        let commit_store = self.store.clone();
+        let commit_authority = job.budget.permission_scope().clone();
         let commit: CommitCheck = Arc::new(move |observation| {
             common()?;
+            if observation.is_none() {
+                commit_check()?;
+            }
             if let Some(observation) = observation {
                 ensure!(
                     observation["cwd"] == json!(descriptor.cwd),
                     "authorization_cwd_changed"
                 );
-                if initially_safe && descriptor.tool == "run_command" {
+                if descriptor.tool == "run_command"
+                    && let Some(expected) = &descriptor.execution_identity
+                {
+                    let program = descriptor.arguments["command"]
+                        .as_str()
+                        .and_then(crate::authorization::permanent_command_program)
+                        .context("authorization_program_changed")?;
+                    ensure!(
+                        blake3::hash(&std::fs::read(program)?).to_hex().as_str() == expected,
+                        "authorization_program_changed"
+                    );
+                }
+                if !expected_fence.is_null() {
+                    ensure!(
+                        observation["fence"] == expected_fence,
+                        "authorization_input_changed"
+                    );
+                }
+                if descriptor.tool == "run_command"
+                    && !once
+                    && commit_store.permissions(&commit_authority)?["full_authorization"] != true
+                {
                     ensure!(
                         observation["input_buffer_empty"] == true
                             && observation["phase"] == "prompt",
-                        "authorization_input_changed"
-                    );
-                    ensure!(
-                        observation["revision"].as_u64()
-                            == descriptor.shell_proof.as_ref().map(|p| p.current_revision),
                         "authorization_input_changed"
                     );
                 }
@@ -393,6 +442,7 @@ impl AgentHost {
             check,
             commit,
             consumed: AtomicBool::new(false),
+            command: submitted_command,
         }))
     }
 }
@@ -767,6 +817,7 @@ mod tests {
                 Ok(())
             }),
             consumed: AtomicBool::new(false),
+            command: None,
         };
         permit.check().unwrap();
         allow.store(false, Ordering::Release);

@@ -259,6 +259,40 @@ pub(crate) fn authorize(read_only: bool, request: &Request) -> Result<()> {
 mod tests {
     use super::*;
     #[test]
+    fn authorization_rpc_reads_and_real_transport_metadata_respect_readonly_grant() {
+        for action in [
+            "permissions",
+            "pending",
+            "approval_details",
+            "rules",
+            "state",
+        ] {
+            let request = Request {
+                operation: Operation::Agent as i32,
+                text: serde_json::json!({"action":action}).to_string(),
+                ..Default::default()
+            };
+            assert!(authorize(true, &request).is_ok());
+        }
+        for action in ["resolve", "set_permissions", "revoke_rule"] {
+            let request = Request {
+                operation: Operation::Agent as i32,
+                text:
+                    serde_json::json!({"action":action,"can_mutate":true,"full_authorization":true})
+                        .to_string(),
+                ..Default::default()
+            };
+            assert!(authorize(true, &request).is_err());
+            assert!(authorize(false, &request).is_ok());
+        }
+        let mut reply=Reply{history:vec![serde_json::json!({"permissions":{"permission_mode":"ask","full_authorization":false,"can_mutate":true}}).to_string()],..Default::default()};
+        annotate_agent_permissions(&mut reply, true);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&reply.history[0]).unwrap()["permissions"]["can_mutate"],
+            false
+        );
+    }
+    #[test]
     fn image_uploads_and_sends_respect_paired_read_only_permissions() {
         for action in [
             "list",
