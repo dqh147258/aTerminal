@@ -33,6 +33,17 @@ struct SearchCursor {
 }
 type SearchEvent = (i64, String, String, i64, String);
 type SearchText = (Option<String>, String, i64, usize, Vec<u8>);
+pub(super) fn interrupt_native_commands(db: &Connection) -> Result<()> {
+    let exists: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='tool_commands')",
+        [],
+        |r| r.get(0),
+    )?;
+    if exists {
+        db.execute("UPDATE tool_commands SET value=json_set(value,'$.state','unknown','$.reason','desktop_restart','$.final',json('true'),'$.exit_code',NULL) WHERE json_extract(value,'$.source')='native_program' AND COALESCE(json_extract(value,'$.final'),0)=0",[])?;
+    }
+    Ok(())
+}
 impl Store {
     /// Bounded traversal of full retained event/record text. An empty page with a cursor
     /// means scanning is incomplete, rather than a claim that the query has no matches.
@@ -294,6 +305,7 @@ impl Store {
         );
         let command = id();
         value["command_id"] = json!(command);
+        value["run_id"] = json!(run);
         value["session_id"] = json!(session);
         value["evidence_source"] = json!("host_submission_and_session_shell_hook");
         value["application_task"] =
@@ -348,7 +360,7 @@ impl Store {
     pub fn update_command(&self, caller: &Scope, command: &str, value: &Value) -> Result<()> {
         let db = self.db.lock().unwrap();
         command_schema(&db)?;
-        db.execute("UPDATE tool_commands SET value=?5 WHERE id=?1 AND json_extract(scope,'$.owner')=?2 AND json_extract(scope,'$.desktop')=?3 AND (?4 IS NULL OR session=?4) AND COALESCE(json_extract(value,'$.final'),0)=0",params![command,caller.owner,caller.desktop,caller.session,bounded_json(value,65536)?])?;
+        db.execute("UPDATE tool_commands SET value=json_set(?5,'$.run_id',json_extract(value,'$.run_id')) WHERE id=?1 AND json_extract(scope,'$.owner')=?2 AND json_extract(scope,'$.desktop')=?3 AND (?4 IS NULL OR session=?4) AND COALESCE(json_extract(value,'$.final'),0)=0",params![command,caller.owner,caller.desktop,caller.session,bounded_json(value,65536)?])?;
         Ok(())
     }
     /// Every PTY write must call this, including raw text, keys and other Run/Agent writers.
@@ -360,7 +372,7 @@ impl Store {
     ) -> Result<()> {
         let db = self.db.lock().unwrap();
         command_schema(&db)?;
-        db.execute("UPDATE tool_commands SET value=json_set(value,'$.state','unknown','$.reason','intervening_agent_input','$.final',json('true'),'$.exit_code',NULL) WHERE session=?1 AND json_extract(scope,'$.owner')=?2 AND json_extract(scope,'$.desktop')=?3 AND NOT(scope=?4 AND action=?5) AND COALESCE(json_extract(value,'$.final'),0)=0",params![session,caller.owner,caller.desktop,caller.key()?,action])?;
+        db.execute("UPDATE tool_commands SET value=json_set(value,'$.state','unknown','$.reason','intervening_agent_input','$.final',json('true'),'$.exit_code',NULL) WHERE session=?1 AND json_extract(scope,'$.owner')=?2 AND json_extract(scope,'$.desktop')=?3 AND NOT(scope=?4 AND action=?5) AND COALESCE(json_extract(value,'$.final'),0)=0 AND COALESCE(json_extract(value,'$.source'),'')!='native_program'",params![session,caller.owner,caller.desktop,caller.key()?,action])?;
         Ok(())
     }
 }
@@ -368,6 +380,41 @@ impl Store {
 #[cfg(test)]
 mod toolset_tests {
     use super::*;
+    #[test]
+    fn native_live_rows_ignore_pty_writes_and_restart_marks_them_unknown() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("private/commands.db");
+        let store = Store::open(&path).unwrap();
+        let scope = store.agent("owner", "desktop", Some("session")).unwrap();
+        let root = store.accept_user(&scope, "r", "work", json!({})).unwrap();
+        let native=store.begin_command(&scope,&root.run_id,"native","session",json!({"source":"native_program","state":"running","accepted":true,"final":false,"exit_code":null})).unwrap();
+        let pty = store
+            .begin_command(
+                &scope,
+                &root.run_id,
+                "pty",
+                "session",
+                json!({"state":"submitted","final":false}),
+            )
+            .unwrap();
+        assert_eq!(
+            store.command(&scope, &native).unwrap()["run_id"],
+            root.run_id
+        );
+        store
+            .invalidate_command_writes(&scope, "session", "new-pty-write")
+            .unwrap();
+        assert_eq!(store.command(&scope, &native).unwrap()["state"], "running");
+        assert_eq!(store.command(&scope, &native).unwrap()["final"], false);
+        assert_eq!(store.command(&scope, &pty).unwrap()["state"], "unknown");
+        drop(store);
+        let restored = Store::open(&path).unwrap();
+        let row = restored.command(&scope, &native).unwrap();
+        assert_eq!(row["state"], "unknown");
+        assert_eq!(row["final"], true);
+        assert_eq!(row["reason"], "desktop_restart");
+        assert!(row["exit_code"].is_null());
+    }
     #[test]
     fn search_cursors_bind_filters_scope_watermark_and_retention() {
         let temp = tempfile::tempdir().unwrap();

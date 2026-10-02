@@ -323,3 +323,309 @@ async fn cli_pending_once_resolution_crosses_real_host_and_pty_without_replay() 
         .unwrap();
     server.abort();
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cli_native_program_always_appends_exact_bytes_then_revokes_denies_and_regrants() {
+    use ai_terminal_agent_runtime::config::{
+        Binding, Capabilities, ModelProfile, OwnerConfig, Provider, Reasoning,
+    };
+    use ai_terminal_agent_runtime::model::{Connection, Protocol};
+    use axum::response::IntoResponse;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    };
+    let desktop = Desktop::start();
+    let marker = desktop.dir.join("once-result");
+    let command =
+        json!({"program":"/usr/bin/tee","args":["-a",marker.to_string_lossy()],"stdin":"CLI"});
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let calls = Arc::new(AtomicU32::new(0));
+    let counter = calls.clone();
+    let tool_command = command.clone();
+    let router=axum::Router::new().route("/chat/completions",axum::routing::post(move || {
+        let counter=counter.clone();let command=tool_command.clone();async move {
+            let phase=counter.fetch_add(1,Ordering::AcqRel);let first=phase==0;
+            let delta=if first {json!({"tool_calls":[{"index":0,"id":"cli-command","type":"function","function":{"name":"run_program","arguments":command.to_string()}}]})} else if phase==1 {json!({"content":json!({"summary":"Native child output observed","tui_lines":[]}).to_string()})} else {json!({"content":"Complete"})};
+            let a=json!({"id":"local","object":"chat.completion.chunk","created":0,"model":"local","choices":[{"index":0,"delta":delta,"finish_reason":null}]});
+            let b=json!({"id":"local","object":"chat.completion.chunk","created":0,"model":"local","choices":[{"index":0,"delta":{},"finish_reason":if first {"tool_calls"} else {"stop"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}});
+            ([("content-type","text/event-stream")],format!("data: {a}\n\ndata: {b}\n\ndata: [DONE]\n\n")).into_response()
+        }
+    }));
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = Client::connect(&desktop.dir).unwrap();
+    let provider = Provider {
+        id: "local".into(),
+        name: "local stub".into(),
+        connection: Connection {
+            protocol: Protocol::OpenaiChat,
+            endpoint: format!("http://{address}"),
+            api_version: None,
+        },
+        catalog_url: None,
+        secret_ref: None,
+        credential_revision: 0,
+        enabled: true,
+    };
+    let profile = ModelProfile {
+        id: "local".into(),
+        name: "local stub".into(),
+        provider_id: "local".into(),
+        model: "local".into(),
+        context_window: 128000,
+        max_tokens: 2048,
+        temperature: None,
+        top_p: None,
+        reasoning: Reasoning::ProviderDefault,
+        capabilities: Capabilities {
+            tools: Some(true),
+            streaming: Some(true),
+            ..Default::default()
+        },
+        max_rounds: 4,
+        max_seconds: 15,
+        read_only: false,
+    };
+    let mut config = OwnerConfig::default();
+    config.providers.insert("local".into(), provider);
+    config.models.insert("local".into(), profile);
+    config.bindings.insert(
+        "session-default".into(),
+        Binding {
+            model_id: "local".into(),
+            reasoning: None,
+        },
+    );
+    client
+        .call(Request {
+            operation: Operation::Configuration as i32,
+            text: json!({"action":"replace","expected_revision":0,"config":config,"secrets":{}})
+                .to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+    // This synthetic shell has no startup files or hooks. It executes only this test's
+    // explicitly approved literal command and never touches existing terminals.
+    let terminal = client
+        .call(Request {
+            operation: Operation::Create as i32,
+            command: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "while IFS= read -r line; do eval \"$line\"; done".into(),
+            ],
+            cwd: desktop.dir.to_string_lossy().into_owned(),
+            rows: 24,
+            cols: 80,
+            ..Default::default()
+        })
+        .unwrap()
+        .info
+        .unwrap();
+    client
+        .call(Request {
+            operation: Operation::AttachDesktop as i32,
+            session: terminal.id.clone(),
+            ..Default::default()
+        })
+        .unwrap();
+    let (ok, _) = desktop.cli(&[
+        "send",
+        "--session",
+        &terminal.id,
+        "--message",
+        "perform isolated operation",
+        "--request-id",
+        "root",
+    ]);
+    assert!(ok);
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let pending = loop {
+        let (ok, page) = desktop.cli(&["pending", "--session", &terminal.id]);
+        assert!(ok);
+        if let Some(item) = page["result"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["state"] == "pending")
+        {
+            break item.clone();
+        }
+        assert!(Instant::now() < deadline, "pending did not appear");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert!(!marker.exists());
+    assert_eq!(calls.load(Ordering::Acquire), 1);
+    assert_eq!(pending["kind"], "approval");
+    assert_eq!(pending["can_always"], true, "{pending}");
+    assert!(pending["fingerprint"].as_str().unwrap().starts_with("v3:"));
+    assert!(
+        pending["arguments_preview"]
+            .as_str()
+            .unwrap()
+            .contains("once-result")
+    );
+    let id = pending["id"].as_str().unwrap();
+    let (ok, result) = desktop.cli(&[
+        "resolve",
+        id,
+        "--session",
+        &terminal.id,
+        "--decision",
+        "always",
+        "--request-id",
+        "always1",
+    ]);
+    assert!(ok);
+    assert_eq!(result["result"]["duplicate"], false);
+    async fn completed(desktop: &Desktop, session: &str) {
+        let deadline = Instant::now() + Duration::from_secs(8);
+        loop {
+            let (ok, state) = desktop.cli(&["show", "--session", session]);
+            assert!(ok);
+            if state["result"]["state"] == "completed" {
+                break;
+            }
+            assert!(Instant::now() < deadline, "native Run failed: {state}");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+    completed(&desktop, &terminal.id).await;
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "CLI");
+    let (ok, rules) = desktop.cli(&["rules"]);
+    assert!(ok);
+    let rule = rules["result"]["items"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    calls.store(0, Ordering::Release);
+    assert!(
+        desktop
+            .cli(&[
+                "send",
+                "--session",
+                &terminal.id,
+                "--message",
+                "same exact native operation",
+                "--request-id",
+                "root2"
+            ])
+            .0
+    );
+    completed(&desktop, &terminal.id).await;
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "CLICLI");
+    assert!(
+        desktop
+            .cli(&["revoke-rule", &rule, "--request-id", "revoke1"])
+            .0
+    );
+    calls.store(0, Ordering::Release);
+    assert!(
+        desktop
+            .cli(&[
+                "send",
+                "--session",
+                &terminal.id,
+                "--message",
+                "same exact native operation",
+                "--request-id",
+                "root3"
+            ])
+            .0
+    );
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let denied = loop {
+        let (ok, page) = desktop.cli(&["pending", "--session", &terminal.id]);
+        assert!(ok);
+        if let Some(row) = page["result"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["state"] == "pending")
+        {
+            break row.clone();
+        }
+        assert!(Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert!(
+        desktop
+            .cli(&[
+                "resolve",
+                denied["id"].as_str().unwrap(),
+                "--session",
+                &terminal.id,
+                "--decision",
+                "deny",
+                "--request-id",
+                "deny"
+            ])
+            .0
+    );
+    completed(&desktop, &terminal.id).await;
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "CLICLI");
+    calls.store(0, Ordering::Release);
+    assert!(
+        desktop
+            .cli(&[
+                "send",
+                "--session",
+                &terminal.id,
+                "--message",
+                "same exact native operation",
+                "--request-id",
+                "root4"
+            ])
+            .0
+    );
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let regrant = loop {
+        let (ok, page) = desktop.cli(&["pending", "--session", &terminal.id]);
+        assert!(ok);
+        if let Some(row) = page["result"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["state"] == "pending")
+        {
+            break row.clone();
+        }
+        assert!(Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert!(
+        desktop
+            .cli(&[
+                "resolve",
+                regrant["id"].as_str().unwrap(),
+                "--session",
+                &terminal.id,
+                "--decision",
+                "always",
+                "--request-id",
+                "always2"
+            ])
+            .0
+    );
+    completed(&desktop, &terminal.id).await;
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "CLICLICLI");
+    let (ok, rules) = desktop.cli(&["rules"]);
+    assert!(ok);
+    assert_eq!(rules["result"]["items"][0]["id"], rule);
+    assert!(
+        desktop
+            .cli(&["revoke-rule", &rule, "--request-id", "revoke2"])
+            .0
+    );
+    assert_eq!(desktop.cli(&["rules"]).1["result"]["items"], json!([]));
+    client
+        .call(Request {
+            operation: Operation::Close as i32,
+            session: terminal.id,
+            ..Default::default()
+        })
+        .unwrap();
+    server.abort();
+}

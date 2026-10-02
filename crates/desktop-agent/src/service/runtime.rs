@@ -1296,7 +1296,11 @@ impl TerminalBackend for Backend {
             .clone()
             .or_else(|| data["session_id"].as_str().map(str::to_owned));
         let mut descriptor = ActionDescriptor {
-            account_id: self.scope.owner.clone(),
+            account_id: if self.scope.owner.is_empty() {
+                format!("local/{}", self.scope.desktop)
+            } else {
+                self.scope.owner.clone()
+            },
             desktop_id: self.scope.desktop.clone(),
             tool: name.into(),
             source: ToolSource::Builtin,
@@ -1318,11 +1322,15 @@ impl TerminalBackend for Backend {
                 .context("program_required")?;
             let metadata = std::fs::metadata(program)?;
             ensure!(metadata.is_file(), "native_program_not_file");
+            let mut native_binary = false;
             if metadata.len() <= 64 * 1024 * 1024 {
-                descriptor.execution_identity =
-                    Some(blake3::hash(&std::fs::read(program)?).to_hex().to_string());
+                let bytes = std::fs::read(program)?;
+                native_binary = native_program::native_binary(&bytes);
+                descriptor.execution_identity = Some(blake3::hash(&bytes).to_hex().to_string());
             }
-            if !ai_terminal_agent_runtime::authorization::native_leaf_program(program) {
+            if !native_binary
+                || !ai_terminal_agent_runtime::authorization::native_leaf_program(program)
+            {
                 descriptor.source = ToolSource::Unknown;
             }
         }
