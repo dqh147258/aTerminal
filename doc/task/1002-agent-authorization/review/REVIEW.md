@@ -1,0 +1,91 @@
+# 独立授权审查与验收
+
+2026-10-02；阶段 1 已完成，阶段 2 等待协调者提供集成 commit。当前审查基线为 `3f8ebe0c0ff069a471a50a9f336abad9f07444c9`。这份清单不是实现通过报告；新实现尚未合入此 worktree，未运行授权行为验收。
+
+采用主本 `/Volumes/Code/My/aTerminal/doc/task/1002-agent-authorization/PLAN.md` 与 `CONTRACT.md` 的现有授权和 High 验证强度，不新增用户审批。仅编辑 review 文档、独立新增测试文件与协调者明确分配的两个 fixture 文件。不合并 main、不清理 worktree、不使用生产账号/终端或付费模型。
+
+## 当前证据和优先风险
+
+下列是基线调用链中必须由本次实现处理的风险，不能直接当作尚未完成分支的缺陷。所有项目在阶段 2 按最终实现重新核对。
+
+### R1：输入状态不足以证明安全命令（高）
+
+基线 `service/runtime.rs::input_text/send_keys` 最终经 `Backend::write` 到 `service.rs::AgentWrite`。人工输入 revision 防止任务开始后的抢占，但不能证明任务开始前的命令行为空，也不能识别模型前一个获批动作遗留的输入。`shell.rs::observation` 明确标注 `trusted_for_authorization:false`；prompt 状态在用户已输入半条命令时也可能仍存在。
+
+必须观察：预置 `touch marker; ` 等未提交输入，然后模型提交看似安全的 `pwd`；先 input_text 再单独 Enter；换行、回车、粘贴和 TUI 键盘路径。不得仅按本次字符串分类 Safe。若不能证明完整命令/空输入行，应审批原始输入；结构化 run_command 也不能仅凭工具名称绕过同一问题。任意人工输入后的旧动作即使获批也不能写入。
+
+### R2：精确规则绑定真实执行对象与目录（高）
+
+`process.rs::cwd` 会复核 PID identity 后通过 OS 观察 cwd，`SessionInfo.cwd` 是初始目录，hook cwd 是进程可写证据。审批必须区分缺少可信 cwd 和真实目录，不能在未知时回退成旧目录形成永久规则。`extensions.rs::script` 当前使用 Run 快照的 `self.cwd`，而 PTY 后续 cd 可改变实际 Shell cwd；新 descriptor 所指目录必须与真正 script spawn 的目录一致。
+
+阶段 2 检查：同参数/不同 cwd、相同脱敏预览/不同秘密、JSON 对象重排/数组重排、脚本内容更新、MCP 同名能力替换、解释器/可执行文件变化。审批后、调用前重新生成匹配材料。对于不可固定的远程服务版本或未知程序，只允许 once。目录符号链接重定向需明确是否能产生稳定目标；不能把简单 lexical path equality 当作实际对象保证。
+
+### R3：full 不应给模型开启/持久化授权的能力（高）
+
+本地 `Client::connect` 从状态目录读取 endpoint token，PTY 与 daemon 通常同 UID；`Client::call` 可以构造任意本地 Agent RPC。远程桥已经覆盖来自客户端的 account/device 字段，模型工具不应获得用户 RPC 构造器。
+
+必须在风险审批之外硬拒绝识别到的授权管理入口，在 full 和永久规则命中时仍拒绝；覆盖直接 CLI、路径前缀、包装命令和配置修改表达式。模型报告、终端文字、MCP/Skill 结果、ask_user 答案均不是权限开关指令。纯 Shell 字符串拦截不能证明任意同 UID 代码都不可访问 token：最终报告应准确描述应用层防护边界，不能声称具备 OS 隔离。本项已提前通知协调者，要求明确最终保障范围。
+
+协调者已明确：本次不引入 OS 沙箱，不承诺隔离任意已授权程序对同 UID 资源的修改；识别到的模型权限管理直接入口仍为 Forbidden，Host/Broker 不提供自批工具。最终验收按此应用层边界执行，A17 不扩展成无法由当前架构保证的任意 Shell 隔离承诺。
+
+### R4：人类等待必须重构共享计时与已有超时（高）
+
+基线 `Budget::deadline` 是绝对 Instant；Host tool execution 和 `wait_agent_task` 启动 deadline sleep/timeout。仅让 `remaining()` 在人类等待时返回更长值，无法延长已经创建的计时器。父任务 wait_child 加子任务 human wait 时，父等待本身也不能错误计作可运行工作；相反，一个正在运行的兄弟任务必须继续消耗整树预算。
+
+必须观察：超出短活跃预算的人类等待后能继续；等待期间模型请求数不变；解除等待不会重置已消耗 calls/tokens/tools；两子任务只有一个等待时预算照常耗尽；全部等待暂停、其中一个回答恢复；根/子取消及时唤醒；24h TTL 独立于活跃预算。取消/提前退出时计数器须有守卫释放，避免整树永久暂停。
+
+### R5：pending 决策与执行必须有不同的幂等终态（高）
+
+一次点击只给一个确切 action grant；两个设备并发 once/deny/always 需事务化，后到者返回已有决策或冲突，不重写决定。幂等 request_id 不得跨 pending/账号/对话重用成功。拒绝相同动作的去重范围是该 Run，不能永久封禁新用户任务。
+
+需检查重启窗口：pending created、resolved、action prepared、PTY accepted、receipt persisted。重启不重放任何已未知动作；旧 grant 不能启动新 root。撤销规则/关闭 full/切 read_only 必须影响尚未执行动作，不能只改变 UI。
+
+### R6：等待状态不能退出既有安全 watcher（高）
+
+基线 `Host::run` watcher 仅在 `running(state)` 为真时复核账号、来源设备和凭据。加入 suspended/waiting 后，必须继续观察撤权与取消，且不能让新的用户 Run 把尚在等待的 job 当作空闲覆盖。pending resolve 后还需授权复核；不得持有 SQLite/Job/PTY 锁等待人类，导致 cancel/resolve 死锁。
+
+### R7：MCP/脚本副作用前的最后检查（高）
+
+基线 `Extensions::call` 先惰性获取 server/catalog，再发实际 tool call；脚本在 spawn 时持有 execution_gate。授权必须绑定最终 schema/能力版本，实际 MCP 请求前也应检查取消/撤权，不能只在可能耗时的 catalog 连接之前检查。MCP annotations/readOnlyHint 不能自动放行。
+
+### R8：命令结果关联必须把证据不足留为 unknown（中高）
+
+基线 hooks 只有 phase/cwd/exit_code，不能把上次 prompt exit_code 或“accepted”当作完成。新 command_id 必须与提交时输入版本、执行序列和精确文本关联；人工插入、旧 hook、并发冲突、重启、过期、无 hooks 保持 unknown。后台子进程存活不改变已完成 Shell 命令的范围，TUI 不可假装提供通用完成证据。
+
+## 阶段 2 必要验收矩阵
+
+每项要记录测试名、被测 commit、行为证据与结果；下列均为待执行。
+
+| ID | 场景 | 可观察通过条件 |
+| --- | --- | --- |
+| A01 | 新 ask / 旧 allow_input=true / 旧 false / model read_only | 危险 marker 在审批前不存在；旧 true 不直接执行，false 和 model readonly 即使 full 也不写入 |
+| A02 | 严格安全命令及 shell 攻击 corpus | 正常 Safe 路径实际可用；复合语法/执行选项不会无审批触发 marker |
+| A03 | 半行输入、分次 Enter、换行、控制键、TUI | 每条能触发行为的路径进入同一门控；无隐藏拼接命令被自动执行 |
+| A04 | once / always / deny / 重复拒绝 | 仅对应 action 执行一次；always 后同指纹自动执行；deny 和同 Run 重试不写 marker、不重复打扰 |
+| A05 | 精确指纹 | 改参数、顺序敏感数组、秘密、cwd、版本需要新审批；map 重排不造成错误分裂；未知 cwd/version 永久按钮不可用 |
+| A06 | TOCTOU | pending 等待时改变 cwd/脚本/MCP 配置/人工输入，批准旧请求后没有旧目标副作用 |
+| A07 | full / 委托 / 关闭 | 根 full 对本次委托生效；不写入子对话开关；独立子对话仍 ask；关闭后未执行动作重新询问 |
+| A08 | full 下其他防线 | 只读设备、账号改变、来源设备撤权、model readonly、Session 越界、Desktop detach、取消、budget 均不被绕过 |
+| A09 | 真假 RPC 来源 | 只读设备能浏览；resolve/answer/set/revoke 被拒；猜到 pending UUID、终端假 approve、MCP 伪报告均不能授予权限 |
+| A10 | 多设备竞态/重放 | 并发 resolve 只发生一次真实副作用；request_id 冲突不改目标；stale expected_revision 不覆盖新模式 |
+| A11 | 人类等待共享预算 | 使用短预算和模型请求计数验证 R4；TTL/取消独立有效；恢复不刷新预算 |
+| A12 | 重启/失联 | 手机重连保留 pending；daemon 重启旧 pending interrupted，resolve 不触发未知动作；规则和模式仍保留 |
+| A13 | 命令完成 | 真实 shell 返回 0/非0正确关联；延迟任务 wait timeout 不取消；接受不等于成功；无 hooks/人工冲突返回 unknown |
+| A14 | 子任务批量 API | any/all 固定 task ID 集合；超时不取消；取消旧 task 不影响同 Session 新 Run，不发送 Ctrl+C |
+| A15 | 历史/delta/capabilities | 跨 owner/Desktop/Session 无记录泄漏；cursor generation 失效明确；TUI delta 不假称追加；角色 schema 与实际一致 |
+| A16 | Android/iOS/CLI | 一次/永久/拒绝/问答/full/revoke 真 RPC 改变真实执行；切 scope 不误投；只读设备无操作；旧 Desktop 明确能力缺失 |
+| A17 | 授权管理自升级 | 模型通过受控工具尝试 CLI/配置入口在 ask/full/规则命中下均不能启用或持久化授权 |
+| A18 | full 与并发 pending | 开启 full 释放有效 approval 等待，question 仍需真实答案；full/deny/once 竞态只执行一次，关闭后重新门控；can_mutate 来自真实设备 grant |
+
+## 验收设施和证据边界
+
+- 独立新增的攻击数据放在 `command-cases.json`，只作为策略/集成验收输入，不是可执行脚本，不应直接在用户终端运行。
+- 可复用 fixture 的实际路径是 `crates/desktop-cli/examples/account_demo.rs`，不是分派文本中的 server 路径；现有 Android runner 是 `scripts/test-android-agent.py`。协调者已将两者唯一编辑所有权交给此 review 子任务，Android 测试源仍归 Android 执行者。
+- Rust 新增独立 integration test 可置于 `crates/desktop-cli/tests/authorization_review.rs`，通过临时 state-dir、本地确定性模型和 PTY marker 观察行为；在接口与集成 commit 确定后编写，避免猜接口。
+- 加密 RPC 使用临时 server/账号/配对设备/RemoteTerminal；模型和 MCP 仅 loopback/本地进程。每个 fixture 生命周期只清理自己的临时目录和进程。
+- Android `emulator-5586` 是共享资源，执行前与协调者及 Android 执行者约定窗口。iOS 真 RPC 由 iOS 执行者协同提供结果。
+- 阶段 1 已完成源码审查、攻击输入、通用确定性模型与 Android marker 验证 runner。初步通过 `cargo +stable check -p ai-terminal --example account_demo`、fmt、Python AST/JSON 校验与 diff check；这些只证明设施可构建，尚无授权行为/加密 RPC/模拟器通过证据。物理设备和线上供应商不计划验证。
+
+## 恢复入口
+
+fixture 所有权已确认；使用方法见 [FIXTURE.md](FIXTURE.md)。等待协调者提供可合并的集成 commit，只合并指定 commit 到本分支，核对 R1–R8 的最终实现，补充独立行为测试并执行 A01–A18 的必要覆盖。存在实质未修问题时保持 blocked/running，不报告 completed。

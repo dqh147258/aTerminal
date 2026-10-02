@@ -1,0 +1,169 @@
+//! Opt-in deterministic model for real authorization RPC/PTY tests.
+//! It emits tools, never resolves authorization or writes the command's marker itself.
+use anyhow::{Context, Result, ensure};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use std::{io::Write, path::Path};
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Scenario {
+    id: String,
+    steps: Vec<Step>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Step {
+    tool: String,
+    arguments: Value,
+}
+
+fn text(message: &Value) -> String {
+    message["content"]
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            message["content"]
+                .as_array()
+                .map(|parts| {
+                    parts
+                        .iter()
+                        .filter_map(|part| part["text"].as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default()
+        })
+}
+
+// Later steps can consume exact IDs returned by earlier tools without asking
+// the model to invent command/task IDs. The fixture never fabricates results.
+fn arguments(value: &Value, scenario: &str, results: &[Value]) -> Result<Value> {
+    if let Some(reference) = value.get("$fixture_ref") {
+        ensure!(
+            value.as_object().is_some_and(|map| map.len() == 1),
+            "ambiguous fixture reference"
+        );
+        let step = reference["step"]
+            .as_u64()
+            .context("reference step required")?;
+        let pointer = reference["pointer"]
+            .as_str()
+            .context("reference pointer required")?;
+        let call = format!("auth-{scenario}-{step}");
+        return results
+            .iter()
+            .rev()
+            .filter(|result| result["call_id"] == call)
+            .find_map(|result| result["result"].pointer(pointer))
+            .cloned()
+            .context("fixture reference result unavailable");
+    }
+    match value {
+        Value::Array(items) => Ok(Value::Array(
+            items
+                .iter()
+                .map(|item| arguments(item, scenario, results))
+                .collect::<Result<_>>()?,
+        )),
+        Value::Object(items) => Ok(Value::Object(
+            items
+                .iter()
+                .map(|(key, value)| Ok((key.clone(), arguments(value, scenario, results)?)))
+                .collect::<Result<_>>()?,
+        )),
+        value => Ok(value.clone()),
+    }
+}
+
+pub(super) fn respond(body: &Value, dir: &Path) -> Result<Option<axum::response::Response>> {
+    let messages = body["messages"].as_array().context("messages required")?;
+    let Some((start, prompt)) = messages
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|(_, message)| message["role"] == "user")
+        .map(|(index, message)| (index, text(message)))
+        .find(|(_, text)| text.starts_with("AUTH_REVIEW:"))
+    else {
+        return Ok(None);
+    };
+    let scenario: Scenario = serde_json::from_str(&prompt["AUTH_REVIEW:".len()..])?;
+    ensure!(
+        !scenario.id.is_empty()
+            && scenario.id.len() <= 80
+            && scenario
+                .id
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_')),
+        "invalid authorization fixture scenario ID"
+    );
+    ensure!(scenario.steps.len() <= 24, "fixture step limit");
+    let results = messages[start..]
+        .iter()
+        .filter(|message| message["role"] == "tool")
+        .map(|message| {
+            let content = text(message);
+            json!({"call_id":message["tool_call_id"],"result":serde_json::from_str::<Value>(&content).unwrap_or(Value::String(content))})
+        })
+        .collect::<Vec<_>>();
+    let analysis = messages
+        .last()
+        .is_some_and(|message| text(message).starts_with("Application analysis"));
+    // Analysis can replace a raw tool result with a digest. Keep its exact IDs
+    // for reference substitution, while advancement still follows this request's
+    // tool-call IDs rather than a counter stored outside the conversation.
+    let captured_path = dir.join(format!("authorization-results-{}.json", scenario.id));
+    let mut captured: Vec<Value> = if captured_path.exists() {
+        serde_json::from_slice(&std::fs::read(&captured_path)?)?
+    } else {
+        Vec::new()
+    };
+    for result in &results {
+        if !captured.iter().any(|saved| saved == result) {
+            captured.push(result.clone());
+        }
+    }
+    ensure!(captured.len() <= 128, "fixture captured-result limit");
+    std::fs::write(&captured_path, serde_json::to_vec(&captured)?)?;
+    // Only fixture IDs/results are logged. Account credentials and request headers
+    // stay in the private fixture config and are never copied into test reports.
+    let observation = json!({"id":scenario.id,"analysis":analysis,"results":results});
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    writeln!(
+        options.open(dir.join("authorization-model-observations.jsonl"))?,
+        "{observation}"
+    )?;
+    if analysis {
+        return Ok(Some(super::fixture_sse(json!({"content":json!({
+            "summary":"Authorization fixture observation; execution is checked independently using PTY files and RPC state.",
+            "key_quotes":[],"facts":[],"tui_lines":[],"open_questions":[]
+        }).to_string()}))));
+    }
+    for (index, step) in scenario.steps.iter().enumerate() {
+        let call_id = format!("auth-{}-{index}", scenario.id);
+        if results.iter().any(|result| result["call_id"] == call_id) {
+            continue;
+        }
+        ensure!(
+            body["tools"].as_array().is_some_and(|tools| tools
+                .iter()
+                .any(|tool| tool["function"]["name"] == step.tool)),
+            "fixture tool unavailable: {}",
+            step.tool
+        );
+        return Ok(Some(super::fixture_sse(json!({
+            "role":"assistant","tool_calls":[{"index":0,"id":call_id,"type":"function",
+            "function":{"name":step.tool,"arguments":arguments(&step.arguments, &scenario.id, &captured)?.to_string()}}]
+        }))));
+    }
+    Ok(Some(super::fixture_sse(
+        json!({"content":format!("AUTH_REVIEW_DONE:{}", scenario.id)}),
+    )))
+}

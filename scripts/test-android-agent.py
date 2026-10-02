@@ -15,6 +15,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--serial', required=True)
 parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--adb', default=shutil.which('adb') or str(Path.home() / 'Library/Android/sdk/platform-tools/adb'))
+parser.add_argument('--authorization', action='store_true', help='Run the authorization UI workflow and independently verify PTY marker files')
 args = parser.parse_args()
 args.output.mkdir(parents=True, exist_ok=True)
 package = 'com.yxf.aterminal'
@@ -27,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix='aterminal-agent-ui-') as directory:
     fixture = None
     reverse = None
     with (args.output / 'fixture.log').open('wb') as log:
-        fixture = subprocess.Popen([str(ROOT/'target/debug/examples/account_demo'), str(state), str(ROOT/'target/debug/aTerminal'), '--agent-test'], stdout=log, stderr=log, start_new_session=True)
+        fixture = subprocess.Popen([str(ROOT/'target/debug/examples/account_demo'), str(state), str(ROOT/'target/debug/aTerminal'), '--authorization-test' if args.authorization else '--agent-test'], stdout=log, stderr=log, start_new_session=True)
     try:
         deadline = time.monotonic() + 30
         while not (state/'account-fixture.json').exists():
@@ -48,31 +49,47 @@ with tempfile.TemporaryDirectory(prefix='aterminal-agent-ui-') as directory:
         adb('shell', 'input', 'keyevent', 'KEYCODE_WAKEUP', capture_output=True)
         adb('shell', 'wm', 'dismiss-keyguard', capture_output=True)
         with (args.output/'instrumentation.log').open('wb') as log:
-            adb('shell', 'am', 'instrument', '-w', '-r', '-e', 'class', 'com.yxf.aterminal.AgentReadingUiTest', package+'.test/androidx.test.runner.AndroidJUnitRunner', stdout=log, stderr=subprocess.STDOUT, timeout=180)
+            test_class = 'com.yxf.aterminal.AgentAuthorizationUiTest' if args.authorization else 'com.yxf.aterminal.AgentReadingUiTest'
+            adb('shell', 'am', 'instrument', '-w', '-r', '-e', 'class', test_class, package+'.test/androidx.test.runner.AndroidJUnitRunner', stdout=log, stderr=subprocess.STDOUT, timeout=360 if args.authorization else 180)
         transcript = (args.output/'instrumentation.log').read_text()
-        report = adb('exec-out', 'run-as', package, 'cat', 'files/agent-ui-results.json', capture_output=True).stdout
+        report_name = 'authorization-ui-results.json' if args.authorization else 'agent-ui-results.json'
+        report = adb('exec-out', 'run-as', package, 'cat', f'files/{report_name}', capture_output=True).stdout
         (args.output/'results.json').write_bytes(report)
-        assert 'OK (1 test)' in transcript and json.loads(report).get('passed'), 'Agent UI test failed; inspect instrumentation.log/results.json'
-        saved = subprocess.check_output([str(ROOT/'target/debug/aTerminal'), '--state-dir', str(state), 'config', 'terminal-reading', '--json'], text=True)
-        reading = json.loads(saved)['result']['terminal_reading']
-        assert reading == {'head_lines': 7, 'tail_lines': 31}, reading
-        (args.output/'desktop-reading.json').write_text(saved)
-        for name in ['task-result-observations.json', 'task-error-observations.json']:
-            shutil.copyfile(state/name, args.output/name)
-        task_error = json.loads((state/'task-error-observations.json').read_text())
-        # Verify the actual daemon committed the long-error task's terminal state and
-        # released its pins, independently of its in-memory Agent state.
-        with sqlite3.connect(f'file:{state}/data/agent.sqlite3?mode=ro', uri=True) as db:
-            persisted = db.execute('SELECT state FROM runs WHERE id=?', [task_error['task_id']]).fetchone()
-            pins = db.execute('SELECT COUNT(*) FROM pins WHERE run=?', [task_error['task_id']]).fetchone()[0]
-        assert persisted == ('paused',) and pins == 0, (persisted, pins)
-        (args.output/'task-durability.json').write_text(json.dumps({'state': persisted[0], 'remaining_child_pins': pins, 'error_truncated': task_error['error_truncated']}, indent=2))
-        print('PASS: native Agent settings, encrypted RPC, task results/waits, retention, long errors, PTY evidence and vision upload:', args.output/'results.json')
+        result = json.loads(report)
+        assert 'OK (' in transcript and result.get('passed'), 'Agent UI test failed; inspect instrumentation.log/results.json'
+        if args.authorization:
+            expected = result.get('expected_markers')
+            assert isinstance(expected, dict) and expected, 'Authorization UI report must declare independently checkable marker expectations'
+            observed = {}
+            for name, lines in expected.items():
+                marker = (state/name).resolve()
+                assert marker.is_relative_to(state.resolve()) and marker != state.resolve(), f'Marker escaped fixture: {name}'
+                assert lines is None or isinstance(lines, list) and all(isinstance(line, str) for line in lines), f'Invalid expected marker lines: {name}'
+                actual = marker.read_text().splitlines() if marker.exists() else None
+                assert actual == lines, f'PTY side effect mismatch for {name}: {actual!r} != {lines!r}'
+                observed[name] = actual
+            (args.output/'authorization-pty-markers.json').write_text(json.dumps(observed, indent=2))
+            print('PASS: native authorization UI, encrypted RPC, and independently observed PTY side effects:', args.output/'results.json')
+        else:
+            saved = subprocess.check_output([str(ROOT/'target/debug/aTerminal'), '--state-dir', str(state), 'config', 'terminal-reading', '--json'], text=True)
+            reading = json.loads(saved)['result']['terminal_reading']
+            assert reading == {'head_lines': 7, 'tail_lines': 31}, reading
+            (args.output/'desktop-reading.json').write_text(saved)
+            for name in ['task-result-observations.json', 'task-error-observations.json']:
+                shutil.copyfile(state/name, args.output/name)
+            task_error = json.loads((state/'task-error-observations.json').read_text())
+            # Verify durable completion independently of the daemon's in-memory state.
+            with sqlite3.connect(f'file:{state}/data/agent.sqlite3?mode=ro', uri=True) as db:
+                persisted = db.execute('SELECT state FROM runs WHERE id=?', [task_error['task_id']]).fetchone()
+                pins = db.execute('SELECT COUNT(*) FROM pins WHERE run=?', [task_error['task_id']]).fetchone()[0]
+            assert persisted == ('paused',) and pins == 0, (persisted, pins)
+            (args.output/'task-durability.json').write_text(json.dumps({'state': persisted[0], 'remaining_child_pins': pins, 'error_truncated': task_error['error_truncated']}, indent=2))
+            print('PASS: native Agent settings, encrypted RPC, task results/waits, retention, long errors, PTY evidence and vision upload:', args.output/'results.json')
     finally:
-        for name in ['task-result-observations.json', 'task-error-observations.json']:
+        for name in ['task-result-observations.json', 'task-error-observations.json', 'authorization-model-observations.jsonl']:
             if (state/name).exists():
                 shutil.copyfile(state/name, args.output/name)
-        for name in ['defaults', 'settings-saved', 'conversation', 'history', 'evidence', 'vision', 'global-wire', 'task-results', 'task-error']:
+        for name in ['defaults', 'settings-saved', 'conversation', 'history', 'evidence', 'vision', 'global-wire', 'task-results', 'task-error', 'authorization-once', 'authorization-deny', 'authorization-question', 'authorization-full', 'authorization-rules', 'authorization-readonly', 'authorization-timeout']:
             picture = subprocess.run([args.adb, '-s', args.serial, 'exec-out', 'run-as', package, 'cat', f'files/agent-ui-{name}.png'], capture_output=True)
             if picture.returncode == 0:
                 (args.output/f'{name}.png').write_bytes(picture.stdout)
