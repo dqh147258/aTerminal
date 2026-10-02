@@ -20,3 +20,5 @@
 
 
 在fa29899后的Native结果来源followup：`cargo test --locked -j2 -p ai-terminal-agent-runtime --lib store::tools:: -- --test-threads=2` 6/6；`cargo test --locked -j2 -p ai-terminal-agent --lib independent_agent_reads -- --test-threads=2` 1/1。证明native running被独立Global读取仍running，另一Agent PTY input不能失效，wait真正返回completed/exit0/immutable输出及准确marker。持久run_id/重启unknown/oldrun不替换附在Store用例中。相关两lib/tests strictclippy、fmt/diff过；日志 `/private/tmp/aterminal-runtime-native-followup-{store,observer,clippy}.log`。此前无关检查不重复加总。
+
+R2：`cargo test --locked -j2 -p ai-terminal-agent --lib script_helper_changes -- --test-threads=2` 1/1；`... service::runtime::authorization_tests::skill_default_cwd ...` 1/1；两lib/tests strictclippy、fmt/diff通过。只变declared helper、entry/manifest不变，实际脚本启动和descriptor都拒绝；外部动态依赖不再用入口hash伪装永久身份。此前已有native永久闭环不受此边界关闭。

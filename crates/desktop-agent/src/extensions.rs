@@ -219,6 +219,25 @@ pub fn read(skill: &Skill, path: &str) -> Result<Vec<u8>> {
     );
     Ok(data)
 }
+fn verify_package(skill: &Skill) -> Result<()> {
+    let root = skill.root.canonicalize()?;
+    let manifest: Manifest =
+        serde_json::from_slice(&std::fs::read(root.with_extension("manifest.json"))?)?;
+    ensure!(
+        blake3::hash(&serde_json::to_vec(&manifest.files)?)
+            .to_hex()
+            .as_str()
+            == skill.version,
+        "skill_manifest_changed"
+    );
+    ensure!(manifest.files.len() <= 256, "skill_package_limit");
+    let mut total = 0usize;
+    for path in manifest.files.keys() {
+        total = total.saturating_add(read(skill, path)?.len());
+        ensure!(total <= 8 * 1024 * 1024, "skill_package_limit");
+    }
+    Ok(())
+}
 pub fn minimal_environment() -> BTreeMap<String, String> {
     [
         "PATH",
@@ -649,8 +668,9 @@ impl Frozen {
             descriptor.tool_version = Some(skill.version.clone());
             let args = &descriptor.arguments["arguments"];
             let path = args["path"].as_str().context("script_path_required")?;
-            let bytes = read(skill, path)?;
-            let executable = program(
+            verify_package(skill)?;
+            let _ = read(skill, path)?;
+            let _ = program(
                 Path::new(
                     args["interpreter"]
                         .as_str()
@@ -658,10 +678,10 @@ impl Frozen {
                 ),
                 &minimal_environment(),
             )?;
-            let mut hasher = blake3::Hasher::new();
-            hasher.update(&bytes);
-            hasher.update(&std::fs::read(executable)?);
-            descriptor.execution_identity = Some(hasher.finalize().to_hex().to_string());
+            // The entire registered package is integrity-checked, but imported external
+            // files, interpreter libraries and process dependencies are not pinned.
+            // These script capabilities are once/full; no entry-only permanent identity.
+            descriptor.execution_identity = None;
             descriptor.cwd = match args["cwd"].as_str().unwrap_or("session") {
                 "package" => Some(skill.root.to_string_lossy().into_owned()),
                 "session" => self.cwd.as_ref().map(|p| p.to_string_lossy().into_owned()),
@@ -734,6 +754,7 @@ impl Frozen {
     pub async fn script(&self, context: &ToolContext, id: &str, args: Value) -> Result<ToolOutput> {
         use process_wrap::tokio::*;
         let skill = self.selected(id)?;
+        verify_package(skill)?;
         let path = args["path"].as_str().context("script_path_required")?;
         ensure!(path.starts_with("scripts/"), "skill_script_path_required");
         let _ = read(skill, path)?;
@@ -797,6 +818,7 @@ impl Frozen {
                 "cancelled_before_script_spawn"
             );
             context.commit_authorization(None)?;
+            verify_package(skill)?;
             command.spawn()?
         };
         let stdout = child.stdout().take().context("script_stdout_missing")?;
@@ -946,6 +968,88 @@ mod tests {
         let mut changed = config;
         changed.mcp.clear();
         assert!(frozen.check_credentials(&changed).is_err());
+    }
+    #[tokio::test]
+    async fn script_helper_changes_are_rechecked_and_external_dependencies_never_get_always() {
+        use ai_terminal_agent_runtime::{
+            authorization::{ActionDescriptor, ToolSource, assess},
+            host::{Budget, ToolContext},
+            store::Store,
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let files = BTreeMap::from([
+            (
+                "SKILL.md".into(),
+                b"---\nname: helper-check\ndescription: Isolated helper\n---\nRead helper".to_vec(),
+            ),
+            (
+                "scripts/main.sh".into(),
+                b". \"$(dirname \"$0\")/helper.sh\"\nprintf '%s' \"$VALUE\"\n".to_vec(),
+            ),
+            ("scripts/helper.sh".into(), b"VALUE=old\n".to_vec()),
+        ]);
+        let skill = install_files(temp.path(), "owner", "helper-check", files, "test").unwrap();
+        let mut config = OwnerConfig::default();
+        config.skills.insert("helper-check".into(), skill.clone());
+        let frozen = Frozen::new(
+            temp.path(),
+            "owner",
+            1,
+            Arc::new(config),
+            "$helper-check",
+            Some(temp.path().into()),
+        )
+        .unwrap();
+        let arguments = json!({"path":"scripts/main.sh","interpreter":"sh","cwd":"package"});
+        let mut descriptor = ActionDescriptor {
+            account_id: "owner".into(),
+            desktop_id: "desktop".into(),
+            tool: "skill_action".into(),
+            source: ToolSource::Skill,
+            source_id: "user/helper-check".into(),
+            tool_version: Some(skill.version.clone()),
+            target: "session".into(),
+            cwd: Some(temp.path().to_string_lossy().into_owned()),
+            arguments: json!({"skill_id":"user/helper-check","action":"script","arguments":arguments}),
+            execution_identity: None,
+            shell_proof: None,
+            permission_management: false,
+        };
+        frozen.authorization_descriptor(&mut descriptor).unwrap();
+        assert!(!assess(&descriptor).can_always);
+        std::fs::write(skill.root.join("scripts/helper.sh"), b"VALUE=changed\n").unwrap();
+        assert!(
+            read(&skill, "scripts/main.sh").is_ok(),
+            "entry alone did not change"
+        );
+        assert!(
+            frozen.authorization_descriptor(&mut descriptor).is_err(),
+            "whole package catches helper drift"
+        );
+        let store = Store::open(&temp.path().join("private/script.db")).unwrap();
+        let scope = store.agent("owner", "desktop", Some("session")).unwrap();
+        let root = store.accept_user(&scope, "r", "script", json!({})).unwrap();
+        let (_cancel, receiver) = tokio::sync::watch::channel(false);
+        let context = ToolContext {
+            history_unit_id: root.user_message_id,
+            vision: false,
+            scope: scope.clone(),
+            run_id: root.run_id,
+            root_user_message_id: root.root_user_message_id,
+            action_id: "script".into(),
+            max_read_bytes: 4096,
+            budget: Arc::new(Budget::new(30, 10, 10000, scope)),
+            cancel: receiver,
+            execution_gate: Arc::new(Mutex::new(true)),
+            authorization_check: None,
+        };
+        assert!(
+            frozen
+                .script(&context, "user/helper-check", arguments)
+                .await
+                .is_err(),
+            "spawn verifies full registered package"
+        );
     }
     #[test]
     fn immutable_packages_enforce_policy_manifest_and_resource_boundaries() {
