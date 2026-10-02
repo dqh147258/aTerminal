@@ -106,6 +106,12 @@ root 已定案：独立 `run_program {program,args,stdin?}` 直接原生执行�
 
 `Extensions::authorization_descriptor` 把所有 MCP 的目录设为 binding.config.cwd 或冻结 Session cwd，但 streamable_http transport 没有使用这些本地目录，也不知道远端 cwd。审批可能显示错误的作用位置。建议 stdio 显示真实冻结 spawn 目录；HTTP cwd=None 并显示 unknown/remote。已成功 CLI send 当前 runtime。现独立 MCP 实际 marker 场景是 stdio，HTTP 目录准确性将以源码与聚焦测试核对。
 
+### R19：入口脚本 hash 没有检查同包 helper 的实际内容（高，root 已定修）
+
+user Skill descriptor 只读取入口脚本，缓存的 skill.version 来自 manifest 文件表；同 Run 的 helper-only 变更不改变入口与 manifest，也可能改变脚本的实际 source/import 行为。此前只有源码缺检查结论，未宣称完整 Host 链已复现。root 已决定 descriptor/末端 commit 验证全部 declared package 实际文件 hash，并令泛用 Skill interpreter 脚本 can_always=false（once/full 保留且 full 不跳过版本检查），不尝试声称任意外部 imports 的 OS 依赖可固定。
+
+独立新增 Skill fixture 通过真实本地用户配置安装包，再用加密用户 RPC 建立 pending，只修改已安装 helper（入口与 manifest bytes 校验仍相同），检查 once 和显式 full 下均无脚本 marker，可靠 native tee 仍可永久授权并执行。因预执行失败会触发已有不确定动作观察屏障，场景显式使用 inspect_command 观察后继续，所有 Skill 错误结果必须实际为版本/manifest/integrity 失败；测试尚未运行。
+
 ## 阶段 2 必要验收矩阵
 
 每项要记录测试名、被测 commit、行为证据与结果；下列均为待执行。

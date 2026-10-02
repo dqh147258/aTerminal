@@ -62,7 +62,7 @@ runner 保存 `results.json`、`authorization-pty-markers.json`、`fixture.log`�
 
 可以复用新增 `account_demo_authorization/mod.rs` 的模型 responder，或直接启动 example。使用临时 state-dir 的 `Client` 管理 fixture，用真实 `Account` / `RemoteTerminal.agent` 做加密 RPC；两台临时设备验证重复决定和 revision conflict。直接 Local Client 测试只能注明本地 RPC，不能标作加密跨端验收。
 
-独立测试文件 `crates/desktop-cli/tests/authorization_review.rs` 当前包含十七个加密 RPC 场景，涵盖真实临时手机账号的 once/deny/重放、native 永久规则再授撤销、full/question/cancel、原始输入和 Enter、人工抢占、长详情 ack、只读 grant、原生读取、共享树预算、deny→full、新 native 结果/未知程序/取消、旧 v2 规则不命中新 PTY 动作、并发 native/get/wait/PTY 独立性，以及 MCP 实际 marker。测试显式 ignored，原因是需要从同一集成 commit 先构建 example；属于阶段 2 必要检查，不能用 ignored 的默认 test 结果声称通过。
+独立测试文件 `crates/desktop-cli/tests/authorization_review.rs` 当前包含十八个加密 RPC 场景，涵盖真实临时手机账号的 once/deny/重放、native 永久规则再授撤销、full/question/cancel、原始输入和 Enter、人工抢占、长详情 ack、只读 grant、原生读取、共享树预算、deny→full、新 native 结果/未知程序/取消、旧 v2 规则不命中新 PTY 动作、并发 native/get/wait/PTY 独立性、Skill helper-only 包变更及 MCP 实际 marker。测试显式 ignored，原因是需要从同一集成 commit 先构建 example；属于阶段 2 必要检查，不能用 ignored 的默认 test 结果声称通过。
 
 当前正式接口以 root 主合同为准：`run_command` 保持 PTY，只支持 once/full；独立 `run_program` 的 program/args/stdin 直接原生执行，可靠 leaf/hash/cwd 可 always，source=native_program。旧 execution=pty|native 提案只属于历史，fixture/test 不使用该字段。
 
