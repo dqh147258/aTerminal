@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AC0210000000000000000003 /* AgentAuthorizationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0210000000000000000004; };
+		AC0210000000000000000001 /* AgentAuthorization.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0210000000000000000002; };
 		ABCD10010000000000000007 /* AgentHistoryCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCD10010000000000000008; };
 		ABCD10010000000000000005 /* AgentCacheSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCD10010000000000000006; };
 		ABCD10010000000000000003 /* SettingsDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCD10010000000000000004; };
@@ -29,6 +31,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		AC0210000000000000000004 /* AgentAuthorizationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAuthorizationView.swift; sourceTree = "<group>"; };
+		AC0210000000000000000002 /* AgentAuthorization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAuthorization.swift; sourceTree = "<group>"; };
 		ABCD10010000000000000008 /* AgentHistoryCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentHistoryCache.swift; sourceTree = "<group>"; };
 		ABCD10010000000000000006 /* AgentCacheSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCacheSearch.swift; sourceTree = "<group>"; };
 		ABCD10010000000000000004 /* SettingsDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsDraft.swift; sourceTree = "<group>"; };
@@ -105,6 +109,8 @@
 				AABBCCDD0000000000000025 /* LoginScreen.swift */,
 				AABBCCDD0000000000000026 /* WorkspaceScreen.swift */,
 				AABBCCDD0000000000000027 /* ChatPanel.swift */,
+                AC0210000000000000000002 /* AgentAuthorization.swift */,
+                AC0210000000000000000004 /* AgentAuthorizationView.swift */,
                 ABCD10010000000000000008 /* AgentHistoryCache.swift */,
                 ABCD10010000000000000006 /* AgentCacheSearch.swift */,
                 ABCD10010000000000000004 /* SettingsDraft.swift */,
@@ -220,6 +226,8 @@
 				AABBCCDD0000000000000015 /* LoginScreen.swift in Sources */,
 				AABBCCDD0000000000000016 /* WorkspaceScreen.swift in Sources */,
 				AABBCCDD0000000000000017 /* ChatPanel.swift in Sources */,
+                AC0210000000000000000001 /* AgentAuthorization.swift in Sources */,
+                AC0210000000000000000003 /* AgentAuthorizationView.swift in Sources */,
                 ABCD10010000000000000007 /* AgentHistoryCache.swift in Sources */,
                 ABCD10010000000000000005 /* AgentCacheSearch.swift in Sources */,
                 ABCD10010000000000000003 /* SettingsDraft.swift in Sources */,

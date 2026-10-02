@@ -51,7 +51,8 @@ struct AgentItem: Identifiable {
     private var globalEpoch = 0
     private var contextConnection = -1
     private var archiveLoading = false
-    @Published var allowInput = false { didSet { if !restoringDraft { requestID = UUID().uuidString; saveDraft() } } }
+    let authorization = AgentAuthorization()
+    @Published var authorizationVisible = false
     @Published var global = false
     @Published var browsing = false
     @Published var loading = false
@@ -77,6 +78,7 @@ struct AgentItem: Identifiable {
     var destinationLabel:String {(scope?.identity.account ?? "")+" · "+desktopName}
     private var visible = false
     private var epoch = 0
+    private var authorizationEpoch = 0
     private var generation: Int64?
     private var cursor: String?
     private var pages: [[AgentItem]] = []
@@ -98,8 +100,15 @@ struct AgentItem: Identifiable {
         return historySearch.contains(scope: scope.key, identity: scope.identity.key, query: query)
     }
     func cancelHistorySearch() { historySearch.cancel() }
-    var canSend: Bool { writeReason == nil && connected && available && !submitting && (global ? globalID != nil : !(target?.session ?? "").isEmpty) && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty) }
-    var canCancel: Bool { writeReason == nil && connected && running }
+    var canSend: Bool { authorization.permissions?.canMutate == true && !authorization.busy && agentConnectionReason == nil && connected && available && !submitting && (global ? globalID != nil : !(target?.session ?? "").isEmpty) && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty) }
+    var canCancel: Bool { authorization.permissions?.canMutate == true && agentConnectionReason == nil && connected && running }
+    // Agent management uses the server device grant, independently of PTY control/attachment.
+    var agentConnectionReason: String? {
+        guard connected, let target else { return "Desktop 未连接 · 只读缓存" }
+        if WorkspacePreferences.fixture { return target.device == "fixture-desktop" ? nil : "设备离线 · 只读缓存" }
+        guard let terminal, terminal.identity == target.identity, terminal.deviceID == target.device else { return "设备离线 · 只读缓存" }
+        return nil
+    }
     var writeReason: String? {
         guard connected, let target else { return "Desktop 未连接 · 只读缓存" }
         if WorkspacePreferences.fixture {
@@ -133,6 +142,7 @@ struct AgentItem: Identifiable {
             try pagesCache.storePage(scope: scope, cursor: cursor, page: page)
         }, read: { scope, cursor in try pagesCache?.page(scope: scope, cursor: cursor) }, messages: try? AgentMessageCache(path: path))
         cache = pagesCache
+        authorization.changed = { [weak self] in self?.objectWillChange.send() }
         historySearch.changed = { [weak self] in self?.objectWillChange.send() }
         if let cacheFailure { status = "历史缓存不可用：\(cacheFailure)" }
     }
@@ -172,14 +182,14 @@ struct AgentItem: Identifiable {
         reset(); if visible { start() }
     }
     func setVisible(_ value: Bool, core: RemoteTerminal) { visible = value; stop(); if value { reset(); start() } }
-    func stop() { epoch += 1; task?.cancel(); task = nil; loading = false }
+    func stop() { authorizationEpoch += 1; authorization.bind(context: UUID().uuidString, writable: false, transport: nil); epoch += 1; task?.cancel(); task = nil; loading = false }
     func switchScope() { historyTarget=nil; restoreDraft(); stop(); reset(); if visible { start() } }
     func openSession() { saveDraft(); global = false; globalID = nil; browsing = false; switchScope() }
     func openGlobal(_ row: [String: Any]) {
         guard let id = (row["scope"] as? [String: Any])?["agent"] as? String else { return }
         saveDraft(); globalID = id; global = true; globalTitle = row["title"] as? String ?? "新会话"; browsing = false; switchScope()
     }
-    func reset() { epoch += 1; loading = false; generation = nil; cursor = nil; pages = []; items = []; liveText = ""; hasMore = true; load(first: true) }
+    func reset() { epoch += 1; loading = false; generation = nil; cursor = nil; pages = []; items = []; liveText = ""; hasMore = true; bindAuthorization(); load(first: true) }
     func start() {
         task?.cancel()
         task = Task { [weak self] in
@@ -192,7 +202,11 @@ struct AgentItem: Identifiable {
     func request(_ command: [String: Any], configuration: Bool = false, destination: ChatScope? = nil, expectedEpoch: Int? = nil) async throws -> [String: Any] {
         if let expectedEpoch, expectedEpoch != connectionEpoch { throw ChatFailure.message("Desktop 连接已变化") }
         #if DEBUG
-        if SettingsFixture.enabled { return SettingsFixture.agent(command, session: (destination ?? target)?.session) }
+        if SettingsFixture.enabled {
+            if AuthorizationFixture.enabled, command["action"] as? String == "approval_details" { try await Task.sleep(nanoseconds: 1_000_000_000) }
+            if AuthorizationFixture.enabled, let value = AuthorizationFixture.shared.request(command, scope: (destination ?? target)?.session ?? "") { return value }
+            return SettingsFixture.agent(command, session: (destination ?? target)?.session)
+        }
         #endif
         guard let terminal, let target = destination ?? target else { throw ChatFailure.message("Desktop 未连接") }
         var body = command; if !configuration { body["version"] = 1 }
@@ -205,6 +219,16 @@ struct AgentItem: Identifiable {
         guard let value = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else { throw ChatFailure.message("无效的 Desktop 响应") }
         return value
     }
+    private func bindAuthorization() {
+        let destination = target; let connection = connectionEpoch; let version = authorizationEpoch
+        authorization.bind(context: "\(destination?.key ?? ""):\(connection):\(version)", writable: agentConnectionReason == nil && connected,
+            transport: connected && destination != nil ? { [weak self] command in
+                guard let self, self.target == destination, self.authorizationEpoch == version else { throw CancellationError() }
+                let value = try await self.request(command, destination: destination, expectedEpoch: connection)
+                guard self.target == destination, self.authorizationEpoch == version else { throw CancellationError() }
+                return value
+            } : nil)
+    }
     private func refresh() async {
         guard connected, let target else { return }; let version = epoch
         do {
@@ -212,7 +236,7 @@ struct AgentItem: Identifiable {
             guard version == epoch, !Task.isCancelled else { return }
             available = response["available"] as? Bool ?? false
             let state = response["state"] as? String ?? "idle"
-            running = ["running", "monitoring", "stopping", "finishing", "cancelling"].contains(state)
+            running = ["running", "monitoring", "stopping", "finishing", "cancelling", "waiting", "suspended", "waiting_approval", "waiting_user", "waiting_for_user"].contains(state)
             liveText = response["live_text"] as? String ?? ""
             status = (global ? "全局" : "当前终端") + " · " + state + (response["error"] as? String).map { " · " + $0 }.orEmpty
             if let next = (response["history_generation"] as? NSNumber)?.int64Value {
@@ -221,6 +245,7 @@ struct AgentItem: Identifiable {
                 if let generation, generation != next { reset() }
                 else if !browsing { load(first: true) }
             }
+            bindAuthorization(); await authorization.refresh()
         } catch { if version == epoch { status = "离线缓存 · \(terminalError(error))" } }
     }
     func load(first: Bool = false) {
@@ -262,7 +287,7 @@ struct AgentItem: Identifiable {
     }
     func send(_ core: RemoteTerminal) {
         guard canSend, let target else { return }
-        let message = draft; let pictures = attachments; let id = requestID; let permission = allowInput; let connection = connectionEpoch
+        let message = draft; let pictures = attachments; let id = requestID; let permission = authorization.mode; let connection = connectionEpoch
         sending.insert(target.key); submitting = true; saveDraft()
         Task {
             var uploads: [String] = []
@@ -278,14 +303,14 @@ struct AgentItem: Identifiable {
                         offset = end
                     }
                 }
-                var command: [String: Any] = ["action": "send", "request_id": id, "message": message, "allow_input": permission]
+                var command: [String: Any] = ["action": "send", "request_id": id, "message": message, "permission_mode": permission]
                 if !uploads.isEmpty { command["images"] = uploads }
                 _ = try await request(command, destination: target, expectedEpoch: connection)
-                if self.target == target && requestID == id {
+                if self.target == target && connection == connectionEpoch && requestID == id {
                     restoringDraft = true; draft = ""; attachments = []; requestID = UUID().uuidString; restoringDraft = false; saveDraft()
                     if !browsing { reset() }; await refresh()
                 } else { AgentComposer.clearConfirmed(target, requestID: id) }
-            } catch { if self.target == target { status = "发送未确认：\(terminalError(error))，草稿已保留，可重试" } }
+            } catch { if self.target == target && connection == connectionEpoch { status = "发送未确认：\(terminalError(error))，草稿已保留，可重试" } }
             for upload in uploads { _ = try? await request(["action": "image_release", "upload_id": upload], destination: target, expectedEpoch: connection) }
             sending.remove(target.key); submitting = self.target.map { sending.contains($0.key) } ?? false
         }
@@ -388,13 +413,13 @@ extension AssistantModel {
     private var globalKey: String { "agent.globals." + (desktopScope?.key ?? "") }
     private func saveDraft() {
         guard !restoringDraft, let draftScope else { return }
-        do { try AgentComposer(text: draft, images: attachments, requestID: requestID, allowInput: allowInput).save(draftScope) }
+        do { try AgentComposer(text: draft, images: attachments, requestID: requestID, allowInput: nil).save(draftScope) }
         catch { status = "草稿保存失败：" + error.localizedDescription }
     }
     private func restoreDraft() {
         draftScope = target; restoringDraft = true
         let saved = target.map(AgentComposer.read) ?? AgentComposer()
-        draft = saved.text; attachments = saved.images; requestID = saved.requestID; allowInput = saved.allowInput ?? false
+        draft = saved.text; attachments = saved.images; requestID = saved.requestID
         submitting = target.map { sending.contains($0.key) } ?? false; restoringDraft = false
     }
     func addImages(_ urls: [URL]) {

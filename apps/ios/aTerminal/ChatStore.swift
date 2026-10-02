@@ -22,8 +22,19 @@ enum WorkspacePreferences {
         return false
         #endif
     }
+    private static var authorizationFixtureID: String? {
+        #if DEBUG
+        guard ProcessInfo.processInfo.arguments.contains("--authorization-fixture"),
+              let value = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--authorization-fixture-id=") })?.split(separator: "=").last,
+              UUID(uuidString: String(value)) != nil else { return nil }
+        return String(value)
+        #else
+        return nil
+        #endif
+    }
     static var defaults: UserDefaults {
         #if DEBUG
+        if let authorizationFixtureID { return UserDefaults(suiteName: "dev.aiterminal.authorization-fixture." + authorizationFixtureID)! }
         if fixture { return UserDefaults(suiteName: "dev.aiterminal.ui-fixtures")! }
         #endif
         if serviceTest { return UserDefaults(suiteName: "dev.aiterminal.integration")! }
@@ -31,6 +42,10 @@ enum WorkspacePreferences {
     }
     static var historyDirectory: URL {
         #if DEBUG
+        if let authorizationFixtureID {
+            return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("AuthorizationFixtureHistory", isDirectory: true).appendingPathComponent(authorizationFixtureID, isDirectory: true)
+        }
         if fixture {
             return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("FixtureAssistantHistory", isDirectory: true)
         }

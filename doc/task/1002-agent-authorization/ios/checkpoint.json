@@ -1,0 +1,20 @@
+{
+  "phase": "stage commit / waiting for Xcode window",
+  "implemented": [
+    "Desktop-backed permissions",
+    "approval/question cards",
+    "exact rules and revoke",
+    "scope/account/epoch fences"
+  ],
+  "tests": {
+    "host": "passed with CAS, regrant/revoke ID lifecycle, details ACK, device grant and account/connection isolation",
+    "simulator_build": "earlier snapshot passed; latest native RPC test source awaits build window",
+    "ui": "partial XCTest passed; full suite pending after dedicated simulator rendering hang",
+    "encrypted_rpc": "runner and XCTest prepared; not run"
+  },
+  "next": "provide stage commit; root grants Xcode window after Review Cargo checks; run local XCTest and independent encrypted account fixture",
+  "plan": "doc/task/1002-agent-authorization/PLAN.md",
+  "contract": "/Volumes/Code/My/aTerminal/doc/task/1002-agent-authorization/CONTRACT.md",
+  "run": "9668ea3b-fde7-44b0-903e-ead1fbf05cb1",
+  "simulator": "079C5369-F052-45A8-A767-70B1A9FA6707"
+}
