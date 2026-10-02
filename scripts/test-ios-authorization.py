@@ -6,6 +6,7 @@ Desktop or models and only installs/provisions the named task simulator.
 """
 import argparse
 import json
+import shutil
 from pathlib import Path
 import plistlib
 import platform
@@ -23,7 +24,8 @@ args = parser.parse_args()
 fixture = args.fixture_dir.resolve()
 config = json.loads((fixture / 'account-fixture.json').read_text())
 assert config.get('authorization_test') is True and re.fullmatch(r'http://127\.0\.0\.1:[0-9]+', config['server'])
-uuid.UUID(config['session']); uuid.UUID(args.simulator)
+assert re.fullmatch(r'[a-f0-9]{16}', config['session'])
+uuid.UUID(args.simulator)
 # Preserve existing device state by requiring this task's dedicated profile.
 devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', '--json']))
 device = next(d for group in devices['devices'].values() for d in group if d['udid'] == args.simulator)
@@ -57,7 +59,7 @@ try:
                                  'test-without-building'], stdout=log, stderr=subprocess.STDOUT, timeout=600)
     report['xcode_exit_code'] = result.returncode
     assert result.returncode == 0, 'Native RPC XCTest failed; inspect xctest.log'
-    expected = {'once': 'once\n', 'always': 'always\nalways\nalways\n', 'full': 'full\nfull\n'}
+    expected = {'once': 'once\n', 'always': 'always\nalways\nalways\n', 'full': 'full\nfull\n', 'long': 'long-native-detail ' * 350 + '\n'}
     observed = {}
     for suffix, text in expected.items():
         path = fixture / (prefix + '-' + suffix + '.log')
@@ -65,9 +67,12 @@ try:
         assert observed[suffix] == text, 'PTY marker differs: ' + suffix
     for suffix in ['deny', 'full-off']:
         assert not (fixture / (prefix + '-' + suffix + '.log')).exists(), 'Denied action reached PTY: ' + suffix
-    report['pty_markers'] = observed
+    report['pty_and_native_markers'] = observed
     report['passed'] = True
 finally:
+    observations = fixture / 'authorization-model-observations.jsonl'
+    if observations.exists():
+        shutil.copyfile(observations, args.output / observations.name)
     login.unlink(missing_ok=True)
     run_file.unlink(missing_ok=True)
     (args.output / 'results.json').write_text(json.dumps(report, indent=2) + '\n')

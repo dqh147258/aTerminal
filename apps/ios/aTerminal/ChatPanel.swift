@@ -39,6 +39,7 @@ struct ChatPanel: View {
     let core: RemoteTerminal
     var fixture = false
     var compact = false
+    @FocusState private var composing: Bool
     @State private var importingImages = false
     @State private var imageDestination: ChatScope?
     @State private var firstRender = true
@@ -126,9 +127,23 @@ struct ChatPanel: View {
                 }
                 ToolButton(symbol: "photo", label: "添加图片") { imageDestination = model.target; importingImages = true }.disabled(model.submitting)
                 TextField("发送任务或追加消息", text: $model.draft).accessibilityIdentifier("chat.draft").disabled(model.submitting)
-                Button("发送") { model.send(core) }.disabled(!model.canSend).accessibilityIdentifier("chat.send")
+                    .focused($composing).submitLabel(.send).onSubmit { if model.canSend { composing = false; model.send(core) } }
+                if !model.draft.isEmpty {
+                    Button { model.draft = "" } label: { Image(systemName: "xmark.circle.fill").frame(minWidth: 32, minHeight: 44) }
+                        .accessibilityLabel("清空任务草稿").accessibilityIdentifier("chat.draft.clear").disabled(model.submitting)
+                }
+                Button("发送") { composing = false; model.send(core) }.disabled(!model.canSend).accessibilityIdentifier("chat.send")
             }.padding(compact ? 6 : 10).background(WorkspaceStyle.control).cornerRadius(8)
         }.padding(compact ? 6 : 12).accessibilityElement(children: .contain).accessibilityIdentifier(model.global ? "chat.global" : "chat.session")
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                if composing {
+                    Button("发送任务") { composing = false; model.send(core) }.disabled(!model.canSend).accessibilityIdentifier("chat.send.keyboard")
+                    Spacer()
+                    Button("收起键盘") { composing = false }
+                }
+            }
+        }
         .onChange(of: model.items.last?.id) { _ in if latestBottomVisible { model.markGlobalRead() } }
         .fileImporter(isPresented: $importingImages, allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
             switch result { case .success(let urls): if imageDestination == model.target { model.addImages(urls) }; case .failure(let error): model.status = error.localizedDescription }

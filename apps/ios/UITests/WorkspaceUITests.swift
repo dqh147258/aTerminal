@@ -682,7 +682,9 @@ final class AuthorizationUITests: XCTestCase {
         let app = open("long")
         XCTAssertTrue(app.buttons["authorization.resolve.once"].waitForExistence(timeout: 10))
         wait { app.buttons["authorization.resolve.once"].isEnabled }
+        tap("authorization.details.open", app)
         XCTAssertTrue(app.staticTexts["Complete command: /usr/bin/printf literal detail end"].exists)
+        tap("authorization.details.close", app)
         tap("authorization.resolve.once", app)
         wait { app.staticTexts["Fixture result: once"].exists }
     }
@@ -732,7 +734,7 @@ final class AuthorizationRpcUITests: XCTestCase {
     private func open() throws -> (XCUIApplication, Context) {
         guard let text = ProcessInfo.processInfo.environment["AI_TERMINAL_IOS_AUTHORIZATION_CONTEXT"],
               let context = try? JSONDecoder().decode(Context.self, from: Data(text.utf8)),
-              UUID(uuidString: context.session) != nil,
+              context.session.range(of: "^[a-f0-9]{16}$", options: .regularExpression) != nil,
               context.prefix.range(of: "^ios-auth-[a-f0-9]{12}$", options: .regularExpression) != nil else {
             throw XCTSkip("Dedicated authorization RPC fixture not supplied")
         }
@@ -751,12 +753,21 @@ final class AuthorizationRpcUITests: XCTestCase {
         let id = context.prefix + "-" + suffix
         let value: [String: Any] = ["id": id, "steps": [["tool": tool, "arguments": arguments]]]
         let text = "AUTH_REVIEW:" + String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
+        let clear = app.buttons["chat.draft.clear"]
+        if clear.exists { clear.tap() }
         UITestInput.replace(app.textFields["chat.draft"], with: text, app: app)
-        wait { app.buttons["chat.send"].isEnabled }; tap("chat.send", app)
+        wait { app.buttons["chat.send"].isEnabled }
+        if app.buttons["chat.send.keyboard"].exists { tap("chat.send.keyboard", app) }
+        else { app.keyboards.buttons["Send"].tap() }
         return id
     }
     private func done(_ id: String, _ app: XCUIApplication) {
-        wait(50) { app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "AUTH_REVIEW_DONE:" + id)).firstMatch.exists }
+        let message = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "AUTH_REVIEW_DONE:" + id)).firstMatch
+        for _ in 0..<12 {
+            if message.waitForExistence(timeout: 3) { return }
+            app.scrollViews["chat.timeline"].swipeUp(velocity: .fast)
+        }
+        XCTAssertTrue(message.exists, "Fixture did not complete " + id)
     }
     private func command(_ marker: String, file: String, context: Context) -> [String: Any] {
         ["command": "/usr/bin/printf '\(marker)\\n' >> \(context.prefix)-\(file).log"]
@@ -794,6 +805,15 @@ final class AuthorizationRpcUITests: XCTestCase {
         UITestInput.replace(app.textFields["authorization.answer"], with: "iOS custom answer", app: app)
         let answerButton = app.buttons["authorization.answer.keyboard"].exists ? "authorization.answer.keyboard" : "authorization.answer.send"
         tap(answerButton, app); done(question, app)
+        let longText = String(repeating: "long-native-detail ", count: 350) + "\n"
+        let longArguments: [String: Any] = ["program": "/usr/bin/tee", "args": [context.prefix + "-long.log"], "stdin": longText]
+        let longID = try task("long", tool: "run_program", arguments: longArguments, context: context, app: app)
+        XCTAssertTrue(app.buttons["authorization.details.open"].waitForExistence(timeout: 30))
+        notExecuted("long", context: context)
+        tap("authorization.details.open", app)
+        XCTAssertTrue(app.buttons["authorization.details.close"].waitForExistence(timeout: 20))
+        tap("authorization.details.close", app)
+        tap("authorization.resolve.once", app); done(longID, app)
         let exact: [String: Any] = ["program": "/usr/bin/tee", "args": ["-a", context.prefix + "-always.log"], "stdin": "always\n"]
         let first = try task("always-first", tool: "run_program", arguments: exact, context: context, app: app)
         XCTAssertTrue(app.buttons["authorization.resolve.always"].waitForExistence(timeout: 30))
