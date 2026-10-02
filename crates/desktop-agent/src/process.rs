@@ -139,3 +139,21 @@ pub(crate) fn foreground(info: &ai_terminal_protocol::local::SessionInfo) -> ser
     }
     serde_json::json!({"state":"unknown","members":[],"process_group":info.foreground_group,"evidence_source":"unavailable","not_application_completion":true})
 }
+
+/// OS corroboration for a host-maintained input boundary; shell text alone is insufficient.
+/// The Actor must additionally prove that no input was written after the latest prompt.
+pub(crate) fn shell_foreground(info: &ai_terminal_protocol::local::SessionInfo) -> bool {
+    #[cfg(unix)]
+    {
+        !info.exited
+            && info.process_id != 0
+            && info.foreground_group == info.process_id
+            && !info.process_identity.is_empty()
+            && identity(info.process_id).as_deref() == Some(info.process_identity.as_str())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = info;
+        false
+    }
+}
