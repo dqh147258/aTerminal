@@ -22,6 +22,61 @@ pub enum AgentAction {
         message: String,
         #[arg(long)]
         allow_input: bool,
+        #[arg(long, value_parser = ["ask", "read_only"], default_value = "ask")]
+        permission_mode: String,
+        #[arg(long)]
+        request_id: Option<String>,
+    },
+    Permissions {
+        id: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long, value_parser = ["ask", "read_only"])]
+        permission_mode: Option<String>,
+        #[arg(long, action = clap::ArgAction::Set)]
+        full_authorization: Option<bool>,
+        #[arg(long)]
+        expected_revision: Option<u64>,
+    },
+    Pending {
+        id: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        cursor: Option<String>,
+    },
+    ApprovalDetails {
+        pending_id: String,
+        #[arg(long)]
+        agent_id: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        cursor: Option<String>,
+    },
+    Resolve {
+        pending_id: String,
+        #[arg(long)]
+        agent_id: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long, value_parser = ["once", "always", "deny"], conflicts_with = "answer")]
+        decision: Option<String>,
+        #[arg(long, conflicts_with = "decision")]
+        answer: Option<String>,
+        #[arg(long)]
+        fingerprint: Option<String>,
+        #[arg(long)]
+        details_ack: bool,
+        #[arg(long)]
+        request_id: Option<String>,
+    },
+    Rules {
+        #[arg(long)]
+        cursor: Option<String>,
+    },
+    RevokeRule {
+        rule_id: String,
         #[arg(long)]
         request_id: Option<String>,
     },
@@ -154,11 +209,74 @@ pub fn run(command: AgentAction, state: Option<PathBuf>, json_output: bool) -> R
             session,
             message,
             allow_input,
+            permission_mode,
             request_id,
         } => (
             session,
-            json!({"action":"send","request_id":request_id.unwrap_or_else(ai_terminal_agent_runtime::request_id),"message":message,"allow_input":allow_input}),
+            json!({"action":"send","request_id":request_id.unwrap_or_else(ai_terminal_agent_runtime::request_id),"message":message,"allow_input":allow_input,"permission_mode":permission_mode}),
             id,
+        ),
+        AgentAction::Permissions {
+            id,
+            session,
+            permission_mode,
+            full_authorization,
+            expected_revision,
+        } => {
+            let value = if permission_mode.is_some() || full_authorization.is_some() {
+                json!({"action":"set_permissions", "expected_revision":expected_revision.context("--expected-revision is required for changes")?,"permission_mode":permission_mode,"full_authorization":full_authorization})
+            } else {
+                ensure!(
+                    expected_revision.is_none(),
+                    "--expected-revision requires a change"
+                );
+                json!({"action":"permissions"})
+            };
+            (session, value, id)
+        }
+        AgentAction::Pending {
+            id,
+            session,
+            cursor,
+        } => (session, json!({"action":"pending","cursor":cursor}), id),
+        AgentAction::ApprovalDetails {
+            pending_id,
+            agent_id,
+            session,
+            cursor,
+        } => (
+            session,
+            json!({"action":"approval_details","pending_id":pending_id,"cursor":cursor}),
+            agent_id,
+        ),
+        AgentAction::Resolve {
+            pending_id,
+            agent_id,
+            session,
+            decision,
+            answer,
+            fingerprint,
+            details_ack,
+            request_id,
+        } => {
+            ensure!(
+                decision.is_some() != answer.is_some(),
+                "exactly one of --decision or --answer is required"
+            );
+            (
+                session,
+                json!({"action":"resolve","pending_id":pending_id,"decision":decision,"answer":answer,"fingerprint":fingerprint,"details_ack":details_ack,"request_id":request_id.unwrap_or_else(ai_terminal_agent_runtime::request_id)}),
+                agent_id,
+            )
+        }
+        AgentAction::Rules { cursor } => (None, json!({"action":"rules","cursor":cursor}), None),
+        AgentAction::RevokeRule {
+            rule_id,
+            request_id,
+        } => (
+            None,
+            json!({"action":"revoke_rule","rule_id":rule_id,"request_id":request_id.unwrap_or_else(ai_terminal_agent_runtime::request_id)}),
+            None,
         ),
         AgentAction::Stop { id, session } => (session, json!({"action":"cancel"}), id),
         AgentAction::History {

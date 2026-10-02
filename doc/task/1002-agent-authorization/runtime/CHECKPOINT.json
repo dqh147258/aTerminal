@@ -1,0 +1,21 @@
+{
+  "state": "In progress",
+  "implemented": [
+    "SQLite permissions/CAS, pending/question/TTL/restart recovery/exact rules",
+    "Host approval/ask_user and dynamic shared budget",
+    "Actor input boundary and one-shot commit permission",
+    "RPC/CLI/remote permissions plus long detail contract"
+  ],
+  "dependencies": [
+    "policy 5eb063c merged; preview followup pending",
+    "toolset c29f404 + fe8d656 merged"
+  ],
+  "next": [
+    "finish policy preview/whole language identity hookup",
+    "compile and fix owned parent modules",
+    "Host/Broker/RPC/CLI isolated regression tests"
+  ],
+  "verification": [
+    "initial compile found toolset usize ToSql; followup merged; no passing claim yet"
+  ]
+}
