@@ -12,12 +12,12 @@
     "handshake_timeout": null,
     "codex_thread_id": "01a0fc17-ed31-7621-99e3-444343a12a9d",
     "recovered_at": "2026-10-02 19:57:20",
-    "schedule_state": "completed"
+    "schedule_state": "closed_completed"
   },
   {
     "name": "20261002-181021-572-authorization-runtime",
     "task": "20261002-180220-295-agent-authorization",
-    "current_run": "9abda2d3-80a6-4b7c-bd20-551668e60c5f",
+    "current_run": "d51ef561-a773-416c-b35c-eb5e1cd13301",
     "worktree": "/Volumes/Code/public-worktree/aTerminal/1002-authorization-runtime",
     "feature": "authorization-runtime",
     "branch": "worktree/1002-authorization-runtime",
@@ -27,12 +27,13 @@
     "handshake_timeout": null,
     "codex_thread_id": "01a0fc17-fb59-7cb0-abd0-057c534f4125",
     "recovered_at": "2026-10-02 20:59:31",
-    "schedule_state": "running"
+    "schedule_state": "running",
+    "binding_mode": "trusted_attach"
   },
   {
     "name": "20261002-181025-555-agent-toolset",
     "task": "20261002-180220-295-agent-authorization",
-    "current_run": "667cf4e1-00a8-4319-b68c-77ef9ee7898a",
+    "current_run": "50be06fe-2149-4481-9bd8-7be4f80e9a9f",
     "worktree": "/Volumes/Code/public-worktree/aTerminal/1002-agent-toolset",
     "feature": "agent-toolset",
     "branch": "worktree/1002-agent-toolset",
@@ -42,7 +43,8 @@
     "handshake_timeout": null,
     "codex_thread_id": "01a0fc18-0aee-70b0-b693-6b6bf961cd62",
     "recovered_at": "2026-10-02 20:59:35",
-    "schedule_state": "running"
+    "schedule_state": "closed_completed",
+    "binding_mode": "trusted_attach"
   },
   {
     "name": "20261002-181029-626-android-authorization",
@@ -77,16 +79,16 @@
   {
     "name": "20261002-181315-577-authorization-review",
     "task": "20261002-180220-295-agent-authorization",
-    "current_run": "b2967528-01b4-4381-a7d1-454474ad4c69",
+    "current_run": "a290fb98-ccb2-445b-ba2b-424973ce62d0",
     "worktree": "/Volumes/Code/public-worktree/aTerminal/1002-authorization-review",
     "feature": "authorization-review",
     "branch": "worktree/1002-authorization-review",
-    "iterm_session_id": "w1t1p12:ED22B501-B025-4D11-AB5C-2828BB4600EB",
+    "iterm_session_id": "w1t0p4:2CA7BF82-FCB5-44C4-A871-E17A519006A9",
     "model": "gpt-6.1-sol",
     "reasoning_effort": "high",
     "codex_thread_id": "01a0fc1a-a796-74e2-8543-7dc9163afbe5",
     "recovered_at": "2026-10-02 19:57:43",
     "handshake_timeout": null,
-    "schedule_state": "queued"
+    "schedule_state": "running"
   }
 ]

@@ -20,7 +20,9 @@
 
 - Policy `900d1f2` / `5b89a2d`：17组策略测试、严格clippy、fmt/diff通过；只新增/修改授权策略模块，曾临时测试导出已原样恢复。独立Review与集成仍需处理最终反馈。
 - Toolset：bash/zsh 真PTY completed/exit1/compound/cd和钩子保留已通过；新原生读取和完整记录分块搜索的主线检查通过。输出区分原生侧读取与终端应用，不宣称通用TUI完成适配器。
+- Toolset最终 `0ee30d1`：基于实际runtime39fcb54父接线的隔离Git副本，低并行jobs2/threads2共22/22通过；两lib strict clippy、fmt/owned rustfmt/diff通过。包括观察许可一次消费/拒绝复用/cwd拒绝。此子任务已完成关闭，最终主线与跨端整体验收仍未完成。
 - Runtime：Store/Host聚焦16项通过；共享整树人类等待能超短活跃预算继续且不增加模型循环。后续扩大回归中暴露的测试授权/沙箱OScwd问题已定位，最终主线结果尚待合入重跑。
+- Runtime阶段39fcb54：Desktop48/48、Runtime95/95在native末端小hook28d5700合入前通过；hook合后cargo check三crates通过，后续22工具测试已覆盖hook。真实Actor在Broker全部preflight后插入另一Agent draft的R13竞态已过（input_revision保持1，审批字符未写入），最终CLI/全部集成检查继续。
 - Android/iOS：本地原生UI与控制器验证持续进行，当前不把已构建或部分通过当作全端到端通过。真实用户账号、既有终端与生产模型未用于测试。
 
 物理设备、真实供应商、任意同UID已授权程序的OS隔离不在已验证范围；此任务按用户要求不增加严格目录/OS沙箱。
