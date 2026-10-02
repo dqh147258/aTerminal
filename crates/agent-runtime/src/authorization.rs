@@ -159,36 +159,34 @@ fn classify(action: &ActionDescriptor) -> (Risk, &'static str) {
         // This is an existing configured lifecycle, not arbitrary MCP tool access.
         return (Risk::Safe, "builtin_observation_or_wait");
     }
-    if action.tool != "run_command" {
-        return (Risk::RequiresApproval, "effectful_or_raw_input");
+    if action.tool == "inspect_command" {
+        if !only_command_arguments(action) {
+            return (Risk::Forbidden, "invalid_inspection_parameters");
+        }
+        let Some(command) = action.arguments.get("command").and_then(Value::as_str) else {
+            return (Risk::Forbidden, "complete_command_missing");
+        };
+        let Some(cwd) = action.cwd.as_deref() else {
+            return (Risk::Forbidden, "cwd_unknown");
+        };
+        return if absolute_cwd(cwd) && inspect_command_plan(command).is_some() {
+            (Risk::Safe, "fixed_native_read_command")
+        } else {
+            (Risk::Forbidden, "unsupported_inspection_command")
+        };
     }
-    let Some(proof) = &action.shell_proof else {
-        return (Risk::RequiresApproval, "shell_proof_missing");
-    };
-    if !proof.at_prompt
-        || !proof.input_buffer_empty
-        || proof.observed_revision != proof.current_revision
-    {
-        return (Risk::RequiresApproval, "shell_input_state_unproven");
-    }
-    let Some(cwd) = action.cwd.as_deref().filter(|cwd| absolute_cwd(cwd)) else {
-        return (Risk::RequiresApproval, "cwd_unknown");
-    };
-    let Some(command) = action.arguments.get("command").and_then(Value::as_str) else {
-        return (Risk::RequiresApproval, "complete_command_missing");
-    };
-    // These are the only execution-affecting fields supported by this classifier.
-    // Future flags (e.g. environment, interpreter, prelude) require policy review.
-    if action.arguments.as_object().is_none_or(|args| {
-        args.keys()
-            .any(|key| !matches!(key.as_str(), "command" | "session_id"))
-    }) {
-        return (Risk::RequiresApproval, "unknown_command_parameter");
-    }
-    match simple_words(command) {
-        Some(words) if safe_command(&words, cwd) => (Risk::Safe, "recognized_read_command"),
-        _ => (Risk::RequiresApproval, "command_outside_positive_language"),
-    }
+    // PTY text always reaches a user-configured shell/application. A familiar
+    // program name, an empty draft, or a first-executable hash does not constrain
+    // aliases, functions, PATH, shell configuration or application interpretation.
+    (Risk::RequiresApproval, "effectful_or_raw_pty_input")
+}
+
+fn only_command_arguments(action: &ActionDescriptor) -> bool {
+    action.arguments.as_object().is_some_and(|arguments| {
+        arguments
+            .keys()
+            .all(|key| matches!(key.as_str(), "command" | "session_id"))
+    })
 }
 
 fn nonempty(value: &str) -> bool {
@@ -226,25 +224,38 @@ fn permanent_scope_known(action: &ActionDescriptor) -> bool {
         return false;
     }
     // A registry build version alone cannot pin an external program or extension.
+    if action.tool == "run_command" {
+        let complete_input = action.shell_proof.as_ref().is_some_and(|proof| {
+            proof.at_prompt
+                && proof.input_buffer_empty
+                && proof.observed_revision == proof.current_revision
+        });
+        return known(&action.execution_identity)
+            && complete_input
+            && only_command_arguments(action)
+            && action
+                .arguments
+                .get("command")
+                .and_then(Value::as_str)
+                .and_then(fixed_command)
+                .is_some();
+    }
     if action.source != ToolSource::Builtin
-        || matches!(
-            action.tool.as_str(),
-            "run_command" | "mcp_call" | "skill_action"
-        )
+        || matches!(action.tool.as_str(), "mcp_call" | "skill_action")
     {
         return known(&action.execution_identity);
     }
     true
 }
 
-/// Stable v1 equality digest. Canonicalization sorts object keys recursively while
+/// Stable v2 equality digest. v2 invalidates rules from the earlier PTY-name policy. Canonicalization sorts object keys recursively while
 /// preserving all array order, string bytes, nulls and numeric representations.
 /// No trimming, path normalization, shell rewriting or redaction is performed.
 /// Revisions are transient execution fences and deliberately not part of a rule.
 /// Changing this policy's semantics requires a new namespace to invalidate rules.
 pub fn stable_fingerprint(action: &ActionDescriptor) -> String {
     let material = json!({
-        "policy": "aterminal.authorization.v1",
+        "policy": "aterminal.authorization.v2",
         "account_id": action.account_id,
         "desktop_id": action.desktop_id,
         "tool": action.tool,
@@ -265,7 +276,7 @@ pub fn stable_fingerprint(action: &ActionDescriptor) -> String {
     });
     let mut canonical = String::new();
     canonical_json(&material, &mut canonical);
-    format!("v1:{}", blake3::hash(canonical.as_bytes()).to_hex())
+    format!("v2:{}", blake3::hash(canonical.as_bytes()).to_hex())
 }
 
 fn canonical_json(value: &Value, output: &mut String) {
@@ -304,6 +315,10 @@ fn canonical_json(value: &Value, output: &mut String) {
 /// concatenated quoted fragments and non-ASCII are unsupported and ask the user.
 /// This is not a shell parser and must never be used to claim arbitrary shell safety.
 fn simple_words(command: &str) -> Option<Vec<String>> {
+    lex_words(command, false)
+}
+
+fn lex_words(command: &str, allow_redirects: bool) -> Option<Vec<String>> {
     if command.is_empty() || command.len() > 8192 || !command.is_ascii() {
         return None;
     }
@@ -314,6 +329,7 @@ fn simple_words(command: &str) -> Option<Vec<String>> {
     let mut closed = false;
     for ch in command.chars() {
         if ch.is_control()
+            || (matches!(ch, '<' | '>') && (!allow_redirects || quote.is_some()))
             || matches!(
                 ch,
                 '$' | '`'
@@ -321,8 +337,6 @@ fn simple_words(command: &str) -> Option<Vec<String>> {
                     | ';'
                     | '&'
                     | '|'
-                    | '<'
-                    | '>'
                     | '('
                     | ')'
                     | '{'
@@ -375,11 +389,168 @@ fn simple_words(command: &str) -> Option<Vec<String>> {
     (!result.is_empty() && result.len() <= 128).then_some(result)
 }
 
+/// Native observation plan. The Backend executes this exact system program and
+/// literal argv without a shell or PATH lookup, with cleared environment, null
+/// stdin, verified actual cwd, cancellation and bounded output. The installation
+/// must ensure these system paths identify the trusted platform utilities. This
+/// is a read capability, not a directory or OS sandbox. No PTY input is changed.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct InspectCommand {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+/// Converts the positive read-command language into an executable native plan.
+/// Does not require an empty shell input buffer: it never dispatches through it.
+/// Actual cwd and process/output limits are rechecked by the Backend independently.
+pub fn inspect_command_plan(command: &str) -> Option<InspectCommand> {
+    let mut words = simple_words(command)?;
+    let (name, program) = match words[0].as_str() {
+        "pwd" | "/bin/pwd" => ("pwd", "/bin/pwd"),
+        "ls" | "/bin/ls" => ("ls", "/bin/ls"),
+        "cat" | "/bin/cat" => ("cat", "/bin/cat"),
+        "head" | "/usr/bin/head" => ("head", "/usr/bin/head"),
+        "tail" | "/usr/bin/tail" => ("tail", "/usr/bin/tail"),
+        "wc" | "/usr/bin/wc" => ("wc", "/usr/bin/wc"),
+        _ => return None,
+    };
+    words[0] = name.into();
+    if !safe_command(&words, "/") {
+        return None;
+    }
+    Some(InspectCommand {
+        program: program.into(),
+        args: words.into_iter().skip(1).collect(),
+    })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RedirectKind {
+    Stdin,
+    Stdout,
+    StdoutAppend,
+    Stderr,
+    StderrAppend,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct Redirect {
+    pub kind: RedirectKind,
+    pub path: String,
+}
+
+/// Syntactic scope for a permanent rule, not proof of actual shell resolution.
+/// The Host must additionally pin/revalidate the effective program content and
+/// dispatch/configuration identity and a fresh complete shell input boundary.
+/// Arbitrary executables/scripts, shells/interpreters, hooks/configured command
+/// launchers and compound syntax are deliberately not part of this language.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct FixedCommand {
+    pub program: String,
+    pub argv: Vec<String>,
+    pub redirects: Vec<Redirect>,
+}
+
+/// Plan only a single known native system utility with literal argv and optional
+/// literal redirect targets. Redirect operators must be separate unquoted words;
+/// descriptor duplication, heredocs, fd duplication and other syntax are rejected.
+/// A caller must never treat a plan alone as authorization or execute its preview.
+pub fn fixed_command(command: &str) -> Option<FixedCommand> {
+    let words = lex_words(command, true)?;
+    let program = &words[0];
+    if !matches!(
+        program.as_str(),
+        "/bin/pwd"
+            | "/usr/bin/pwd"
+            | "/bin/ls"
+            | "/usr/bin/ls"
+            | "/bin/cat"
+            | "/usr/bin/cat"
+            | "/usr/bin/head"
+            | "/bin/head"
+            | "/usr/bin/tail"
+            | "/bin/tail"
+            | "/usr/bin/wc"
+            | "/bin/wc"
+            | "/bin/echo"
+            | "/usr/bin/echo"
+            | "/bin/printf"
+            | "/usr/bin/printf"
+            | "/bin/touch"
+            | "/usr/bin/touch"
+            | "/bin/mkdir"
+            | "/usr/bin/mkdir"
+            | "/bin/rm"
+            | "/usr/bin/rm"
+            | "/bin/cp"
+            | "/usr/bin/cp"
+            | "/bin/mv"
+            | "/usr/bin/mv"
+            | "/bin/true"
+            | "/usr/bin/true"
+            | "/bin/false"
+            | "/usr/bin/false"
+            | "/bin/stat"
+            | "/usr/bin/stat"
+    ) {
+        return None;
+    }
+    let mut plan = FixedCommand {
+        program: program.clone(),
+        argv: Vec::new(),
+        redirects: Vec::new(),
+    };
+    let mut streams = [false; 3];
+    let mut index = 1;
+    while index < words.len() {
+        let redirect = match words[index].as_str() {
+            "<" => Some((0, RedirectKind::Stdin)),
+            ">" | "1>" => Some((1, RedirectKind::Stdout)),
+            ">>" | "1>>" => Some((1, RedirectKind::StdoutAppend)),
+            "2>" => Some((2, RedirectKind::Stderr)),
+            "2>>" => Some((2, RedirectKind::StderrAppend)),
+            _ => None,
+        };
+        if let Some((stream, kind)) = redirect {
+            index += 1;
+            let path = words.get(index)?;
+            if streams[stream]
+                || path.is_empty()
+                || !path
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"/._- +".contains(&byte))
+            {
+                return None;
+            }
+            streams[stream] = true;
+            plan.redirects.push(Redirect {
+                kind,
+                path: path.clone(),
+            });
+        } else if words[index].contains(['<', '>']) {
+            return None;
+        } else {
+            plan.argv.push(words[index].clone());
+        }
+        index += 1;
+    }
+    Some(plan)
+}
+
+/// Return the program only after validating the *entire* permanent-rule language.
+/// The Host hashes this pinned program and its effective dispatch/configuration
+/// identity; this helper is not proof that an arbitrary PTY shell resolved to it.
+pub fn permanent_command_program(command: &str) -> Option<String> {
+    fixed_command(command).map(|plan| plan.program)
+}
+
 fn safe_command(words: &[String], cwd: &str) -> bool {
     let program = words[0].as_str();
     let args = &words[1..];
-    // No PATH wrappers, explicit binary paths, interpreters, git configuration,
-    // pagers or implicit network utilities. Every supported option is enumerated.
+    // Inspection has already resolved the program to a fixed system path.
+    // No wrappers, interpreters, pagers or implicit network utilities.
+    // Every supported option is enumerated.
     if program == "pwd" {
         return args.is_empty() || (args.len() == 1 && matches!(args[0].as_str(), "-L" | "-P"));
     }
@@ -605,10 +776,6 @@ fn sensitive_name(name: &str) -> bool {
                 | "cookie"
                 | "cookies"
                 | "setcookie"
-                | "env"
-                | "environment"
-                | "environ"
-                | "environmentvariables"
                 | "apikey"
                 | "xapikey"
                 | "accesskey"
@@ -944,10 +1111,17 @@ mod tests {
         }
     }
 
+    fn inspection_action(command: &str) -> ActionDescriptor {
+        let mut descriptor = action(command);
+        descriptor.tool = "inspect_command".into();
+        descriptor
+    }
+
     #[test]
     fn recognized_commands_have_positive_argument_grammars() {
         for command in [
             "pwd",
+            "/bin/ls -la /work",
             "pwd -P",
             "ls",
             "ls -la /work",
@@ -961,7 +1135,18 @@ mod tests {
             "ls ./-file",
             "  pwd  ",
         ] {
-            assert_eq!(assess(&action(command)).risk, Risk::Safe, "{command}");
+            let plan = inspect_command_plan(command).expect(command);
+            assert!(plan.program.starts_with('/'));
+            assert_eq!(
+                assess(&inspection_action(command)).risk,
+                Risk::Safe,
+                "{command}"
+            );
+            assert_eq!(
+                assess(&action(command)).risk,
+                Risk::RequiresApproval,
+                "PTY: {command}"
+            );
         }
     }
 
@@ -1019,6 +1204,10 @@ mod tests {
             "ls\u{2028}pwd",
             "ls =pwd",
         ] {
+            assert!(
+                inspect_command_plan(command).is_none(),
+                "native: {command:?}"
+            );
             assert_eq!(
                 assess(&action(command)).risk,
                 Risk::RequiresApproval,
@@ -1033,7 +1222,6 @@ mod tests {
             "",
             " ",
             "unknown",
-            "/bin/ls",
             "./ls",
             "../bin/ls",
             "LS",
@@ -1077,34 +1265,39 @@ mod tests {
             "cat https://host/file",
             "ls /dev/../proc/self",
         ] {
+            assert!(
+                inspect_command_plan(command).is_none(),
+                "native: {command:?}"
+            );
             assert_eq!(
                 assess(&action(command)).risk,
                 Risk::RequiresApproval,
                 "{command:?}"
             );
         }
-        let mut a = action("ls");
-        a.cwd = Some("/dev".into());
-        assert_eq!(assess(&a).risk, Risk::RequiresApproval);
     }
 
     #[test]
-    fn shell_proof_must_be_fresh_complete_and_not_model_arguments() {
+    fn shell_proof_must_not_claim_actual_program_resolution() {
+        // Even a perfect empty prompt and a pinned first-program hash cannot make
+        // a PTY shell command automatically safe (aliases/functions/PATH exist).
+        for command in ["pwd", "ls", "cat README", "/bin/ls"] {
+            let a = action(command);
+            assert_eq!(assess(&a).risk, Risk::RequiresApproval);
+        }
         let mut a = action("pwd");
         a.shell_proof = None;
         a.arguments["safe"] = json!(true);
         a.arguments["at_prompt"] = json!(true);
         assert_eq!(assess(&a).risk, Risk::RequiresApproval);
-        for variant in 0..5 {
-            let mut a = action("pwd");
-            match variant {
-                0 => a.shell_proof.as_mut().unwrap().at_prompt = false,
-                1 => a.shell_proof.as_mut().unwrap().input_buffer_empty = false,
-                2 => a.shell_proof.as_mut().unwrap().current_revision += 1,
-                3 => a.arguments["environment"] = json!({"PATH":"/tmp"}),
-                _ => a.arguments["interpreter"] = json!("custom-shell"),
-            }
-            assert_eq!(assess(&a).risk, Risk::RequiresApproval);
+        let mut native = inspection_action("pwd");
+        native.shell_proof = None;
+        native.execution_identity = None;
+        assert_eq!(assess(&native).risk, Risk::Safe);
+        for field in ["environment", "interpreter", "safe"] {
+            let mut a = inspection_action("pwd");
+            a.arguments[field] = json!(true);
+            assert_eq!(assess(&a).risk, Risk::Forbidden);
         }
         for cwd in [
             None,
@@ -1113,12 +1306,26 @@ mod tests {
             Some("C:relative"),
             Some("/work\n"),
         ] {
-            let mut a = action("pwd");
+            let mut a = inspection_action("pwd");
             a.cwd = cwd.map(str::to_owned);
             let assessment = assess(&a);
-            assert_eq!(assessment.risk, Risk::RequiresApproval);
+            assert_eq!(assessment.risk, Risk::Forbidden);
             assert!(!assessment.can_always);
         }
+        // Cwd is observed scope, not a sandbox. Moving to a different directory
+        // remains a useful native observation and changes the exact fingerprint.
+        let first = inspection_action("ls -la");
+        let mut moved = first.clone();
+        moved.cwd = Some("/outside/project".into());
+        assert_eq!(assess(&moved).risk, Risk::Safe);
+        assert_ne!(stable_fingerprint(&first), stable_fingerprint(&moved));
+        assert_eq!(
+            inspect_command_plan("cat 'a file.txt'").unwrap(),
+            InspectCommand {
+                program: "/bin/cat".into(),
+                args: vec!["a file.txt".into()],
+            }
+        );
     }
 
     #[test]
@@ -1248,9 +1455,9 @@ mod tests {
 
     #[test]
     fn unknown_scope_or_execution_version_disables_permanent_rules() {
-        assert!(assess(&action("rm file")).can_always);
+        assert!(assess(&action("/bin/rm file")).can_always);
         for variant in 0..11 {
-            let mut a = action("rm file");
+            let mut a = action("/bin/rm file");
             match variant {
                 0 => a.cwd = None,
                 1 => a.cwd = Some("".into()),
@@ -1271,6 +1478,79 @@ mod tests {
             a.tool = tool.into();
             a.execution_identity = None;
             assert!(!assess(&a).can_always);
+        }
+    }
+
+    #[test]
+    fn permanent_rules_require_complete_fixed_execution_language() {
+        for command in [
+            "ls",
+            "rm file",
+            "/bin/sh -c 'echo danger'",
+            "/bin/bash script.sh",
+            "/usr/bin/python3 -c 'print(1)'",
+            "/usr/bin/env /bin/echo value",
+            "/usr/bin/find /work -exec /bin/rm file",
+            "/usr/bin/awk script",
+            "/usr/bin/sed -e script file",
+            "/usr/bin/git status",
+            "/tmp/script arg",
+            "/bin/echo first; /bin/echo second",
+            "/bin/echo $(pwd)",
+            "PATH=/tmp /bin/echo value",
+            "/bin/echo value | /bin/cat",
+            "/bin/echo value >/tmp/file",
+            "/bin/echo value > $HOME/file",
+            "/bin/echo value > /tmp/first > /tmp/second",
+            "/bin/echo value 2>&1",
+            "/bin/cat << EOF",
+            "/bin/echo value >",
+            "/bin/echo value > ''",
+            "/bin/echo value > '/tmp/a>b'",
+            "/bin/echo value &",
+        ] {
+            assert!(permanent_command_program(command).is_none(), "{command}");
+            assert!(
+                !assess(&action(command)).can_always,
+                "first-program hash is not enough: {command}"
+            );
+        }
+        for command in [
+            "/usr/bin/touch /tmp/marker",
+            "/bin/echo 'approved value' > /tmp/marker",
+            "/bin/cat /tmp/input < /tmp/other 2>> /tmp/errors",
+            "/bin/rm -- /tmp/marker",
+            "/bin/mkdir /tmp/new-directory",
+        ] {
+            assert!(assess(&action(command)).can_always, "{command}");
+            assert_eq!(
+                permanent_command_program(command),
+                Some(command.split(' ').next().unwrap().into())
+            );
+            assert_eq!(assess(&action(command)).risk, Risk::RequiresApproval);
+        }
+        let plan = fixed_command("/bin/echo 'approved value' > '/tmp/a file'").unwrap();
+        assert_eq!(plan.argv, ["approved value"]);
+        assert_eq!(
+            plan.redirects,
+            [Redirect {
+                kind: RedirectKind::Stdout,
+                path: "/tmp/a file".into()
+            }]
+        );
+        let first = action("/bin/echo value > /tmp/first");
+        let second = action("/bin/echo value > /tmp/second");
+        assert_ne!(stable_fingerprint(&first), stable_fingerprint(&second));
+        for change in 0..5 {
+            let mut a = action("/bin/echo value > /tmp/marker");
+            match change {
+                0 => a.shell_proof = None,
+                1 => a.shell_proof.as_mut().unwrap().input_buffer_empty = false,
+                2 => a.shell_proof.as_mut().unwrap().current_revision += 1,
+                3 => a.shell_proof.as_mut().unwrap().at_prompt = false,
+                _ => a.arguments["environment"] = json!({"PATH":"/tmp"}),
+            }
+            assert!(!assess(&a).can_always, "change {change}");
         }
     }
 
@@ -1321,7 +1601,9 @@ mod tests {
         let arguments = json!({
             "password":"hidden-password", "accessToken":"hidden-token", "api_key":12345,
             "arguments":{"custom_password":"hidden-custom","target":"/production"},
-            "env":{"PATH":"hidden-env","NORMAL":"hidden-env-value"},
+            "env":{"PATH":"/opt/custom/bin","LD_PRELOAD":"/opt/custom/preload.so", "NORMAL":"ordinary-env-value", "SECRET_TOKEN":"hidden-env-token"},
+            "environment":{"PASSWORD":"hidden-env-password","HOME":"/home/operator"},
+            "environ":{"API_KEY":"hidden-env-key","LD_LIBRARY_PATH":"/opt/custom/lib"},
             "headers":{"Authorization":"hidden-auth","Cookie":"hidden-cookie","Accept":"application/json"},
             "auth":{"user":"hidden-user","password":"hidden-auth-password"},
             "destination":"/backup", "attempts":2,
@@ -1332,6 +1614,11 @@ mod tests {
         let parsed: Value = serde_json::from_str(&preview).unwrap();
         assert_eq!(parsed["arguments"]["target"], "/production");
         assert_eq!(parsed["headers"]["Accept"], "application/json");
+        assert_eq!(parsed["env"]["PATH"], "/opt/custom/bin");
+        assert_eq!(parsed["env"]["LD_PRELOAD"], "/opt/custom/preload.so");
+        assert_eq!(parsed["env"]["NORMAL"], "ordinary-env-value");
+        assert_eq!(parsed["environment"]["HOME"], "/home/operator");
+        assert_eq!(parsed["environ"]["LD_LIBRARY_PATH"], "/opt/custom/lib");
         assert_eq!(parsed["destination"], "/backup");
         assert_eq!(parsed["attempts"], 2);
     }
@@ -1421,7 +1708,7 @@ mod tests {
             serialized["fingerprint"]
                 .as_str()
                 .unwrap()
-                .starts_with("v1:")
+                .starts_with("v2:")
         );
         assert_eq!(
             serde_json::to_value(PermissionMode::ReadOnly).unwrap(),
