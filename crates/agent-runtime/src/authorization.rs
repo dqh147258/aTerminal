@@ -98,7 +98,7 @@ pub struct Assessment {
     pub reason: String,
     /// Digest of original data, never a digest of the display preview.
     pub fingerprint: String,
-    /// Bounded, deliberately conservative display only. Never execute this text.
+    /// Readable, bounded, selectively redacted display. Never execute this text.
     pub redacted_preview: String,
     pub can_always: bool,
 }
@@ -490,155 +490,430 @@ fn contains_permission_command(action: &ActionDescriptor) -> bool {
         })
 }
 
-/// Secret-safe display by construction: arbitrary string values (including shell
-/// operands, URLs, tokens and free text) are hidden, not guessed using a denylist.
-/// Only fixed schema keys and a fixed vocabulary of command names are shown.
-/// Numbers/bools are shown only under known non-secret scalar fields. Unknown
-/// object keys are hidden too: extensions may place secrets in their key names.
-/// The result is valid JSON, at most 4096 UTF-8 bytes, with depth/node limits.
-/// The UI should explain that hidden values are matched exactly internally.
+/// Readable display of the complete call: ordinary commands, arguments and paths
+/// remain visible. Sensitive fields, explicit credential syntax and URL userinfo
+/// are redacted. Unknown free text is not assumed secret: the Host must provide
+/// its known secret values using `redacted_preview_with_secrets` when available.
+/// Never execute a preview or use it as the equality key for an approval.
 pub fn redacted_preview(arguments: &Value) -> String {
-    let mut remaining = 80;
-    let preview = redact(arguments, None, 0, &mut remaining);
-    let text = preview.to_string();
+    redacted_preview_with_secrets(arguments, &[])
+}
+
+/// Bounded JSON display, at most 4096 UTF-8 bytes. A truncated display is an
+/// envelope with `truncated:true`, `requires_details:true` and a redacted prefix
+/// in `preview`. It is not sufficient for an informed approval: the Host/UI must
+/// present the full redacted details through an authenticated, bounded detail
+/// read before approval. Truncation happens *after* redaction, never before it.
+pub fn redacted_preview_with_secrets(arguments: &Value, known_secrets: &[String]) -> String {
+    let text = redacted_details_with_secrets(arguments, known_secrets).to_string();
     if text.len() <= 4096 {
-        text
-    } else {
-        "\"[REDACTED: preview limit]\"".into()
+        return text;
+    }
+    // The prefix is a string, so the enclosing envelope remains valid JSON even
+    // when truncation falls within a nested value. Account for JSON escaping too.
+    let mut end = text.len().min(3900);
+    loop {
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let preview = json!({
+            "preview": &text[..end],
+            "truncated": true,
+            "requires_details": true,
+        })
+        .to_string();
+        if preview.len() <= 4096 {
+            return preview;
+        }
+        end = end.saturating_sub((preview.len() - 4096).max(1));
     }
 }
 
-fn display_key(key: &str) -> bool {
-    matches!(
-        key,
-        "command"
-            | "text"
-            | "submit"
-            | "session_id"
-            | "key"
-            | "modifiers"
-            | "repeat"
-            | "server_id"
-            | "tool"
-            | "arguments"
-            | "skill_id"
-            | "action"
-            | "path"
-            | "cwd"
-            | "timeout_ms"
-            | "duration_ms"
-            | "limit"
-            | "cursor"
-            | "query"
-            | "mode"
-            | "record_id"
-            | "task_id"
-            | "task_ids"
-            | "command_id"
-            | "question"
-            | "options"
-            | "max_lines"
-            | "max_bytes"
-            | "after_revision"
-            | "password"
-            | "token"
-            | "api_key"
-            | "secret"
-            | "authorization"
-    )
-}
-
-fn redact(value: &Value, key: Option<&str>, depth: usize, remaining: &mut usize) -> Value {
-    if depth > 6 || *remaining == 0 {
-        return json!("[REDACTED: preview limit]");
-    }
-    *remaining -= 1;
-    if matches!(
-        key,
-        Some("password" | "token" | "api_key" | "secret" | "authorization")
-    ) {
-        return json!("[REDACTED]");
-    }
-    match value {
+/// Full redacted display for a Host's authenticated detail/pagination endpoint.
+/// No preview truncation is performed here. The Host bounds input size and detail
+/// responses, and retains the original call separately for execution/fingerprints.
+/// Known secrets are trusted Host values, not a model-provided list. Literal and
+/// percent-encoded occurrences are removed, including occurrences in object keys.
+pub fn redacted_details_with_secrets(arguments: &Value, known_secrets: &[String]) -> Value {
+    match arguments {
         Value::Object(fields) => {
             let mut output = serde_json::Map::new();
             for (key, value) in fields {
-                if *remaining == 0 {
-                    output.insert("[omitted]".into(), json!("[REDACTED: preview limit]"));
-                    break;
+                let sensitive = sensitive_name(key);
+                let mut display_key = redact_text(key, known_secrets);
+                // Two secret-bearing keys may redact to the same label. Preserve
+                // both displayed values rather than silently dropping a target.
+                while output.contains_key(&display_key) {
+                    display_key.push('#');
                 }
-                if display_key(key) {
-                    output.insert(key.clone(), redact(value, Some(key), depth + 1, remaining));
+                let display_value = if sensitive {
+                    json!("[REDACTED]")
                 } else {
-                    // Do not preserve unknown names or their values/structure.
-                    output.insert("[other fields]".into(), json!("[REDACTED]"));
-                    *remaining -= 1;
-                }
+                    redacted_details_with_secrets(value, known_secrets)
+                };
+                output.insert(display_key, display_value);
             }
             Value::Object(output)
         }
         Value::Array(values) => {
-            let mut output = Vec::new();
-            for value in values {
-                if *remaining == 0 {
-                    output.push(json!("[REDACTED: preview limit]"));
-                    break;
-                }
-                output.push(redact(value, None, depth + 1, remaining));
-            }
-            Value::Array(output)
+            let mut hide_next = false;
+            Value::Array(
+                values
+                    .iter()
+                    .map(|value| {
+                        if hide_next {
+                            hide_next = false;
+                            return json!("[REDACTED]");
+                        }
+                        hide_next = value.as_str().is_some_and(|value| {
+                            value.starts_with('-') && !value.contains('=') && sensitive_name(value)
+                        });
+                        redacted_details_with_secrets(value, known_secrets)
+                    })
+                    .collect(),
+            )
         }
-        Value::String(command) if key == Some("command") => {
-            let label = simple_words(command).and_then(|words| {
-                let program = words[0].as_str();
-                matches!(
-                    program,
-                    "pwd"
-                        | "ls"
-                        | "cat"
-                        | "head"
-                        | "tail"
-                        | "wc"
-                        | "git"
-                        | "rm"
-                        | "mv"
-                        | "cp"
-                        | "curl"
-                        | "wget"
-                        | "sudo"
-                        | "sh"
-                        | "bash"
-                        | "zsh"
-                        | "aTerminal"
-                )
-                .then(|| {
-                    format!(
-                        "{program} [arguments redacted; {} operands/options]",
-                        words.len() - 1
-                    )
-                })
-            });
-            json!(label.unwrap_or_else(|| "[REDACTED command]".into()))
-        }
+        Value::String(value) => json!(redact_text(value, known_secrets)),
         Value::Number(_) | Value::Bool(_)
-            if matches!(
-                key,
-                Some(
-                    "submit"
-                        | "repeat"
-                        | "timeout_ms"
-                        | "duration_ms"
-                        | "limit"
-                        | "max_lines"
-                        | "max_bytes"
-                        | "after_revision"
-                )
-            ) =>
+            if known_secrets
+                .iter()
+                .any(|secret| !secret.is_empty() && secret == &arguments.to_string()) =>
         {
-            value.clone()
+            json!("[REDACTED]")
         }
-        Value::Null => Value::Null,
-        _ => json!("[REDACTED]"),
+        _ => arguments.clone(),
+    }
+}
+
+fn sensitive_name(name: &str) -> bool {
+    let normalized: String = name
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect();
+    normalized.contains("password")
+        || normalized.contains("passwd")
+        || normalized.contains("secret")
+        || normalized.ends_with("token")
+        || normalized.starts_with("token")
+        || matches!(
+            normalized.as_str(),
+            "auth"
+                | "authentication"
+                | "authorization"
+                | "proxyauthorization"
+                | "cookie"
+                | "cookies"
+                | "setcookie"
+                | "env"
+                | "environment"
+                | "environ"
+                | "environmentvariables"
+                | "apikey"
+                | "xapikey"
+                | "accesskey"
+                | "accesskeyid"
+                | "privatekey"
+                | "signingkey"
+                | "credentials"
+                | "credential"
+                | "oauth2bearer"
+                | "passphrase"
+        )
+}
+
+#[derive(Clone, Copy)]
+struct DisplayToken {
+    start: usize,
+    end: usize,
+}
+
+/// Display-only spans. This scanner does not classify safety or parse executable
+/// shell grammar. Keep quoting and compound syntax intact outside secret spans.
+fn display_tokens(text: &str) -> Vec<DisplayToken> {
+    let mut tokens = Vec::new();
+    let mut start = None;
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, ch) in text.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            start.get_or_insert(index);
+            escaped = true;
+        } else if let Some(delimiter) = quote {
+            if ch == delimiter {
+                quote = None;
+            }
+        } else if matches!(ch, '\'' | '"') {
+            start.get_or_insert(index);
+            quote = Some(ch);
+        } else if ch.is_whitespace() || matches!(ch, ';' | '|' | '&' | '<' | '>') {
+            if let Some(start) = start.take() {
+                tokens.push(DisplayToken { start, end: index });
+            }
+        } else {
+            start.get_or_insert(index);
+        }
+    }
+    if let Some(start) = start {
+        tokens.push(DisplayToken {
+            start,
+            end: text.len(),
+        });
+    }
+    tokens
+}
+
+fn redact_text(text: &str, known_secrets: &[String]) -> String {
+    let mut spans = Vec::<(usize, usize)>::new();
+    for secret in known_secrets.iter().filter(|secret| !secret.is_empty()) {
+        for (start, _) in text.match_indices(secret.as_str()) {
+            spans.push((start, start + secret.len()));
+        }
+        let encoded: String = secret
+            .bytes()
+            .map(|byte| {
+                if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+                    (byte as char).to_string()
+                } else {
+                    format!("%{byte:02X}")
+                }
+            })
+            .collect();
+        if encoded != *secret {
+            let encoded_bytes = encoded.as_bytes();
+            for (start, candidate) in text.as_bytes().windows(encoded_bytes.len()).enumerate() {
+                let matches = encoded_bytes.iter().enumerate().all(|(index, expected)| {
+                    let hex_position = (index > 0 && encoded_bytes[index - 1] == b'%')
+                        || (index > 1 && encoded_bytes[index - 2] == b'%');
+                    if hex_position {
+                        expected.eq_ignore_ascii_case(&candidate[index])
+                    } else {
+                        *expected == candidate[index]
+                    }
+                });
+                if matches {
+                    spans.push((start, start + encoded_bytes.len()));
+                }
+            }
+        }
+    }
+    let tokens = display_tokens(text);
+    let network_cli = tokens.iter().any(|token| {
+        matches!(
+            text[token.start..token.end].trim_matches(['\'', '"']),
+            "curl" | "wget" | "http" | "httpie"
+        )
+    });
+    for (index, token) in tokens.iter().enumerate() {
+        let raw = &text[token.start..token.end];
+        let flag = raw
+            .split('=')
+            .next()
+            .unwrap_or(raw)
+            .trim_matches(['\'', '"']);
+        if flag.starts_with('-')
+            && (sensitive_name(flag)
+                || matches!(flag, "--user" | "--proxy-user")
+                || (network_cli && matches!(flag, "-u" | "-b")))
+        {
+            if let Some(offset) = raw.find('=') {
+                spans.push((token.start + offset + 1, token.end));
+            } else if let Some(next) = tokens.get(index + 1) {
+                // Do not consume a token from the next compound command.
+                if text[token.end..next.start].chars().all(char::is_whitespace) {
+                    spans.push((next.start, next.end));
+                }
+            }
+        } else if network_cli
+            && (raw.starts_with("-u") || raw.starts_with("-b"))
+            && raw.len() > 2
+            && !raw.starts_with("--")
+        {
+            spans.push((token.start + 2, token.end));
+        }
+        if matches!(flag.to_ascii_lowercase().as_str(), "bearer" | "basic")
+            && let Some(next) = tokens.get(index + 1)
+            && text[token.end..next.start].chars().all(char::is_whitespace)
+        {
+            spans.push((next.start, next.end));
+        }
+    }
+    // Explicit name=value and name:value syntax covers sensitive environment
+    // assignments, JSON payload strings, HTTP headers and URL query parameters.
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if !bytes[index].is_ascii_alphabetic() && bytes[index] != b'_' {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len()
+            && (bytes[index].is_ascii_alphanumeric() || b"_-.".contains(&bytes[index]))
+        {
+            index += 1;
+        }
+        if !sensitive_name(&text[start..index]) {
+            continue;
+        }
+        let mut delimiter = index;
+        if bytes
+            .get(delimiter)
+            .is_some_and(|byte| matches!(byte, b'\'' | b'"'))
+        {
+            delimiter += 1;
+        }
+        while bytes.get(delimiter).is_some_and(u8::is_ascii_whitespace) {
+            delimiter += 1;
+        }
+        if !bytes
+            .get(delimiter)
+            .is_some_and(|byte| matches!(byte, b'=' | b':'))
+        {
+            continue;
+        }
+        let mut value_start = delimiter + 1;
+        while bytes.get(value_start).is_some_and(u8::is_ascii_whitespace) {
+            value_start += 1;
+        }
+        let Some(&first) = bytes.get(value_start) else {
+            continue;
+        };
+        let mut value_end = value_start;
+        if matches!(first, b'\'' | b'"') {
+            value_start += 1;
+            value_end = quoted_end(bytes, value_start, first);
+        } else {
+            while value_end < bytes.len()
+                && !bytes[value_end].is_ascii_whitespace()
+                && !b"&;|,)}]\"'<>".contains(&bytes[value_end])
+            {
+                value_end += 1;
+            }
+            if matches!(
+                text[value_start..value_end].to_ascii_lowercase().as_str(),
+                "bearer" | "basic"
+            ) {
+                value_start = value_end;
+                while bytes.get(value_start).is_some_and(u8::is_ascii_whitespace) {
+                    value_start += 1;
+                }
+                value_end = value_start;
+                while value_end < bytes.len()
+                    && !bytes[value_end].is_ascii_whitespace()
+                    && !b"&;|,)}]\"'<>".contains(&bytes[value_end])
+                {
+                    value_end += 1;
+                }
+            } else if text[start..index].eq_ignore_ascii_case("cookie") {
+                // A quoted Cookie header may contain several semicolon-separated
+                // cookies. Hide the whole header value inside its outer quote.
+                if let Some(&quote) = start.checked_sub(1).and_then(|i| bytes.get(i))
+                    && matches!(quote, b'\'' | b'"')
+                {
+                    value_end = quoted_end(bytes, value_start, quote);
+                }
+            }
+        }
+        if value_end > value_start {
+            spans.push((value_start, value_end));
+        }
+    }
+    // URL userinfo is sensitive regardless of the chosen username/parameter keys.
+    for (scheme, _) in text.match_indices("://") {
+        let start = scheme + 3;
+        let end = text[start..]
+            .find(|ch: char| ch.is_whitespace() || matches!(ch, '/' | '?' | '#' | '\'' | '"'))
+            .map_or(text.len(), |offset| start + offset);
+        if let Some(offset) = text[start..end].rfind('@') {
+            spans.push((start, start + offset));
+        }
+        let url_end = text[start..]
+            .find(|ch: char| ch.is_whitespace() || matches!(ch, '\'' | '"'))
+            .map_or(text.len(), |offset| start + offset);
+        if let Some(query) = text[end..url_end].find('?') {
+            let query_start = end + query + 1;
+            let mut offset = query_start;
+            for parameter in text[query_start..url_end].split(['&', '#']) {
+                if let Some((name, value)) = parameter.split_once('=')
+                    && sensitive_name(&percent_decode_name(name))
+                {
+                    let start = offset + name.len() + 1;
+                    spans.push((start, start + value.len()));
+                }
+                offset += parameter.len() + 1;
+            }
+        }
+    }
+    spans.sort_unstable();
+    let mut merged = Vec::<(usize, usize)>::new();
+    for (start, end) in spans {
+        if start >= end {
+            continue;
+        }
+        if let Some(previous) = merged.last_mut()
+            && start <= previous.1
+        {
+            previous.1 = previous.1.max(end);
+        } else {
+            merged.push((start, end));
+        }
+    }
+    let mut output = String::new();
+    let mut cursor = 0;
+    for (start, end) in merged {
+        output.push_str(&text[cursor..start]);
+        output.push_str("[REDACTED]");
+        cursor = end;
+    }
+    output.push_str(&text[cursor..]);
+    output
+}
+
+fn quoted_end(bytes: &[u8], start: usize, quote: u8) -> usize {
+    let mut end = start;
+    while end < bytes.len() {
+        if bytes[end] == quote {
+            break;
+        }
+        if bytes[end] == b'\\' {
+            end += 1;
+        }
+        end = (end + 1).min(bytes.len());
+    }
+    end
+}
+
+fn percent_decode_name(name: &str) -> String {
+    let bytes = name.as_bytes();
+    let mut decoded = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && index + 2 < bytes.len()
+            && let (Some(high), Some(low)) =
+                (hex_digit(bytes[index + 1]), hex_digit(bytes[index + 2]))
+        {
+            decoded.push(high * 16 + low);
+            index += 3;
+            continue;
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -1001,36 +1276,145 @@ mod tests {
 
     #[test]
     fn preview_redaction_never_collapses_original_fingerprints() {
-        let mut first = action("curl https://user:secret@host/?token=secret");
+        let first = action("curl https://user:secret@host/?token=secret&file=/backups");
         let mut second = first.clone();
-        second.arguments["command"] = json!("curl https://user:different@host/?token=different");
+        second.arguments["command"] =
+            json!("curl https://user:different@host/?token=different&file=/backups");
         assert_eq!(
             assess(&first).redacted_preview,
             assess(&second).redacted_preview
         );
         assert_ne!(assess(&first).fingerprint, assess(&second).fingerprint);
-        first.arguments = json!({
-            "password":"DO_NOT_SHOW_1", "token":"DO_NOT_SHOW_2", "api_key":12345,
-            "arguments": {"custom_password":"DO_NOT_SHOW_3", "DO_NOT_SHOW_KEY":"value"},
-            "text":"Bearer DO_NOT_SHOW_4", "path":"/DO_NOT_SHOW_5", "repeat":2,
-            "command":"curl --header 'Authorization: Bearer DO_NOT_SHOW_6' host",
-        });
-        let preview = redacted_preview(&first.arguments);
-        assert!(!preview.contains("DO_NOT_SHOW"), "{preview}");
-        assert!(!preview.contains("12345"));
-        assert!(preview.contains("\"repeat\":2"));
-        assert!(preview.contains("curl"));
-        assert!(serde_json::from_str::<Value>(&preview).is_ok());
+        let preview: Value = serde_json::from_str(&assess(&first).redacted_preview).unwrap();
+        let command = preview["command"].as_str().unwrap();
+        assert!(command.contains("curl https://[REDACTED]@host/"));
+        assert!(command.contains("file=/backups"));
+        let mut different_target = first.clone();
+        different_target.arguments["command"] =
+            json!("curl https://user:secret@other-host/?token=secret&file=/production");
+        assert_ne!(
+            assess(&first).redacted_preview,
+            assess(&different_target).redacted_preview
+        );
+        assert_ne!(
+            assess(&first).fingerprint,
+            assess(&different_target).fingerprint
+        );
     }
 
     #[test]
-    fn preview_is_bounded_valid_json_and_assessment_serializes() {
-        let mut a = action("pwd");
-        a.arguments = json!({"options": vec!["秘密".repeat(1000); 500]});
+    fn preview_preserves_dangerous_targets_and_ordinary_extension_arguments() {
+        let arguments = json!({
+            "command":"rm -rf '/production/a folder'; mv /source /destination > /logs/output",
+            "cwd":"/work/project", "path":"/backups/2026", "text":"delete the old reports",
+            "arguments":{"custom_target":"/production/database","dry_run":false,"count":123},
+            "argv":["ssh","-p","22","user@host"],
+        });
+        let preview: Value = serde_json::from_str(&redacted_preview(&arguments)).unwrap();
+        assert_eq!(preview, arguments);
+        let a = action(arguments["command"].as_str().unwrap());
+        assert_eq!(assess(&a).risk, Risk::RequiresApproval);
+    }
+
+    #[test]
+    fn sensitive_structures_are_hidden_but_adjacent_targets_remain_visible() {
+        let arguments = json!({
+            "password":"hidden-password", "accessToken":"hidden-token", "api_key":12345,
+            "arguments":{"custom_password":"hidden-custom","target":"/production"},
+            "env":{"PATH":"hidden-env","NORMAL":"hidden-env-value"},
+            "headers":{"Authorization":"hidden-auth","Cookie":"hidden-cookie","Accept":"application/json"},
+            "auth":{"user":"hidden-user","password":"hidden-auth-password"},
+            "destination":"/backup", "attempts":2,
+        });
+        let preview = redacted_preview(&arguments);
+        assert!(!preview.contains("hidden-"));
+        assert!(!preview.contains("12345"));
+        let parsed: Value = serde_json::from_str(&preview).unwrap();
+        assert_eq!(parsed["arguments"]["target"], "/production");
+        assert_eq!(parsed["headers"]["Accept"], "application/json");
+        assert_eq!(parsed["destination"], "/backup");
+        assert_eq!(parsed["attempts"], 2);
+    }
+
+    #[test]
+    fn command_credentials_redact_without_erasing_targets_or_shell_syntax() {
+        for command in [
+            "curl --password hidden-pass https://host/upload -o /backup/result",
+            "curl --token=hidden-token https://host/upload -o /backup/result",
+            "TOKEN='hidden token' curl https://host/upload -o /backup/result",
+            "curl -H 'Authorization: Bearer hidden-auth' https://host/upload -o /backup/result",
+            "curl -H 'Cookie: first=hidden-one; second=hidden-two' https://host/upload -o /backup/result",
+            "curl -u user:hidden-auth https://host/upload -o /backup/result",
+            "curl -uuser:hidden-auth https://host/upload -o /backup/result",
+            "curl https://user:hidden-pass@host/upload?%74oken=hidden-query&path=/backup/result",
+            r#"curl --data '{"password":"hidden-json","target":"/backup/result"}' https://host/upload"#,
+        ] {
+            let result = redacted_details_with_secrets(&json!({"command":command}), &[]);
+            let display = result["command"].as_str().unwrap();
+            assert!(!display.contains("hidden"), "{command} -> {display}");
+            assert!(display.contains("host/upload"), "{display}");
+            assert!(display.contains("/backup/result"), "{display}");
+        }
+        let args = json!({"argv":["deploy","--token","hidden-argv","/production"]});
+        let preview = redacted_details_with_secrets(&args, &[]);
+        assert_eq!(preview["argv"][2], "[REDACTED]");
+        assert_eq!(preview["argv"][3], "/production");
+    }
+
+    #[test]
+    fn host_known_secrets_redact_free_text_paths_and_encoded_occurrences() {
+        let secrets = vec!["private-value".to_owned(), "PRIVATE:值".to_owned()];
+        let args = json!({
+            "command":"deploy /production --note private-value --target /backups",
+            "path":"/private-value/export", "cwd":"/work/private-value",
+            "ordinary":"This contains PRIVATE:值 in text",
+            "url":"https://host/?value=PRIVATE%3a%E5%80%BC",
+            "private-value":"/target/one", "private-value-private-value":"/target/two",
+        });
+        let original = args.clone();
+        let preview = redacted_preview_with_secrets(&args, &secrets);
+        assert!(!preview.contains("private-value"));
+        assert!(!preview.contains("PRIVATE:值"));
+        assert!(!preview.contains("PRIVATE%3a%E5%80%BC"));
+        assert!(preview.contains("/production"));
+        assert!(preview.contains("/backups"));
+        assert!(preview.contains("/target/one"));
+        assert!(preview.contains("/target/two"));
+        assert_eq!(args, original);
+        let with_empty_secret = redacted_preview_with_secrets(&args, &[String::new()]);
+        assert_eq!(with_empty_secret, redacted_preview(&args));
+        // Percent-looking Unicode query keys must not panic or hide ordinary values.
+        let malformed = json!({"url":"https://host/?%中=ordinary&file=/backups"});
+        assert_eq!(redacted_details_with_secrets(&malformed, &[]), malformed);
+    }
+
+    #[test]
+    fn preview_truncation_is_explicit_and_full_redacted_details_retain_the_target() {
+        let args = json!({
+            "command":format!("deploy --note '{}' --token '{}' --target /production/database", "中文\\\"".repeat(2000), "hidden-long-secret".repeat(500)),
+            "cwd":"/work/project",
+        });
+        let preview = redacted_preview(&args);
+        assert!(preview.len() <= 4096);
+        let parsed: Value = serde_json::from_str(&preview).unwrap();
+        assert_eq!(parsed["truncated"], true);
+        assert_eq!(parsed["requires_details"], true);
+        assert!(parsed["preview"].as_str().unwrap().contains("deploy"));
+        assert!(!preview.contains("hidden-long-secret"));
+        let details = redacted_details_with_secrets(&args, &[]);
+        let command = details["command"].as_str().unwrap();
+        assert!(command.ends_with("--target /production/database"));
+        assert!(command.contains("中文"));
+        assert!(!command.contains("hidden-long-secret"));
+    }
+
+    #[test]
+    fn preview_is_valid_json_and_assessment_serializes() {
+        let a = action("rm -rf /production/database");
         let result = assess(&a);
         assert!(result.redacted_preview.len() <= 4096);
-        assert!(serde_json::from_str::<Value>(&result.redacted_preview).is_ok());
-        assert!(!result.redacted_preview.contains("秘密"));
+        let preview: Value = serde_json::from_str(&result.redacted_preview).unwrap();
+        assert_eq!(preview["command"], "rm -rf /production/database");
         let serialized = serde_json::to_value(result).unwrap();
         assert_eq!(serialized["risk"], "requires_approval");
         assert!(
