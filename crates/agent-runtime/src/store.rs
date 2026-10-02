@@ -104,6 +104,13 @@ fn now() -> i64 {
 fn id() -> String {
     Uuid::now_v7().to_string()
 }
+/// Leave room for JSON escaping and report metadata within the event size limit.
+pub(crate) fn task_error(error: Option<&str>) -> (Option<&str>, bool) {
+    (
+        error.map(|text| &text[..text.floor_char_boundary(text.len().min(2048))]),
+        error.is_some_and(|text| text.len() > 2048),
+    )
+}
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
         let parent = path.parent().context("database_directory_required")?;
@@ -192,6 +199,8 @@ impl Store {
           CREATE TABLE IF NOT EXISTS scopes(scope TEXT PRIMARY KEY,generation INTEGER NOT NULL DEFAULT 0,retention TEXT);
           CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,scope TEXT NOT NULL,id TEXT NOT NULL UNIQUE,kind TEXT NOT NULL,root TEXT,at INTEGER NOT NULL,value TEXT NOT NULL);
           CREATE INDEX IF NOT EXISTS events_scope_seq ON events(scope,seq DESC);
+          CREATE INDEX IF NOT EXISTS events_agent_task ON events(json_extract(value,'$.task_id'),seq DESC) WHERE kind='agent_report';
+          CREATE INDEX IF NOT EXISTS events_assistant_run ON events(json_extract(value,'$.run_id'),scope,seq DESC) WHERE kind='assistant';
           CREATE TABLE IF NOT EXISTS users(scope TEXT NOT NULL,request TEXT NOT NULL,hash TEXT NOT NULL,root TEXT NOT NULL,run TEXT NOT NULL,PRIMARY KEY(scope,request));
           CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,scope TEXT NOT NULL,root TEXT NOT NULL,state TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS blobs(hash TEXT PRIMARY KEY,body BLOB NOT NULL);
@@ -207,6 +216,7 @@ impl Store {
           CREATE INDEX IF NOT EXISTS updates_unit ON unit_updates(unit,seq);
           CREATE TABLE IF NOT EXISTS retained(scope TEXT PRIMARY KEY,value TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS delegations(scope TEXT NOT NULL,request TEXT NOT NULL,hash TEXT NOT NULL,root TEXT NOT NULL,run TEXT NOT NULL,PRIMARY KEY(scope,request));
+          CREATE INDEX IF NOT EXISTS delegations_run ON delegations(run);
           UPDATE events SET kind='archive_index' WHERE seq IN (SELECT event FROM records WHERE kind IN ('context_index','history_index'));
           UPDATE actions SET state='unknown' WHERE state IN ('prepared','accepted');
           UPDATE runs SET state='orphaned' WHERE state IN ('running','paused');
@@ -700,6 +710,100 @@ impl Store {
         let db = self.db.lock().unwrap();
         Ok(db.query_row("SELECT id,root,state FROM runs WHERE scope=?1 ORDER BY rowid DESC LIMIT 1",[scope.key()?],|r|Ok(json!({"run_id":r.get::<_,String>(0)?,"root_user_message_id":r.get::<_,String>(1)?,"state":r.get::<_,String>(2)?}))).optional()?)
     }
+    /// A task is a delegated Run, never whichever Run is now latest for its Session.
+    pub fn agent_task(
+        &self,
+        caller: &Scope,
+        task_id: &str,
+        limit: usize,
+    ) -> Result<(Scope, Value)> {
+        self.read_agent_task(caller, task_id, limit, None)
+    }
+    pub fn agent_task_for_run(
+        &self,
+        caller: &Scope,
+        run: &str,
+        task_id: &str,
+        limit: usize,
+    ) -> Result<(Scope, Value)> {
+        self.read_agent_task(caller, task_id, limit, Some(run))
+    }
+    fn read_agent_task(
+        &self,
+        caller: &Scope,
+        task_id: &str,
+        limit: usize,
+        pin_run: Option<&str>,
+    ) -> Result<(Scope, Value)> {
+        ensure!(caller.session.is_none(), "global_agent_required");
+        ensure!((4..=12288).contains(&limit), "invalid_task_result_limit");
+        let db = self.db.lock().unwrap();
+        let (key, root, state): (String, String, String) = db
+            .query_row(
+                "SELECT scope,root,state FROM runs WHERE id=?1
+                 AND json_extract(scope,'$.owner')=?2 AND json_extract(scope,'$.desktop')=?3
+                 AND json_extract(scope,'$.session') IS NOT NULL
+                 AND EXISTS(SELECT 1 FROM delegations WHERE run=runs.id AND scope=runs.scope)",
+                params![task_id, caller.owner, caller.desktop],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?
+            .context("agent_task_not_found")?;
+        let target: Scope = serde_json::from_str(&key)?;
+        let report: Option<(String, String)> = db
+            .query_row(
+                "SELECT id,value FROM events WHERE kind='agent_report' AND json_extract(value,'$.task_id')=?1
+                 AND json_extract(scope,'$.owner')=?2 AND json_extract(scope,'$.desktop')=?3 ORDER BY seq DESC LIMIT 1",
+                params![task_id, caller.owner, caller.desktop],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let report_id = report.as_ref().map(|(id, _)| id.as_str());
+        let report = report
+            .as_ref()
+            .map(|(_, s)| serde_json::from_str::<Value>(s))
+            .transpose()?;
+        let record_id = report.as_ref().and_then(|r| r["result_record_id"].as_str());
+        let result: Option<String> = if let Some(record_id) = record_id {
+            db.query_row(
+                "SELECT json_extract(value,'$.text') FROM events WHERE scope=?1 AND id=?2 AND kind='assistant'",
+                params![key, record_id],
+                |r| r.get(0),
+            ).optional()?
+        } else {
+            None
+        };
+        let truncated = result.as_ref().is_some_and(|s| s.len() > limit);
+        let result = result.map(|mut text| {
+            text.truncate(text.floor_char_boundary(limit.min(text.len())));
+            text
+        });
+        let done = !matches!(state.as_str(), "running" | "stopping" | "finishing");
+        if let Some(run) = pin_run {
+            let active: bool = db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM runs WHERE id=?1 AND scope=?2 AND state='running')",
+                params![run, caller.key()?],
+                |r| r.get(0),
+            )?;
+            ensure!(active, "run_not_active");
+            // Keep the lookup and pinning under the same lock as clean(), including the
+            // report that carries the durable link to the answer and error information.
+            db.execute(
+                "INSERT OR IGNORE INTO pins(run,event) SELECT ?1,seq FROM events WHERE id=?2 OR id=?3",
+                params![run, report_id, record_id],
+            )?;
+        }
+        let value = json!({
+            "task_id":task_id,"run_id":task_id,"agent_id":target.agent,"session_id":target.session,
+            "root_user_message_id":root,"state":state,"done":done,
+            "result_available":result.is_some(),"result_text":result,
+            "result_record_id":if result.is_some(){record_id}else{None},"result_truncated":truncated,
+            "error":report.as_ref().and_then(|r|r.get("error")),
+            "error_truncated":report.as_ref().is_some_and(|r| r["error_truncated"] == true),
+            "outcome_available":report.is_some()
+        });
+        Ok((target, value))
+    }
     pub fn events_after(&self, scope: &Scope, after: i64) -> Result<Vec<HistoryItem>> {
         let db = self.db.lock().unwrap();
         let mut query=db.prepare("SELECT seq,id,kind,root,at,value FROM events WHERE scope=?1 AND seq>?2 ORDER BY seq LIMIT 128")?;
@@ -1060,13 +1164,21 @@ impl Store {
         kind: &str,
         root: &str,
         event_id: &str,
-        value: Value,
+        mut value: Value,
         pin_run: Option<&str>,
     ) -> Result<i64> {
         ensure!(
             ["assistant", "interaction", "agent_report"].contains(&kind),
             "invalid_event_kind"
         );
+        if kind == "assistant"
+            && let Some(run) = pin_run
+        {
+            value
+                .as_object_mut()
+                .context("invalid_assistant_event")?
+                .insert("run_id".into(), json!(run));
+        }
         let db = self.db.lock().unwrap();
         let key = scope.key()?;
         ensure_scope(&db, &key)?;
@@ -1185,6 +1297,16 @@ impl Store {
         Ok(())
     }
     pub fn finish_run(&self, scope: &Scope, run: &str, state: &str) -> Result<()> {
+        self.finish_run_with_error(scope, run, state, None)
+            .map(|_| ())
+    }
+    pub fn finish_run_with_error(
+        &self,
+        scope: &Scope,
+        run: &str,
+        state: &str,
+        error: Option<&str>,
+    ) -> Result<Value> {
         ensure!(
             ["completed", "cancelled", "failed", "paused", "orphaned"].contains(&state),
             "invalid_run_state"
@@ -1196,9 +1318,32 @@ impl Store {
             params![run, scope.key()?, state],
         )?;
         ensure!(count == 1, "run_not_found");
+        let result_record_id: Option<String> = tx.query_row(
+            "SELECT id FROM events WHERE scope=?1 AND kind='assistant' AND json_extract(value,'$.run_id')=?2 ORDER BY seq DESC LIMIT 1",
+            params![scope.key()?, run], |r|r.get(0)
+        ).optional()?;
+        let (error, error_truncated) = task_error(error);
+        let report = json!({"task_id":run,"agent_id":scope.agent,"session_id":scope.session,
+            "state":state,"error":error,"error_truncated":error_truncated,"result_record_id":result_record_id});
+        let delegated: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM delegations WHERE run=?1 AND scope=?2)",
+            params![run, scope.key()?],
+            |r| r.get(0),
+        )?;
+        if delegated {
+            let root: String =
+                tx.query_row("SELECT root FROM runs WHERE id=?1", [run], |r| r.get(0))?;
+            insert_event(
+                &tx,
+                &scope.key()?,
+                "agent_report",
+                Some(&root),
+                &bounded_json(&report, 24 * 1024)?,
+            )?;
+        }
         tx.execute("DELETE FROM pins WHERE run=?1", [run])?;
         tx.commit()?;
-        Ok(())
+        Ok(report)
     }
     pub fn prepare_action(
         &self,
@@ -2906,6 +3051,183 @@ fn validate_image(mime: &str, bytes: &[u8]) -> Result<()> {
     };
     ensure!(valid, "image_format_mismatch");
     Ok(())
+}
+
+#[cfg(test)]
+mod agent_task_contracts {
+    use super::*;
+
+    #[test]
+    fn agent_task_preserves_exact_results_across_new_runs_restart_and_retention() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("data/tasks.db");
+        let store = Store::open(&path).unwrap();
+        let global = store.agent("owner", "desktop", None).unwrap();
+        let child = store.agent("owner", "desktop", Some("session")).unwrap();
+        let root = store
+            .accept_user(&global, "root", "coordinate", json!({}))
+            .unwrap();
+        let first = store
+            .delegate(
+                &child,
+                &root.root_user_message_id,
+                "one",
+                "first",
+                json!({}),
+                None,
+            )
+            .unwrap();
+        let first_record = id();
+        store
+            .append_identified(
+                &child,
+                "assistant",
+                &first.root_user_message_id,
+                &first_record,
+                json!({"text":"第一项任务已完成"}),
+                Some(&first.run_id),
+            )
+            .unwrap();
+        store
+            .finish_run(&child, &first.run_id, "completed")
+            .unwrap();
+        let (_, result) = store.agent_task(&global, &first.run_id, 4).unwrap();
+        assert_eq!(result["result_text"], "第");
+        assert_eq!(result["result_truncated"], true);
+        assert_eq!(result["result_record_id"], first_record);
+        assert_eq!(result["done"], true);
+        let raw = store
+            .record_page(&global, &first_record, "body", None, 12288)
+            .unwrap();
+        assert!(raw.to_string().contains("第一项任务已完成"));
+
+        let second = store
+            .delegate(
+                &child,
+                &root.root_user_message_id,
+                "two",
+                "second",
+                json!({}),
+                None,
+            )
+            .unwrap();
+        store
+            .append_identified(
+                &child,
+                "assistant",
+                &second.root_user_message_id,
+                &id(),
+                json!({"text":"second result"}),
+                Some(&second.run_id),
+            )
+            .unwrap();
+        store
+            .finish_run(&child, &second.run_id, "completed")
+            .unwrap();
+        let failed = store
+            .delegate(
+                &child,
+                &root.root_user_message_id,
+                "failed",
+                "fail",
+                json!({}),
+                None,
+            )
+            .unwrap();
+        store
+            .finish_run_with_error(&child, &failed.run_id, "failed", Some("fixture_failure"))
+            .unwrap();
+        let orphan = store
+            .delegate(
+                &child,
+                &root.root_user_message_id,
+                "orphan",
+                "pending",
+                json!({}),
+                None,
+            )
+            .unwrap();
+        drop(store);
+        let store = Store::open(&path).unwrap();
+        let (_, old) = store.agent_task(&global, &first.run_id, 12288).unwrap();
+        assert_eq!(old["result_text"], "第一项任务已完成");
+        assert_eq!(old["result_truncated"], false);
+        let (_, failed_result) = store.agent_task(&global, &failed.run_id, 12288).unwrap();
+        assert_eq!(failed_result["state"], "failed");
+        assert_eq!(failed_result["error"], "fixture_failure");
+        assert_eq!(failed_result["result_available"], false);
+        let (_, orphan_result) = store.agent_task(&global, &orphan.run_id, 12288).unwrap();
+        assert_eq!(orphan_result["state"], "orphaned");
+        assert_eq!(orphan_result["done"], true);
+        assert_eq!(orphan_result["result_available"], false);
+
+        store
+            .clean(
+                &child,
+                &Retention::Before {
+                    utc_ms: now() + 60000,
+                },
+                false,
+            )
+            .unwrap();
+        let (_, expired) = store.agent_task(&global, &first.run_id, 12288).unwrap();
+        assert_eq!(expired["state"], "completed");
+        assert_eq!(expired["result_available"], false);
+        assert_eq!(expired["outcome_available"], false);
+        assert!(expired["result_text"].is_null());
+    }
+
+    #[test]
+    fn agent_task_rejects_other_owners_desktops_sessions_and_non_delegated_runs() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&temp.path().join("data/tasks.db")).unwrap();
+        let global = store.agent("owner", "desktop", None).unwrap();
+        let child = store.agent("owner", "desktop", Some("session")).unwrap();
+        let root = store
+            .accept_user(&global, "root", "coordinate", json!({}))
+            .unwrap();
+        let task = store
+            .delegate(
+                &child,
+                &root.root_user_message_id,
+                "task",
+                "work",
+                json!({}),
+                None,
+            )
+            .unwrap();
+        for caller in [
+            store.agent("other", "desktop", None).unwrap(),
+            store.agent("owner", "other", None).unwrap(),
+        ] {
+            assert_eq!(
+                store
+                    .agent_task(&caller, &task.run_id, 1024)
+                    .unwrap_err()
+                    .to_string(),
+                "agent_task_not_found"
+            );
+        }
+        assert_eq!(
+            store
+                .agent_task(&child, &task.run_id, 1024)
+                .unwrap_err()
+                .to_string(),
+            "global_agent_required"
+        );
+        let independent = store
+            .accept_user(&child, "user", "own work", json!({}))
+            .unwrap();
+        for run in [&root.run_id, &independent.run_id, &id()] {
+            assert_eq!(
+                store
+                    .agent_task(&global, run, 1024)
+                    .unwrap_err()
+                    .to_string(),
+                "agent_task_not_found"
+            );
+        }
+    }
 }
 
 #[cfg(test)]

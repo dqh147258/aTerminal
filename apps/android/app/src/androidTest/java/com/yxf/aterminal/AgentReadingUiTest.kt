@@ -14,6 +14,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import org.json.JSONObject
+import org.json.JSONArray
 import org.junit.Assert.*
 import org.junit.Test
 import uniffi.ai_terminal_mobile.Account
@@ -165,6 +166,40 @@ class AgentReadingUiTest {
             assertTrue((0 until catalog.length()).filter { catalog.getJSONObject(it).getJSONObject("scope").getString("agent") in listOf(first.getString("agent"), second.getString("agent")) }.all { catalog.getJSONObject(it).optLong("last_reply_sequence") > 0 })
             screenshot("global-wire")
             report.put("global_encrypted_rpc", true).put("global_independent_history", true).put("global_legacy_preserved", true).put("global_idempotent_creation", true)
+            for ((prefix, expected) in listOf("TASK_RESULTS_GLOBAL" to "TASK_RESULTS_GLOBAL_DONE", "TASK_ERROR_GLOBAL" to "TASK_ERROR_GLOBAL_DONE")) {
+                val scope = global(JSONObject().put("action", "global_create").put("request_id", prefix)).getJSONObject("scope")
+                main {
+                    chat?.close()
+                    chat = AgentPanel(activity, panel("全局AI助手"), listOf(fixture.getString("server"), fixture.getString("username"), desktop), "", { true }, { id, json -> remote.agent(id, json) }, {},
+                        workingPath = { "Fixture Desktop" }, globalConversation = JSONObject().put("scope", scope).put("title", prefix))
+                    field("发送任务或追加消息").setText("$prefix:$session")
+                    views().first { it.contentDescription == "发送" && it.isEnabled }.performClick()
+                }
+                waitFor("delegated task workflow completed: $prefix") {
+                    val state = global(JSONObject().put("action", "state").put("agent_id", scope.getString("agent")))
+                    assertNotEquals("Task workflow paused: ${state.optString("error")}", "paused", state.optString("state"))
+                    state.optString("state") == "completed"
+                }
+                val taskHistory = global(JSONObject().put("action", "history").put("agent_id", scope.getString("agent"))).getJSONArray("items")
+                val replies = (0 until taskHistory.length()).map { taskHistory.getJSONObject(it) }.filter { it.optString("kind") == "assistant" }
+                assertTrue("Unexpected task reply: $replies", replies.any { it.getJSONObject("value").optString("text") == expected })
+                waitFor("delegated task reply rendered: $prefix") { main { views().filterIsInstance<TextView>().any { it.text.toString() == expected } } }
+                val names = mutableSetOf<String>()
+                for (i in 0 until taskHistory.length()) {
+                    val tools = taskHistory.getJSONObject(i).optJSONObject("value")?.optJSONArray("tools") ?: continue
+                    for (j in 0 until tools.length()) names.add(tools.getJSONObject(j).getString("name"))
+                }
+                assertTrue(names.containsAll(listOf("send_agent_message", "get_agent_task", "wait_agent_task")))
+                if (prefix == "TASK_RESULTS_GLOBAL") assertTrue(names.contains("read_record"))
+                report.put(prefix, JSONObject().put("reply", expected).put("tools", JSONArray(names.toList())).put("composer_submission", true))
+                waitFor("task reply visible on screen: $prefix") { main {
+                    val reply = views().filterIsInstance<TextView>().firstOrNull { it.text.toString() == expected } ?: return@main false
+                    reply.requestRectangleOnScreen(android.graphics.Rect(0, 0, reply.width, reply.height), true)
+                    val bounds = android.graphics.Rect()
+                    reply.getGlobalVisibleRect(bounds) && bounds.height() > 0
+                } }
+                screenshot(if (prefix == "TASK_RESULTS_GLOBAL") "task-results" else "task-error")
+            }
             main{chat?.close();chat=null;panel("设置")}
             assertTrue("Primary account preferences changed",accountBefore==context.getSharedPreferences("account",0).all)
             assertTrue("Primary connection preferences changed",connectionBefore==context.getSharedPreferences("connection",0).all)

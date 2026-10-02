@@ -1083,6 +1083,8 @@ impl TerminalBackend for Backend {
                 | "skills_read"
                 | "mcp_tools"
                 | "get_agent_state"
+                | "get_agent_task"
+                | "wait_agent_task"
                 | "wait"
         )
     }
@@ -1307,6 +1309,8 @@ impl TerminalBackend for Backend {
                     )?;
                     Ok(ToolOutput::value(host.agents.state(&scope)?))
                 }
+                "get_agent_task" => self.host()?.agents.get_agent_task(&context, args),
+                "wait_agent_task" => self.host()?.agents.wait_agent_task(&context, args).await,
                 "send_agent_message" => {
                     ensure!(self.scope.session.is_none(), "global_agent_required");
                     let id = self.session(&args)?;
@@ -1469,6 +1473,113 @@ mod wait_contracts {
         model::{Connection, Protocol},
         store::Store,
     };
+
+    #[tokio::test]
+    async fn broker_agent_task_reads_and_waits_without_a_live_terminal() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = temp.path().join("state");
+        secure_dir(&state).unwrap();
+        let store = Arc::new(Store::open(&state.join("data/tasks.db")).unwrap());
+        let global = store.agent("owner", "desktop", None).unwrap();
+        let child = store
+            .agent("owner", "desktop", Some("closed-session"))
+            .unwrap();
+        let root = store
+            .accept_user(&global, "root", "coordinate", json!({}))
+            .unwrap();
+        let task = store
+            .delegate(
+                &child,
+                &root.root_user_message_id,
+                "task",
+                "work",
+                json!({}),
+                None,
+            )
+            .unwrap();
+        store
+            .append_identified(
+                &child,
+                "assistant",
+                &root.root_user_message_id,
+                "reply",
+                json!({"text":"retained result"}),
+                Some(&task.run_id),
+            )
+            .unwrap();
+        store.finish_run(&child, &task.run_id, "completed").unwrap();
+        let host = Arc::new(Host {
+            agents: ai_terminal_agent_runtime::host::AgentHost::new(
+                store,
+                tokio::runtime::Handle::current(),
+            ),
+            state_dir: state.clone(),
+            account: crate::account::AccountManager::new(&state).unwrap(),
+            config: crate::config::ConfigService::open(&state).unwrap(),
+            assistant: crate::assistant::Assistant::default(),
+            sessions: Mutex::new(HashMap::new()),
+            session_order: Mutex::new(Vec::new()),
+            recent_directories: Mutex::new(crate::recent_directories::RecentDirectories::new(
+                &state,
+            )),
+            owners: Mutex::new(HashMap::new()),
+            stop: Arc::new(AtomicBool::new(false)),
+            workers: AtomicUsize::new(0),
+        });
+        let backend = Backend::new(
+            &host,
+            global.clone(),
+            "device".into(),
+            Arc::new(OwnerConfig::default()),
+            1,
+            Provider {
+                id: "test".into(),
+                name: "test".into(),
+                connection: Connection {
+                    protocol: Protocol::OpenaiChat,
+                    endpoint: "http://localhost".into(),
+                    api_version: None,
+                },
+                catalog_url: None,
+                secret_ref: None,
+                credential_revision: 1,
+                enabled: true,
+            },
+            None,
+            None,
+        )
+        .unwrap();
+        let (_cancel, receiver) = tokio::sync::watch::channel(false);
+        let context = ToolContext {
+            history_unit_id: "unit".into(),
+            vision: false,
+            scope: global.clone(),
+            run_id: root.run_id,
+            root_user_message_id: root.root_user_message_id,
+            action_id: "read-task".into(),
+            max_read_bytes: 1024,
+            budget: Arc::new(Budget::new(30, 10, 10000, global)),
+            cancel: receiver,
+            execution_gate: Arc::new(Mutex::new(true)),
+        };
+        for (name, args) in [
+            ("get_agent_task", json!({"task_id":task.run_id})),
+            (
+                "wait_agent_task",
+                json!({"task_id":task.run_id,"timeout_ms":30000}),
+            ),
+        ] {
+            assert!(!backend.is_write(name, &args));
+            let output = backend
+                .invoke(context.clone(), name, args)
+                .await
+                .unwrap()
+                .value;
+            assert_eq!(output["state"], "completed");
+            assert_eq!(output["result_text"], "retained result");
+        }
+        assert!(host.sessions.lock().unwrap().is_empty());
+    }
 
     #[tokio::test]
     async fn broker_wait_is_read_only_and_never_accesses_a_terminal_host() {

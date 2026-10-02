@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import shutil
 import signal
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -56,9 +57,22 @@ with tempfile.TemporaryDirectory(prefix='aterminal-agent-ui-') as directory:
         reading = json.loads(saved)['result']['terminal_reading']
         assert reading == {'head_lines': 7, 'tail_lines': 31}, reading
         (args.output/'desktop-reading.json').write_text(saved)
-        print('PASS: native Agent settings, encrypted RPC, PTY evidence, current path and vision upload:', args.output/'results.json')
+        for name in ['task-result-observations.json', 'task-error-observations.json']:
+            shutil.copyfile(state/name, args.output/name)
+        task_error = json.loads((state/'task-error-observations.json').read_text())
+        # Verify the actual daemon committed the long-error task's terminal state and
+        # released its pins, independently of its in-memory Agent state.
+        with sqlite3.connect(f'file:{state}/data/agent.sqlite3?mode=ro', uri=True) as db:
+            persisted = db.execute('SELECT state FROM runs WHERE id=?', [task_error['task_id']]).fetchone()
+            pins = db.execute('SELECT COUNT(*) FROM pins WHERE run=?', [task_error['task_id']]).fetchone()[0]
+        assert persisted == ('paused',) and pins == 0, (persisted, pins)
+        (args.output/'task-durability.json').write_text(json.dumps({'state': persisted[0], 'remaining_child_pins': pins, 'error_truncated': task_error['error_truncated']}, indent=2))
+        print('PASS: native Agent settings, encrypted RPC, task results/waits, retention, long errors, PTY evidence and vision upload:', args.output/'results.json')
     finally:
-        for name in ['defaults', 'settings-saved', 'conversation', 'history', 'evidence', 'vision', 'global-wire']:
+        for name in ['task-result-observations.json', 'task-error-observations.json']:
+            if (state/name).exists():
+                shutil.copyfile(state/name, args.output/name)
+        for name in ['defaults', 'settings-saved', 'conversation', 'history', 'evidence', 'vision', 'global-wire', 'task-results', 'task-error']:
             picture = subprocess.run([args.adb, '-s', args.serial, 'exec-out', 'run-as', package, 'cat', f'files/agent-ui-{name}.png'], capture_output=True)
             if picture.returncode == 0:
                 (args.output/f'{name}.png').write_bytes(picture.stdout)

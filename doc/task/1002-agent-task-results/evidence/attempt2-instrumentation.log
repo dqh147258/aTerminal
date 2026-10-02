@@ -1,0 +1,41 @@
+INSTRUMENTATION_STATUS: class=com.yxf.aterminal.AgentReadingUiTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=
+com.yxf.aterminal.AgentReadingUiTest:
+INSTRUMENTATION_STATUS: test=readingSettingsAndAgentEvidenceRoundTrip
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.yxf.aterminal.AgentReadingUiTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Unexpected task reply: [{"created_at":1790931202615,"id":"01a0fbd1-7237-7516-9987-f703ecceae04","kind":"assistant","root_user_message_id":"01a0fbd1-6a17-7120-9360-0ec57f2dd778","sequence":46,"value":{"run_id":"01a0fbd1-6a17-7120-9360-0ec6d2dbc6c0","text":"TASK_RESULTS_FIXTURE_ERROR: active task result was not protected: {\"candidates\":9,\"deleted\":8,\"desktop\":\"17554a3942851f1f90169b76ad2ac455\",\"logical_reclaimed_bytes\":1001,\"owner\":\"http:\/\/127.0.0.1:50042|demo\",\"pinned\":1,\"scope_count\":1,\"scope_details_truncated\":false,\"scopes\":[{\"candidates\":9,\"cutoff_utc_ms\":1790931203611,\"deleted\":8,\"generation\":1,\"logical_reclaimed_bytes\":1001,\"pinned\":1,\"reusable_bytes\":49152,\"scope\":{\"agent\":\"01a0fbd1-4e6a-7320-8743-e71b0f246c9b\",\"desktop\":\"17554a3942851f1f90169b76ad2ac455\",\"owner\":\"http:\/\/127.0.0.1:50042|demo\",\"session\":\"b011c54758028ecf\"}}],\"selector\":{\"selector\":\"before\",\"utc_ms\":1790931203611}}","usage":{"cache_creation_input_tokens":0,"cached_input_tokens":0,"input_tokens":20,"output_tokens":10,"reasoning_tokens":0,"tool_use_prompt_tokens":0,"total_tokens":30}}}]
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.yxf.aterminal.AgentReadingUiTest.readingSettingsAndAgentEvidenceRoundTrip(AgentReadingUiTest.kt:185)
+
+INSTRUMENTATION_STATUS: stream=
+Error in readingSettingsAndAgentEvidenceRoundTrip(com.yxf.aterminal.AgentReadingUiTest):
+java.lang.AssertionError: Unexpected task reply: [{"created_at":1790931202615,"id":"01a0fbd1-7237-7516-9987-f703ecceae04","kind":"assistant","root_user_message_id":"01a0fbd1-6a17-7120-9360-0ec57f2dd778","sequence":46,"value":{"run_id":"01a0fbd1-6a17-7120-9360-0ec6d2dbc6c0","text":"TASK_RESULTS_FIXTURE_ERROR: active task result was not protected: {\"candidates\":9,\"deleted\":8,\"desktop\":\"17554a3942851f1f90169b76ad2ac455\",\"logical_reclaimed_bytes\":1001,\"owner\":\"http:\/\/127.0.0.1:50042|demo\",\"pinned\":1,\"scope_count\":1,\"scope_details_truncated\":false,\"scopes\":[{\"candidates\":9,\"cutoff_utc_ms\":1790931203611,\"deleted\":8,\"generation\":1,\"logical_reclaimed_bytes\":1001,\"pinned\":1,\"reusable_bytes\":49152,\"scope\":{\"agent\":\"01a0fbd1-4e6a-7320-8743-e71b0f246c9b\",\"desktop\":\"17554a3942851f1f90169b76ad2ac455\",\"owner\":\"http:\/\/127.0.0.1:50042|demo\",\"session\":\"b011c54758028ecf\"}}],\"selector\":{\"selector\":\"before\",\"utc_ms\":1790931203611}}","usage":{"cache_creation_input_tokens":0,"cached_input_tokens":0,"input_tokens":20,"output_tokens":10,"reasoning_tokens":0,"tool_use_prompt_tokens":0,"total_tokens":30}}}]
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.yxf.aterminal.AgentReadingUiTest.readingSettingsAndAgentEvidenceRoundTrip(AgentReadingUiTest.kt:185)
+
+INSTRUMENTATION_STATUS: test=readingSettingsAndAgentEvidenceRoundTrip
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: stream=
+
+Time: 8.866
+There was 1 failure:
+1) readingSettingsAndAgentEvidenceRoundTrip(com.yxf.aterminal.AgentReadingUiTest)
+java.lang.AssertionError: Unexpected task reply: [{"created_at":1790931202615,"id":"01a0fbd1-7237-7516-9987-f703ecceae04","kind":"assistant","root_user_message_id":"01a0fbd1-6a17-7120-9360-0ec57f2dd778","sequence":46,"value":{"run_id":"01a0fbd1-6a17-7120-9360-0ec6d2dbc6c0","text":"TASK_RESULTS_FIXTURE_ERROR: active task result was not protected: {\"candidates\":9,\"deleted\":8,\"desktop\":\"17554a3942851f1f90169b76ad2ac455\",\"logical_reclaimed_bytes\":1001,\"owner\":\"http:\/\/127.0.0.1:50042|demo\",\"pinned\":1,\"scope_count\":1,\"scope_details_truncated\":false,\"scopes\":[{\"candidates\":9,\"cutoff_utc_ms\":1790931203611,\"deleted\":8,\"generation\":1,\"logical_reclaimed_bytes\":1001,\"pinned\":1,\"reusable_bytes\":49152,\"scope\":{\"agent\":\"01a0fbd1-4e6a-7320-8743-e71b0f246c9b\",\"desktop\":\"17554a3942851f1f90169b76ad2ac455\",\"owner\":\"http:\/\/127.0.0.1:50042|demo\",\"session\":\"b011c54758028ecf\"}}],\"selector\":{\"selector\":\"before\",\"utc_ms\":1790931203611}}","usage":{"cache_creation_input_tokens":0,"cached_input_tokens":0,"input_tokens":20,"output_tokens":10,"reasoning_tokens":0,"tool_use_prompt_tokens":0,"total_tokens":30}}}]
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.yxf.aterminal.AgentReadingUiTest.readingSettingsAndAgentEvidenceRoundTrip(AgentReadingUiTest.kt:185)
+
+FAILURES!!!
+Tests run: 1,  Failures: 1
+
+
+INSTRUMENTATION_CODE: -1

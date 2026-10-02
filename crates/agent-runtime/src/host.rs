@@ -2,7 +2,7 @@
 use crate::{
     history::{Entry, Projection},
     model::{self, ContextEntry, Model, Origin, Protocol, RequestBuilder},
-    store::{Scope, Store, UserAccepted},
+    store::{Scope, Store, UserAccepted, task_error},
 };
 use anyhow::{Context, Result, bail, ensure};
 use rig_core::{
@@ -75,6 +75,8 @@ pub trait TerminalBackend: Send + Sync {
                 | "skills_search"
                 | "skills_read"
                 | "get_agent_state"
+                | "get_agent_task"
+                | "wait_agent_task"
                 | "wait"
         )
     }
@@ -232,6 +234,7 @@ pub struct AgentHost {
     pub store: Arc<Store>,
     jobs: Mutex<HashMap<String, Arc<Job>>>,
     runtime: tokio::runtime::Handle,
+    task_updates: watch::Sender<()>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -268,6 +271,7 @@ impl AgentHost {
             store,
             jobs: Mutex::new(HashMap::new()),
             runtime,
+            task_updates: watch::channel(()).0,
         })
     }
     /// Called exclusively by authenticated user RPC. Model role/source fields are never accepted here.
@@ -553,6 +557,99 @@ impl AgentHost {
             json!({"agent_id":scope.agent,"state":last.as_ref().and_then(|r|r["state"].as_str()).unwrap_or("idle"),"last_run":last}),
         )
     }
+    fn task_state(&self, context: &ToolContext, task_id: &str) -> Result<Value> {
+        ensure!(context.scope.session.is_none(), "global_agent_required");
+        Uuid::parse_str(task_id).context("invalid_agent_task_id")?;
+        let limit = context.max_read_bytes.clamp(4, 12288);
+        let (target, mut value) =
+            self.store
+                .agent_task_for_run(&context.scope, &context.run_id, task_id, limit)?;
+        if let Some(job) = self.jobs.lock().unwrap().get(&target.agent)
+            && job.run == task_id
+        {
+            ensure!(job.scope == target, "agent_scope_mismatch");
+            let state = job.state.lock().unwrap();
+            value["state"] = json!(state.state);
+            value["done"] = json!(!running(&state.state));
+            let (error, truncated) = task_error(state.error.as_deref());
+            value["error"] = json!(error);
+            value["error_truncated"] = json!(truncated);
+            value["queued_messages"] = json!(state.queue.len());
+            value["live_text"] =
+                json!(&state.live[..state.live.floor_char_boundary(limit.min(state.live.len()))]);
+            value["live_text_truncated"] = json!(state.live.len() > limit);
+            // Completion may have been committed between the first database read and this lock.
+            if !running(&state.state) {
+                let (_, persisted) = self.store.agent_task_for_run(
+                    &context.scope,
+                    &context.run_id,
+                    task_id,
+                    limit,
+                )?;
+                if persisted["done"] == true {
+                    value = persisted;
+                }
+            }
+        }
+        Ok(value)
+    }
+    pub fn get_agent_task(&self, context: &ToolContext, args: Value) -> Result<ToolOutput> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Arguments {
+            task_id: String,
+        }
+        let args: Arguments =
+            serde_json::from_value(args).context("invalid_agent_task_arguments")?;
+        context.budget.remaining()?;
+        ensure!(!*context.cancel.borrow(), "cancelled");
+        let value = self.task_state(context, &args.task_id)?;
+        context.budget.remaining()?;
+        ensure!(!*context.cancel.borrow(), "cancelled");
+        context.budget.read(serde_json::to_vec(&value)?.len())?;
+        Ok(ToolOutput::value(value))
+    }
+    /// Wait for this exact Run without polling the model or creating another user Run.
+    pub async fn wait_agent_task(&self, context: &ToolContext, args: Value) -> Result<ToolOutput> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Arguments {
+            task_id: String,
+            timeout_ms: u64,
+        }
+        let args: Arguments =
+            serde_json::from_value(args).context("invalid_agent_task_arguments")?;
+        ensure!(
+            (1..=30000).contains(&args.timeout_ms),
+            "invalid_agent_task_timeout_ms"
+        );
+        let started = Instant::now();
+        let end = started + Duration::from_millis(args.timeout_ms);
+        // Subscribe before observing, so completion between the read and wait cannot be lost.
+        let mut updates = self.task_updates.subscribe();
+        let mut cancel = context.cancel.clone();
+        loop {
+            context.budget.remaining()?;
+            ensure!(!*cancel.borrow(), "cancelled");
+            let mut value = self.task_state(context, &args.task_id)?;
+            let remaining = context.budget.remaining()?;
+            ensure!(!*cancel.borrow(), "cancelled");
+            let done = value["done"] == true;
+            if done || Instant::now() >= end {
+                value["timed_out"] = json!(!done);
+                value["elapsed_ms"] = json!(started.elapsed().as_millis() as u64);
+                context.budget.read(serde_json::to_vec(&value)?.len())?;
+                return Ok(ToolOutput::value(value));
+            }
+            tokio::select! {
+                biased;
+                _ = cancel.wait_for(|v| *v) => bail!("cancelled"),
+                _ = tokio::time::sleep(remaining) => bail!("run_time_budget"),
+                _ = tokio::time::sleep_until(tokio::time::Instant::from_std(end)) => {},
+                changed = updates.changed() => { changed.context("agent_task_notifications_closed")?; },
+            }
+        }
+    }
     pub fn cancel(&self, scope: &Scope) -> Result<()> {
         let jobs = self.jobs.lock().unwrap();
         for job in jobs.values() {
@@ -623,9 +720,17 @@ impl AgentHost {
         } else {
             "paused"
         };
-        let error = result.err().map(|e| e.to_string());
+        let error = job
+            .state
+            .lock()
+            .unwrap()
+            .error
+            .clone()
+            .or_else(|| result.err().map(|e| e.to_string()));
         // Persist outcome before making the agent eligible for another root run.
-        let persisted = self.store.finish_run(&job.scope, &job.run, state);
+        let persisted =
+            self.store
+                .finish_run_with_error(&job.scope, &job.run, state, error.as_deref());
         *job.execution_gate.lock().unwrap() = false;
         job.snapshot.backend.finished();
         let mut status = job.state.lock().unwrap();
@@ -634,11 +739,22 @@ impl AgentHost {
             .error
             .take()
             .or(error)
-            .or_else(|| persisted.err().map(|e| e.to_string()));
+            .or_else(|| persisted.as_ref().err().map(|e| e.to_string()));
         status.live.clear();
         if job.scope.agent != job.budget.root_scope.agent {
-            let _=self.store.append(&job.budget.root_scope,"agent_report",Some(&job.root),json!({"task_id":job.run,"agent_id":job.scope.agent,"session_id":job.scope.session,"state":status.state,"error":status.error}));
+            let mut report = persisted.unwrap_or_else(|_|json!({"task_id":job.run,"agent_id":job.scope.agent,"session_id":job.scope.session,"state":status.state}));
+            let (error, truncated) = task_error(status.error.as_deref());
+            report["error"] = json!(error);
+            report["error_truncated"] = json!(truncated);
+            let _ = self.store.append(
+                &job.budget.root_scope,
+                "agent_report",
+                Some(&job.root),
+                report,
+            );
         }
+        drop(status);
+        self.task_updates.send_replace(());
         if job.budget.active.fetch_sub(1, Ordering::AcqRel) == 1 {
             job.budget.cancelled.store(true, Ordering::Release);
         }
@@ -1839,6 +1955,18 @@ pub fn terminal_tools(global: bool) -> Vec<ToolDefinition> {
     if global {
         tools.extend([
             (
+                "get_agent_task",
+                "Read a delegated task by task_id (its Run ID), including state, done, final result_text, result_record_id and error. Result text is bounded; read_record recovers longer retained results. Newer Session runs do not replace this task. Agent completion is not proof of terminal application success.",
+                json!({"task_id":{"type":"string","minLength":1,"maxLength":36}}),
+                vec!["task_id"],
+            ),
+            (
+                "wait_agent_task",
+                "Wait for this exact delegated task to stop running within this user Run. timeout_ms must be an integer 1–30000. Returns task state/result plus timed_out and elapsed_ms; timed_out=true leaves the child running, so repeat while needed. Completed, cancelled, paused, failed and orphaned tasks return immediately. Cancellation and the shared Run deadline interrupt waiting; no reports start model work.",
+                json!({"task_id":{"type":"string","minLength":1,"maxLength":36},"timeout_ms":{"type":"integer","minimum":1,"maximum":30000}}),
+                vec!["task_id", "timeout_ms"],
+            ),
+            (
                 "get_agent_state",
                 "Read a session agent state; reports never start model work",
                 json!({"session_id":{"type":"string"}}),
@@ -1846,7 +1974,7 @@ pub fn terminal_tools(global: bool) -> Vec<ToolDefinition> {
             ),
             (
                 "send_agent_message",
-                "Delegate within this user run; returns a task ID immediately",
+                "Delegate within this user run; returns a task_id (the child Run ID) immediately. Use get_agent_task or wait_agent_task to collect its outcome. Further messages to this same active child share the task_id.",
                 json!({"session_id":{"type":"string"},"message":{"type":"string"}}),
                 vec!["session_id", "message"],
             ),
@@ -3140,6 +3268,441 @@ mod runtime_contracts {
             }
         }
     }
+    #[tokio::test]
+    async fn agent_task_wait_collects_exact_result_and_keeps_it_after_a_new_run() {
+        let fixture = TaskFixture::new();
+        let (task, model) = fixture.start(Duration::from_millis(30));
+        let args = json!({"task_id":task});
+        assert_eq!(
+            fixture
+                .host
+                .get_agent_task(&fixture.context, args.clone())
+                .unwrap()
+                .value["done"],
+            false
+        );
+        let output = tokio::time::timeout(
+            Duration::from_secs(2),
+            fixture
+                .host
+                .wait_agent_task(&fixture.context, json!({"task_id":task,"timeout_ms":30000})),
+        )
+        .await
+        .expect("completion must wake the waiter before its timeout")
+        .unwrap()
+        .value;
+        assert_eq!(output["state"], "completed");
+        assert_eq!(output["timed_out"], false);
+        assert_eq!(output["result_text"], "done");
+        assert!(output["result_record_id"].is_string());
+        let (next_task, next_model) = fixture.start(Duration::from_millis(10));
+        assert_ne!(next_task, task);
+        let old = fixture
+            .host
+            .wait_agent_task(&fixture.context, json!({"task_id":task,"timeout_ms":30000}))
+            .await
+            .unwrap()
+            .value;
+        assert_eq!(old["state"], "completed");
+        assert_eq!(old["result_record_id"], output["result_record_id"]);
+        assert_eq!(old["timed_out"], false);
+        fixture
+            .host
+            .wait_agent_task(
+                &fixture.context,
+                json!({"task_id":next_task,"timeout_ms":1000}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(model.calls.load(Ordering::Acquire), 1);
+        assert_eq!(next_model.calls.load(Ordering::Acquire), 1);
+    }
+
+    struct TaskFixture {
+        _temp: tempfile::TempDir,
+        host: Arc<AgentHost>,
+        global: Scope,
+        child: Scope,
+        context: ToolContext,
+        cancel: watch::Sender<bool>,
+    }
+    impl TaskFixture {
+        fn new() -> Self {
+            let temp = tempfile::tempdir().unwrap();
+            let store = Arc::new(Store::open(&temp.path().join("data/tasks.db")).unwrap());
+            let global = store.agent("owner", "desktop", None).unwrap();
+            let child = store.agent("owner", "desktop", Some("child")).unwrap();
+            let root = store
+                .accept_user(&global, "root", "coordinate", json!({}))
+                .unwrap();
+            let host = AgentHost::new(store, tokio::runtime::Handle::current());
+            let (cancel, receiver) = watch::channel(false);
+            let context = ToolContext {
+                history_unit_id: "unit".into(),
+                vision: false,
+                scope: global.clone(),
+                run_id: root.run_id,
+                root_user_message_id: root.root_user_message_id,
+                action_id: "delegate".into(),
+                max_read_bytes: 1024,
+                budget: Arc::new(Budget::new(30, 20, 2000000, global.clone())),
+                cancel: receiver,
+                execution_gate: Arc::new(Mutex::new(true)),
+            };
+            Self {
+                _temp: temp,
+                host,
+                global,
+                child,
+                context,
+                cancel,
+            }
+        }
+        fn start(&self, delay: Duration) -> (String, Arc<StubModel>) {
+            let model = Arc::new(StubModel {
+                calls: AtomicU32::new(0),
+                delay,
+                recovery: false,
+            });
+            let task = self
+                .host
+                .delegate(
+                    &self.context,
+                    self.child.clone(),
+                    &id(),
+                    "child work",
+                    json!({}),
+                    || Ok(snapshot(model.clone(), Arc::new(Backend::default()), false)),
+                )
+                .unwrap();
+            (task["task_id"].as_str().unwrap().into(), model)
+        }
+        fn pending(&self) -> String {
+            self.host
+                .store
+                .delegate(
+                    &self.child,
+                    &self.context.root_user_message_id,
+                    "pending",
+                    "pending work",
+                    json!({}),
+                    None,
+                )
+                .unwrap()
+                .run_id
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_task_wait_times_out_without_stopping_the_child_and_honors_cancel_and_deadline() {
+        let mut fixture = TaskFixture::new();
+        let task = fixture.pending();
+        let timeout = fixture
+            .host
+            .wait_agent_task(&fixture.context, json!({"task_id":task,"timeout_ms":20}))
+            .await
+            .unwrap()
+            .value;
+        assert_eq!(timeout["timed_out"], true);
+        assert_eq!(timeout["done"], false);
+        assert_eq!(timeout["state"], "running");
+        assert!(timeout["elapsed_ms"].as_u64().unwrap() >= 20);
+        let cancel = fixture.cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(15)).await;
+            cancel.send(true).unwrap();
+        });
+        let error = fixture
+            .host
+            .wait_agent_task(&fixture.context, json!({"task_id":task,"timeout_ms":30000}))
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(error.to_string(), "cancelled");
+        fixture.cancel.send(false).unwrap();
+        let mut budget = Budget::new(30, 20, 2000000, fixture.global.clone());
+        budget.deadline = Instant::now() + Duration::from_millis(20);
+        fixture.context.budget = Arc::new(budget);
+        let error = fixture
+            .host
+            .wait_agent_task(&fixture.context, json!({"task_id":task,"timeout_ms":30000}))
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(error.to_string(), "run_time_budget");
+        assert_eq!(
+            fixture
+                .host
+                .store
+                .agent_task(&fixture.global, &task, 1024)
+                .unwrap()
+                .1["state"],
+            "running"
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_task_wait_returns_cancelled_and_orphaned_tasks_immediately() {
+        let fixture = TaskFixture::new();
+        let (task, _) = fixture.start(Duration::from_millis(200));
+        fixture.host.cancel(&fixture.child).unwrap();
+        let output = fixture
+            .host
+            .wait_agent_task(&fixture.context, json!({"task_id":task,"timeout_ms":1000}))
+            .await
+            .unwrap()
+            .value;
+        assert_eq!(output["state"], "cancelled");
+        assert_eq!(output["done"], true);
+        assert_eq!(output["timed_out"], false);
+        let orphan = fixture.pending();
+        fixture
+            .host
+            .store
+            .finish_run(&fixture.child, &orphan, "orphaned")
+            .unwrap();
+        let output = fixture
+            .host
+            .wait_agent_task(
+                &fixture.context,
+                json!({"task_id":orphan,"timeout_ms":30000}),
+            )
+            .await
+            .unwrap()
+            .value;
+        assert_eq!(output["state"], "orphaned");
+        assert_eq!(output["done"], true);
+        assert_eq!(output["timed_out"], false);
+    }
+
+    #[tokio::test]
+    async fn agent_task_model_error_is_durable_after_the_session_starts_another_run() {
+        struct FailingModel;
+        impl Model for FailingModel {
+            fn stream(
+                &self,
+                _: rig_core::completion::CompletionRequest,
+            ) -> BackendFuture<'_, StreamingCompletionResponse> {
+                Box::pin(async { bail!("fixture_model_failure") })
+            }
+        }
+        let fixture = TaskFixture::new();
+        let task = fixture
+            .host
+            .delegate(
+                &fixture.context,
+                fixture.child.clone(),
+                "failed",
+                "fail",
+                json!({}),
+                || {
+                    Ok(snapshot(
+                        Arc::new(FailingModel),
+                        Arc::new(Backend::default()),
+                        false,
+                    ))
+                },
+            )
+            .unwrap()["task_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let outcome = fixture
+            .host
+            .wait_agent_task(&fixture.context, json!({"task_id":task,"timeout_ms":1000}))
+            .await
+            .unwrap()
+            .value;
+        assert_eq!(outcome["state"], "paused");
+        assert_eq!(outcome["error"], "fixture_model_failure");
+        assert_eq!(outcome["result_available"], false);
+        assert_eq!(outcome["done"], true);
+        let (next, _) = fixture.start(Duration::from_millis(10));
+        fixture
+            .host
+            .wait_agent_task(&fixture.context, json!({"task_id":next,"timeout_ms":1000}))
+            .await
+            .unwrap();
+        let old = fixture
+            .host
+            .get_agent_task(&fixture.context, json!({"task_id":task}))
+            .unwrap()
+            .value;
+        assert_eq!(old["state"], "paused");
+        assert_eq!(old["error"], "fixture_model_failure");
+        assert_eq!(old["result_available"], false);
+    }
+
+    struct TaskReadBackend {
+        host: std::sync::Weak<AgentHost>,
+        outputs: Mutex<Vec<Value>>,
+    }
+    impl TerminalBackend for TaskReadBackend {
+        fn authorize(&self, write: bool) -> BackendFuture<'_, ()> {
+            Box::pin(async move {
+                ensure!(!write, "write_authorization_forbidden");
+                Ok(())
+            })
+        }
+        fn invoke<'a>(
+            &'a self,
+            context: ToolContext,
+            name: &'a str,
+            args: Value,
+        ) -> BackendFuture<'a, ToolOutput> {
+            Box::pin(async move {
+                let host = self.host.upgrade().unwrap();
+                let output = match name {
+                    "get_agent_task" => host.get_agent_task(&context, args)?,
+                    "wait_agent_task" => host.wait_agent_task(&context, args).await?,
+                    _ => panic!("task read must not access a Terminal"),
+                };
+                self.outputs.lock().unwrap().push(output.value.clone());
+                Ok(output)
+            })
+        }
+    }
+    struct TaskReadModel {
+        task_id: String,
+        calls: AtomicU32,
+    }
+    impl Model for TaskReadModel {
+        fn stream(
+            &self,
+            _: rig_core::completion::CompletionRequest,
+        ) -> BackendFuture<'_, StreamingCompletionResponse> {
+            Box::pin(async move {
+                let choice = match self.calls.fetch_add(1, Ordering::AcqRel) {
+                    0 => Raw::ToolCall(RawStreamingToolCall::new(
+                        "get-task",
+                        "get_agent_task".into(),
+                        json!({"task_id":self.task_id}),
+                    )),
+                    1 => Raw::ToolCall(RawStreamingToolCall::new(
+                        "wait-task",
+                        "wait_agent_task".into(),
+                        json!({"task_id":self.task_id,"timeout_ms":1000}),
+                    )),
+                    _ => Raw::Message("collected".into()),
+                };
+                Ok(StreamingCompletionResponse::stream(
+                    "test",
+                    Box::pin(futures_util::stream::iter(vec![
+                        Ok(choice),
+                        Ok(Raw::FinalResponse(StreamFinal::new(
+                            "test",
+                            Default::default(),
+                        ))),
+                    ])),
+                ))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_task_tools_run_through_mcp_without_a_write_grant_or_terminal_access() {
+        let fixture = TaskFixture::new();
+        let (task, child_model) = fixture.start(Duration::from_millis(50));
+        let backend = Arc::new(TaskReadBackend {
+            host: Arc::downgrade(&fixture.host),
+            outputs: Mutex::new(vec![]),
+        });
+        let model = Arc::new(TaskReadModel {
+            task_id: task,
+            calls: AtomicU32::new(0),
+        });
+        fixture
+            .host
+            .submit(
+                fixture.global.clone(),
+                "read-root",
+                "collect task",
+                json!({}),
+                false,
+                "",
+                || {
+                    let mut run = snapshot(model.clone(), backend.clone(), true);
+                    run.allow_write = false;
+                    run.builder.tools = terminal_tools(true);
+                    Ok(run)
+                },
+            )
+            .unwrap();
+        let state = settle(&fixture.host, &fixture.global).await;
+        assert_eq!(state["state"], "completed", "{state}");
+        let outputs = backend.outputs.lock().unwrap();
+        assert_eq!(outputs.len(), 2);
+        assert_eq!(outputs[1]["result_text"], "done");
+        assert_eq!(outputs[1]["timed_out"], false);
+        assert_eq!(child_model.calls.load(Ordering::Acquire), 1);
+        assert_eq!(model.calls.load(Ordering::Acquire), 3);
+        assert!(
+            fixture
+                .host
+                .store
+                .pending_actions(&fixture.global)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_task_mcp_rejects_invalid_arguments_and_session_callers() {
+        let fixture = TaskFixture::new();
+        let task = fixture.pending();
+        let backend = Arc::new(TaskReadBackend {
+            host: Arc::downgrade(&fixture.host),
+            outputs: Mutex::new(vec![]),
+        });
+        let tools = terminal_tools(true);
+        let gateway = crate::builtin::Gateway::open(backend, &tools)
+            .await
+            .unwrap();
+        for args in [
+            json!({}),
+            json!({"task_id":true}),
+            json!({"task_id":""}),
+            json!({"task_id":task,"session_id":"child"}),
+        ] {
+            assert!(
+                gateway
+                    .call(fixture.context.clone(), "get_agent_task", args)
+                    .await
+                    .is_err()
+            );
+        }
+        for args in [
+            json!({"task_id":task}),
+            json!({"task_id":task,"timeout_ms":0}),
+            json!({"task_id":task,"timeout_ms":30001}),
+            json!({"task_id":task,"timeout_ms":-1}),
+            json!({"task_id":task,"timeout_ms":1.5}),
+            json!({"task_id":task,"timeout_ms":"1"}),
+            json!({"task_id":task,"timeout_ms":1,"unexpected":true}),
+        ] {
+            assert!(
+                gateway
+                    .call(fixture.context.clone(), "wait_agent_task", args)
+                    .await
+                    .is_err()
+            );
+        }
+        let mut context = fixture.context.clone();
+        context.scope = fixture.child.clone();
+        assert_eq!(
+            gateway
+                .call(context, "get_agent_task", json!({"task_id":task}))
+                .await
+                .err()
+                .unwrap()
+                .to_string(),
+            "global_agent_required"
+        );
+        for name in ["get_agent_task", "wait_agent_task"] {
+            assert!(!terminal_tools(false).iter().any(|tool| tool.name == name));
+        }
+    }
+
     #[tokio::test]
     async fn root_cancellation_stops_its_children_and_same_root_delegation_appends() {
         let temp = tempfile::tempdir().unwrap();

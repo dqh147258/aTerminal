@@ -12,7 +12,7 @@ pub(crate) const CATALOG: &[(&str, &str, &str)] = &[
     (
         "builtin/agent-control",
         "Delegate work or stop session agents",
-        "Global agents use send_agent_message with session_id and message. It returns a task_id immediately. get_agent_state reads progress; reports never wake a completed root. Stop uses skill_action skill_id=builtin/agent-control action=stop arguments={session_id}. Stop does not send Ctrl-C.",
+        "Global agents use send_agent_message with session_id and message. It returns a task_id (the child Run ID) immediately; additional messages to the same active child share it. Use get_agent_task with task_id for that exact task's state, done, result_text, result_record_id and error. Use wait_agent_task with task_id and explicit integer timeout_ms=1–30000 to wait for its outcome; timed_out=true leaves the child running, so repeat while needed within the shared user Run deadline. A stopped task can be completed, cancelled, paused, failed or orphaned; inspect state/error instead of assuming success. Agent completion does not prove terminal application success. Long retained results can be recovered with read_record using result_record_id. get_agent_state reads the Session's current/latest run, not a specific task. Reports never wake a completed root. Stop uses skill_action skill_id=builtin/agent-control action=stop arguments={session_id}. Stop does not send Ctrl-C.",
     ),
     (
         "builtin/wait-terminal",

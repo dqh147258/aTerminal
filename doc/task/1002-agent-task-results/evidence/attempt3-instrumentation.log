@@ -1,0 +1,56 @@
+INSTRUMENTATION_STATUS: class=com.yxf.aterminal.AgentReadingUiTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=
+com.yxf.aterminal.AgentReadingUiTest:
+INSTRUMENTATION_STATUS: test=readingSettingsAndAgentEvidenceRoundTrip
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.yxf.aterminal.AgentReadingUiTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Task workflow paused: observation_analysis_pending. Actual: paused
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.failEquals(Assert.java:187)
+	at org.junit.Assert.assertNotEquals(Assert.java:163)
+	at com.yxf.aterminal.AgentReadingUiTest.readingSettingsAndAgentEvidenceRoundTrip$lambda$107(AgentReadingUiTest.kt:180)
+	at com.yxf.aterminal.AgentReadingUiTest.$r8$lambda$ojOrP8Ml-YPaoAae_-m5iH5_ryA(Unknown Source:0)
+	at com.yxf.aterminal.AgentReadingUiTest$$ExternalSyntheticLambda29.invoke(D8$$SyntheticClass:0)
+	at com.yxf.aterminal.AgentReadingUiTest.waitFor(AgentReadingUiTest.kt:40)
+	at com.yxf.aterminal.AgentReadingUiTest.readingSettingsAndAgentEvidenceRoundTrip(AgentReadingUiTest.kt:178)
+
+INSTRUMENTATION_STATUS: stream=
+Error in readingSettingsAndAgentEvidenceRoundTrip(com.yxf.aterminal.AgentReadingUiTest):
+java.lang.AssertionError: Task workflow paused: observation_analysis_pending. Actual: paused
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.failEquals(Assert.java:187)
+	at org.junit.Assert.assertNotEquals(Assert.java:163)
+	at com.yxf.aterminal.AgentReadingUiTest.readingSettingsAndAgentEvidenceRoundTrip$lambda$107(AgentReadingUiTest.kt:180)
+	at com.yxf.aterminal.AgentReadingUiTest.$r8$lambda$ojOrP8Ml-YPaoAae_-m5iH5_ryA(Unknown Source:0)
+	at com.yxf.aterminal.AgentReadingUiTest$$ExternalSyntheticLambda29.invoke(D8$$SyntheticClass:0)
+	at com.yxf.aterminal.AgentReadingUiTest.waitFor(AgentReadingUiTest.kt:40)
+	at com.yxf.aterminal.AgentReadingUiTest.readingSettingsAndAgentEvidenceRoundTrip(AgentReadingUiTest.kt:178)
+
+INSTRUMENTATION_STATUS: test=readingSettingsAndAgentEvidenceRoundTrip
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: stream=
+
+Time: 9.341
+There was 1 failure:
+1) readingSettingsAndAgentEvidenceRoundTrip(com.yxf.aterminal.AgentReadingUiTest)
+java.lang.AssertionError: Task workflow paused: observation_analysis_pending. Actual: paused
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.failEquals(Assert.java:187)
+	at org.junit.Assert.assertNotEquals(Assert.java:163)
+	at com.yxf.aterminal.AgentReadingUiTest.readingSettingsAndAgentEvidenceRoundTrip$lambda$107(AgentReadingUiTest.kt:180)
+	at com.yxf.aterminal.AgentReadingUiTest.$r8$lambda$ojOrP8Ml-YPaoAae_-m5iH5_ryA(Unknown Source:0)
+	at com.yxf.aterminal.AgentReadingUiTest$$ExternalSyntheticLambda29.invoke(D8$$SyntheticClass:0)
+	at com.yxf.aterminal.AgentReadingUiTest.waitFor(AgentReadingUiTest.kt:40)
+	at com.yxf.aterminal.AgentReadingUiTest.readingSettingsAndAgentEvidenceRoundTrip(AgentReadingUiTest.kt:178)
+
+FAILURES!!!
+Tests run: 1,  Failures: 1
+
+
+INSTRUMENTATION_CODE: -1

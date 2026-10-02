@@ -3,6 +3,7 @@ use ai_terminal_agent::Client;
 use ai_terminal_protocol::local::{Operation, Request};
 use ai_terminal_security::account::DesktopAccountCommand;
 use anyhow::{Context, Result};
+use axum::response::IntoResponse;
 use std::{
     path::PathBuf,
     process::{Command, Stdio},
@@ -45,14 +46,22 @@ async fn main() -> Result<()> {
         }));
     }
     if agent_test {
-        router=router.route("/agent-model/chat/completions",axum::routing::post(|axum::Json(body):axum::Json<serde_json::Value>|async move{
+        let task_dir = dir.clone();
+        router=router.route("/agent-model/chat/completions",axum::routing::post(move |axum::Json(body):axum::Json<serde_json::Value>| {
+            let task_dir = task_dir.clone();
+            async move{
             use serde_json::{Value,json};
+            match task_result_fixture(&body, &task_dir).await {
+                Ok(Some(response)) => return response,
+                Err(error) => return fixture_sse(json!({"content":format!("TASK_RESULTS_FIXTURE_ERROR: {error:#}")})),
+                Ok(None) => {},
+            }
             let messages=body["messages"].as_array().unwrap();
             let analyzing=messages.last().and_then(|m|m["content"].as_str()).is_some_and(|s|s.starts_with("Application analysis stage"));
             let observed=messages.iter().rev().filter(|m|m["role"]=="tool").find_map(|m|serde_json::from_str::<Value>(m["content"].as_str()?).ok());
             let picture=messages.iter().rev().filter(|m|m["role"]=="user").find_map(|m|m["content"].as_array().and_then(|parts|parts.iter().find_map(|part|part["image_url"]["url"].as_str())));
             let vision=picture.is_some_and(|url|url.starts_with("data:image/png;base64,iVBOR"));
-            let global_fixture = messages.iter().rev().find(|m| m["role"] == "user").is_some_and(|m| m["content"].to_string().contains("GLOBAL_FIXTURE"));
+            let global_fixture = messages.iter().rev().filter(|m| m["role"] == "user").any(|m| m["content"].to_string().contains("GLOBAL_FIXTURE"));
             let tool=observed.is_none()&&!analyzing&&!vision&&!global_fixture;
             let delta=if analyzing {
                 let text=observed.as_ref().and_then(|v|v["body"].as_str()).unwrap_or("");
@@ -62,8 +71,8 @@ async fn main() -> Result<()> {
             else{json!({"content":if vision {"VISION_FIXTURE_DONE"} else if global_fixture {"GLOBAL_FIXTURE_DONE"} else {"UI_FIXTURE_DONE"}})};
             let first=json!({"id":"device-response","object":"chat.completion.chunk","created":0,"model":"fixture","choices":[{"index":0,"delta":delta,"finish_reason":null}]});
             let end=json!({"id":"device-response","object":"chat.completion.chunk","created":0,"model":"fixture","choices":[{"index":0,"delta":{},"finish_reason":if tool{"tool_calls"}else{"stop"}}],"usage":{"prompt_tokens":20,"completion_tokens":10,"total_tokens":30}});
-            ([("content-type","text/event-stream")],format!("data: {first}\n\ndata: {end}\n\ndata: [DONE]\n\n"))
-        }));
+            ([("content-type","text/event-stream")],format!("data: {first}\n\ndata: {end}\n\ndata: [DONE]\n\n")).into_response()
+        }}));
     }
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let url = format!("http://{}", listener.local_addr()?);
@@ -151,7 +160,7 @@ async fn main() -> Result<()> {
             ..Default::default()
         })?;
         let view: serde_json::Value = serde_json::from_str(&view.history[0])?;
-        let config = serde_json::json!({"providers":{"fixture":{"id":"fixture","name":"Isolated UI fixture","connection":{"protocol":"openai_chat","endpoint":format!("{url}/agent-model")},"credential_revision":0}},"models":{"fixture":{"id":"fixture","name":"Deterministic device fixture","provider_id":"fixture","model":"fixture","context_window":128000,"max_tokens":2048,"capabilities":{"tools":true,"streaming":true,"vision":true},"max_rounds":8,"max_seconds":60,"read_only":false}},"bindings":{"global":{"model_id":"fixture"},"session-default":{"model_id":"fixture"}}});
+        let config = serde_json::json!({"providers":{"fixture":{"id":"fixture","name":"Isolated UI fixture","connection":{"protocol":"openai_chat","endpoint":format!("{url}/agent-model")},"credential_revision":0}},"models":{"fixture":{"id":"fixture","name":"Deterministic device fixture","provider_id":"fixture","model":"fixture","context_window":128000,"max_tokens":2048,"capabilities":{"tools":true,"streaming":true,"vision":true},"max_rounds":24,"max_seconds":60,"read_only":false}},"bindings":{"global":{"model_id":"fixture"},"session-default":{"model_id":"fixture"}}});
         local.call(Request{operation:Operation::Configuration as i32,text:serde_json::json!({"action":"replace","expected_revision":view["revision"],"config":config}).to_string(),..Default::default()})?;
     }
     let mut benchmarks = Vec::new();
@@ -229,4 +238,255 @@ async fn main() -> Result<()> {
     let _ = child.wait();
     server.abort();
     Ok(())
+}
+
+fn fixture_sse(delta: serde_json::Value) -> axum::response::Response {
+    use serde_json::json;
+    let tools = delta["tool_calls"].is_array();
+    let first = json!({"id":"task-fixture","object":"chat.completion.chunk","created":0,"model":"fixture","choices":[{"index":0,"delta":delta,"finish_reason":null}]});
+    let end = json!({"id":"task-fixture","object":"chat.completion.chunk","created":0,"model":"fixture","choices":[{"index":0,"delta":{},"finish_reason":if tools {"tool_calls"} else {"stop"}}],"usage":{"prompt_tokens":20,"completion_tokens":10,"total_tokens":30}});
+    (
+        [("content-type", "text/event-stream")],
+        format!("data: {first}\n\ndata: {end}\n\ndata: [DONE]\n\n"),
+    )
+        .into_response()
+}
+
+/// Deterministic task workflow used by the opt-in Android encrypted-RPC test.
+async fn task_result_fixture(
+    body: &serde_json::Value,
+    dir: &std::path::Path,
+) -> Result<Option<axum::response::Response>> {
+    use serde_json::{Value, json};
+    let messages = body["messages"].as_array().context("messages required")?;
+    let content = |message: &Value| -> String {
+        message["content"]
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                message["content"]
+                    .as_array()
+                    .map(|parts| {
+                        parts
+                            .iter()
+                            .filter_map(|p| p["text"].as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                    .unwrap_or_default()
+            })
+    };
+    let global = body["tools"].as_array().is_some_and(|tools| {
+        tools
+            .iter()
+            .any(|t| t["function"]["name"] == "get_agent_task")
+    });
+    if !global {
+        let latest = messages
+            .iter()
+            .rev()
+            .filter(|m| m["role"] == "user")
+            .map(content)
+            .find(|text| text.contains("TASK_RESULTS_CHILD") || text.contains("TASK_ERROR_CHILD"));
+        if let Some(text) = latest {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            if text.contains("TASK_ERROR_CHILD") {
+                return Ok(Some((axum::http::StatusCode::BAD_REQUEST, axum::Json(json!({"error":{"message":format!("TASK_ERROR_LONG:{}", "upstream diagnostic ".repeat(3000)),"type":"fixture_error"}}))).into_response()));
+            }
+            return Ok(Some(fixture_sse(
+                json!({"content":format!("TASK_RESULTS_CHILD_DONE:{}", "evidence ".repeat(1600))}),
+            )));
+        }
+        return Ok(None);
+    }
+    let Some((start, prompt)) = messages
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|(_, m)| m["role"] == "user")
+        .map(|(i, m)| (i, content(m)))
+        .find(|(_, text)| {
+            text.starts_with("TASK_RESULTS_GLOBAL:") || text.starts_with("TASK_ERROR_GLOBAL:")
+        })
+    else {
+        return Ok(None);
+    };
+    let failure = prompt.starts_with("TASK_ERROR_GLOBAL:");
+    let session = prompt.split_once(':').context("session required")?.1.trim();
+    let tool = |id: &str, name: &str, args: Value| {
+        fixture_sse(
+            json!({"role":"assistant","tool_calls":[{"index":0,"id":id,"type":"function","function":{"name":name,"arguments":args.to_string()}}]}),
+        )
+    };
+    let results = messages[start..]
+        .iter()
+        .filter(|m| m["role"] == "tool")
+        .map(|m| {
+            Ok((
+                m["tool_call_id"]
+                    .as_str()
+                    .context("tool call ID required")?
+                    .to_owned(),
+                serde_json::from_str::<Value>(&content(m))?,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let find = |id: &str| {
+        results
+            .iter()
+            .find(|(call, _)| call == id)
+            .map(|(_, value)| value)
+    };
+    let Some(sent) = find("task-send") else {
+        return Ok(Some(tool(
+            "task-send",
+            "send_agent_message",
+            json!({"session_id":session,"message":if failure {"TASK_ERROR_CHILD"} else {"TASK_RESULTS_CHILD"}}),
+        )));
+    };
+    let task = sent["task_id"]
+        .as_str()
+        .context("delegation did not return task_id")?;
+    if find("task-get").is_none() {
+        return Ok(Some(tool(
+            "task-get",
+            "get_agent_task",
+            json!({"task_id":task}),
+        )));
+    }
+    if find("task-short-wait").is_none() {
+        return Ok(Some(tool(
+            "task-short-wait",
+            "wait_agent_task",
+            json!({"task_id":task,"timeout_ms":1}),
+        )));
+    }
+    anyhow::ensure!(
+        find("task-short-wait").unwrap()["timed_out"] == true,
+        "short wait must time out while child is active"
+    );
+    let Some(waited) = find("task-wait") else {
+        return Ok(Some(tool(
+            "task-wait",
+            "wait_agent_task",
+            json!({"task_id":task,"timeout_ms":10000}),
+        )));
+    };
+    anyhow::ensure!(
+        waited["done"] == true && waited["timed_out"] == false,
+        "task did not finish: {waited}"
+    );
+    if failure {
+        anyhow::ensure!(
+            waited["state"] == "paused" && waited["error_truncated"] == true,
+            "long error was not durably bounded: {waited}"
+        );
+        let error = waited["error"].as_str().context("error missing")?;
+        anyhow::ensure!(
+            error.len() <= 2048 && error.contains("TASK_ERROR_LONG"),
+            "wrong error diagnostic"
+        );
+        std::fs::write(
+            dir.join("task-error-observations.json"),
+            serde_json::to_vec_pretty(
+                &json!({"task_id":task,"state":waited["state"],"error_truncated":true,"error_bytes":error.len(),"timeout_observed":true}),
+            )?,
+        )?;
+        return Ok(Some(fixture_sse(
+            json!({"content":"TASK_ERROR_GLOBAL_DONE"}),
+        )));
+    }
+    anyhow::ensure!(
+        waited["state"] == "completed" && waited["result_truncated"] == true,
+        "expected a bounded completed result"
+    );
+    let record = waited["result_record_id"]
+        .as_str()
+        .context("result record missing")?;
+    let pages = results
+        .iter()
+        .filter(|(id, _)| id.starts_with("task-read-"))
+        .collect::<Vec<_>>();
+    let analyzing = messages
+        .last()
+        .is_some_and(|m| content(m).starts_with("Application analysis"));
+    let captured_path = dir.join(format!("task-pages-{task}.json"));
+    if analyzing {
+        let (_, page) = pages.last().context("analysis page missing")?;
+        anyhow::ensure!(page["body"].is_string(), "analysis body missing");
+        let mut captured: Vec<Value> = if captured_path.exists() {
+            serde_json::from_slice(&std::fs::read(&captured_path)?)?
+        } else {
+            vec![]
+        };
+        captured.retain(|old| old["offset"] != page["offset"]);
+        captured.push(json!({"offset":page["offset"],"body":page["body"]}));
+        captured.sort_by_key(|part| part["offset"].as_u64().unwrap_or(0));
+        std::fs::write(&captured_path, serde_json::to_vec(&captured)?)?;
+        // Keep the opaque next-page cursor in the model's digest; raw pages leave the
+        // context after Host analysis. Capture those actual HTTP pages for the assertion.
+        let digest = json!({"summary":json!({"task_result_cursor":page["cursor"]}).to_string(),"key_quotes":[],"facts":[],"tui_lines":[],"open_questions":[]});
+        return Ok(Some(fixture_sse(json!({"content":digest.to_string()}))));
+    }
+    if pages.is_empty() {
+        // Exercise real concurrent local history maintenance before the model follows
+        // the record reference. Only this fixture's Session is cleaned.
+        let local = Client::connect(dir)?;
+        let reply = local.call(Request { operation:Operation::Agent as i32, session:session.into(),
+            text:json!({"version":1,"action":"clean","rule":{"selector":"before","utc_ms":chrono::Utc::now().timestamp_millis()+1000}}).to_string(), ..Default::default() })?;
+        anyhow::ensure!(reply.error.is_empty(), "clean failed: {}", reply.error);
+        let cleaned: Value =
+            serde_json::from_str(reply.history.first().context("clean result missing")?)?;
+        // The selected completion report belongs to the Global scope; this cleanup
+        // visits only the child's scope, which holds the final answer.
+        anyhow::ensure!(
+            cleaned["pinned"].as_u64().unwrap_or(0) >= 1,
+            "active task result was not protected: {cleaned}"
+        );
+        std::fs::write(
+            dir.join("task-result-observations.json"),
+            serde_json::to_vec_pretty(
+                &json!({"task_id":task,"record_id":record,"retention":cleaned,"timeout_observed":true}),
+            )?,
+        )?;
+    }
+    let mut next = Value::Null;
+    if let Some((_, page)) = pages.last() {
+        let digest: Value = serde_json::from_str(
+            page["digest"]["summary"]
+                .as_str()
+                .context("analyzed page missing")?,
+        )?;
+        next = digest["task_result_cursor"].clone();
+        if next.is_null() {
+            let captured: Vec<Value> = serde_json::from_slice(&std::fs::read(&captured_path)?)?;
+            let full = captured
+                .iter()
+                .map(|p| p["body"].as_str().unwrap_or_default())
+                .collect::<String>();
+            let answer: Value = serde_json::from_str(&full)?;
+            anyhow::ensure!(
+                answer["text"] == format!("TASK_RESULTS_CHILD_DONE:{}", "evidence ".repeat(1600)),
+                "result was not lossless"
+            );
+            let path = dir.join("task-result-observations.json");
+            let mut observations: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+            observations["read_pages"] = json!(captured.len());
+            observations["read_bytes"] = json!(full.len());
+            observations["lossless"] = json!(true);
+            std::fs::write(path, serde_json::to_vec_pretty(&observations)?)?;
+            return Ok(Some(fixture_sse(
+                json!({"content":"TASK_RESULTS_GLOBAL_DONE"}),
+            )));
+        }
+    }
+    let mut args = json!({"record_id":record,"part":"body"});
+    if !next.is_null() {
+        args["cursor"] = next;
+    }
+    Ok(Some(tool(
+        &format!("task-read-{}", pages.len()),
+        "read_record",
+        args,
+    )))
 }

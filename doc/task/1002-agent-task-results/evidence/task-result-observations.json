@@ -1,0 +1,39 @@
+{
+  "lossless": true,
+  "read_bytes": 14652,
+  "read_pages": 2,
+  "record_id": "01a0fbd8-96f8-72f7-8a61-a2c6270f0f26",
+  "retention": {
+    "candidates": 9,
+    "deleted": 8,
+    "desktop": "f6c4e9f5e8823fede0c030c487f42193",
+    "logical_reclaimed_bytes": 1001,
+    "owner": "http://127.0.0.1:53028|demo",
+    "pinned": 1,
+    "scope_count": 1,
+    "scope_details_truncated": false,
+    "scopes": [
+      {
+        "candidates": 9,
+        "cutoff_utc_ms": 1790931671789,
+        "deleted": 8,
+        "generation": 1,
+        "logical_reclaimed_bytes": 1001,
+        "pinned": 1,
+        "reusable_bytes": 49152,
+        "scope": {
+          "agent": "01a0fbd8-568b-721e-aa0f-2a0e9db95aad",
+          "desktop": "f6c4e9f5e8823fede0c030c487f42193",
+          "owner": "http://127.0.0.1:53028|demo",
+          "session": "00b709c52ebeff5d"
+        }
+      }
+    ],
+    "selector": {
+      "selector": "before",
+      "utc_ms": 1790931671789
+    }
+  },
+  "task_id": "01a0fbd8-8f17-706f-9bcc-0c1916345f6f",
+  "timeout_observed": true
+}

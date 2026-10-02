@@ -31,6 +31,10 @@ aTerminal agents stop --session SESSION_ID
 
 “允许操作”允许本次任务调用有副作用的终端和用户扩展工具。终端写入仍要求 Desktop 附着、当前授权和人工版本检查。人工输入/resize 抢占旧 Agent；取消优先于尚未入队的动作。停止编排不发送 Ctrl-C，不回滚已经写入的字符，也不自动重放结果未知的动作。关闭 App/网络断开不会取消 Desktop 已接受的任务；账号或设备撤权会停止调用。
 
+Global Agent 用 `send_agent_message({"session_id":"…","message":"…"})` 异步委托 Session Agent，返回的 `task_id` 是该子 Run 的 ID；同一根任务向仍活动的子 Run 追加消息会复用这个 ID。只读工具 `get_agent_task({"task_id":"…"})` 按指定任务返回 `state`、`done`、`result_text`、`result_record_id` 与 `error`，不受该 Session 后续 Run 影响。`wait_agent_task({"task_id":"…","timeout_ms":30000})` 等待该任务结束或本次等待超时；`timeout_ms` 必须显式提供整数 1–30000。`timed_out=true` 表示任务仍未结束，不会取消子任务，可以继续等待；当前 Run 的取消或共享总时限会中止工具。两种工具仅查询同账号、同 Desktop 的委托任务。
+
+`done=true` 表示 Agent Run 已结束，需检查 `state`（`completed` / `cancelled` / `paused` / `failed` / `orphaned`）和 `error`，不能据此推断终端内应用任务成功。结果正文有界，`result_truncated=true` 时可通过 `read_record` 分页读取 `result_record_id`。返回的答复与完成报告受到当前 Global Run 的保留保护，Run 结束后释放。错误诊断最多 2048 个 UTF-8 字节，超出时 `error_truncated=true`，不会阻止任务终态保存。结果和错误沿用历史保留规则；历史被清理或旧版本未保存结果引用时，`result_available` / `outcome_available` 明确反映可用性。`get_agent_state(session_id)` 仍查询 Session 当前/最近 Run。
+
 用户 MCP 与 Skill 脚本拥有 Desktop 用户进程权限，不是 OS 沙箱。只有用户在设置或 CLI 中安装/启用；工具输出、终端文字和 Skill 资源不能创建新的用户授权。
 
 ## 读取、图片与记忆
