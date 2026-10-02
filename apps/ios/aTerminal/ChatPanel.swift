@@ -42,6 +42,7 @@ struct ChatPanel: View {
     @FocusState private var composing: Bool
     @State private var importingImages = false
     @State private var imageDestination: ChatScope?
+    @State private var pendingNavigationActive = false
     @State private var pendingJump = 0
     @State private var firstRender = true
     @State private var latestBottomVisible = false
@@ -53,7 +54,7 @@ struct ChatPanel: View {
                 Text(model.agentConnectionReason ?? model.status).font(.caption).foregroundColor(WorkspaceStyle.muted)
                 Spacer()
                 Button("设置") { model.settingsVisible = true }
-                Button("停止") { model.cancel(core) }.disabled(!model.canCancel || model.submitting).accessibilityIdentifier("chat.stop")
+                Button("停止") { pendingNavigationActive = true; model.cancel(core) }.disabled(!model.canCancel || model.submitting).accessibilityIdentifier("chat.stop")
             }
             Picker("查看", selection: $model.browsing) { Text("对话").tag(false); Text("历史").tag(true) }.pickerStyle(.segmented).onChange(of: model.browsing) { _ in model.reset() }
             }
@@ -89,12 +90,20 @@ struct ChatPanel: View {
                 }
                 .onChange(of: model.liveText) { _ in if !model.browsing && !model.authorization.pending.contains(where: { $0.actionable }) && latestBottomVisible { proxy.scrollTo("chat.bottom", anchor: .bottom) } }
                 .onChange(of: pendingJump) { _ in
-                    if let id = model.authorization.pending.first(where: { $0.actionable })?.id { firstRender = false; proxy.scrollTo(id, anchor: .top) }
+                    if let id = model.authorization.pending.first(where: { $0.actionable })?.id { firstRender = false; pendingNavigationActive = true; proxy.scrollTo(id, anchor: .top) }
                 }
                 .onChange(of: model.authorization.pending.first(where: { $0.actionable })?.id) { id in
-                    if !model.browsing, let id { proxy.scrollTo(id, anchor: .top) }
+                    if !model.browsing, let id, firstRender || latestBottomVisible { pendingNavigationActive = true; proxy.scrollTo(id, anchor: .top) }
                 }
-                .onChange(of: model.target) { _ in firstRender = true }
+                .onChange(of: model.authorization.busy) { busy in
+                    if busy && model.authorization.pending.contains(where: { $0.actionable }) { pendingNavigationActive = true }
+                }
+                .onChange(of: model.authorization.pending.contains(where: { $0.actionable })) { waiting in
+                    if !waiting && pendingNavigationActive && !model.browsing {
+                        pendingNavigationActive = false; proxy.scrollTo("chat.bottom", anchor: .bottom)
+                    }
+                }
+                .onChange(of: model.target) { _ in firstRender = true; pendingNavigationActive = false }
             }
             .simultaneousGesture(DragGesture().onEnded { gesture in if model.browsing && historyBottomVisible && gesture.translation.height < 0 { model.load() } })
             if !model.historyCacheWarning.isEmpty {
@@ -114,7 +123,7 @@ struct ChatPanel: View {
                 Spacer()
                 if model.authorization.pending.contains(where: { $0.actionable }) {
                     Button("待处理请求") { pendingJump += 1 }.accessibilityIdentifier("authorization.pending.jump")
-                    Button("停止") { model.cancel(core) }.disabled(!model.canCancel).accessibilityIdentifier("authorization.stop")
+                    Button("停止") { pendingNavigationActive = true; model.cancel(core) }.disabled(!model.canCancel).accessibilityIdentifier("authorization.stop")
                 }
             }.font(.caption)
             if !model.authorization.error.isEmpty {
@@ -126,7 +135,7 @@ struct ChatPanel: View {
                         Button("对话") { model.browsing = false; model.reset() }
                         Button("历史") { model.browsing = true; model.reset() }
                                 Button("设置") { model.settingsVisible = true }
-                        Button("停止") { model.cancel(core) }.disabled(!model.canCancel || model.submitting).accessibilityIdentifier("chat.stop")
+                        Button("停止") { pendingNavigationActive = true; model.cancel(core) }.disabled(!model.canCancel || model.submitting).accessibilityIdentifier("chat.stop")
                     } label: { Image(systemName: "ellipsis").font(.system(size: 16)).frame(width: 32, height: 32) }
                     .accessibilityLabel("Agent 操作")
                 }
