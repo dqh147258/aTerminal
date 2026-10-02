@@ -1685,3 +1685,125 @@ for line in sys.stdin:
     fixture.finish()?;
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "Requires account_demo built from the same integrated commit; run explicitly with --ignored"]
+async fn encrypted_skill_helper_mutation_rejects_snapshot_even_with_full_and_keeps_native_rules()
+-> Result<()> {
+    let mut fixture = Fixture::start().await?;
+    let phone = fixture.phone().await?;
+    let package = fixture.dir.join("auth-review-skill-source");
+    fs::create_dir_all(package.join("scripts"))?;
+    fs::write(
+        package.join("SKILL.md"),
+        "---\nname: review-skill\ndescription: isolated helper integrity fixture\n---\nExecute only the declared fixture entry.\n",
+    )?;
+    fs::write(
+        package.join("scripts/entry.sh"),
+        "script_dir=$(/usr/bin/dirname \"$0\"); . \"$script_dir/helper.sh\"\n",
+    )?;
+    fs::write(
+        package.join("scripts/helper.sh"),
+        "/bin/echo original > auth-review-skill-effect.log\n",
+    )?;
+    let view = fixture.local.call(Request {
+        operation: Operation::Configuration as i32,
+        text: json!({"action":"show"}).to_string(),
+        ..Default::default()
+    })?;
+    let view: Value = serde_json::from_str(
+        view.history
+            .first()
+            .context("Fixture configuration absent")?,
+    )?;
+    let installed=fixture.local.call(Request {operation:Operation::Configuration as i32,text:json!({"action":"skill_install","id":"review-skill","path":package,"expected_revision":view["revision"]}).to_string(),..Default::default()})?;
+    let installed: Value = serde_json::from_str(
+        installed
+            .history
+            .first()
+            .context("Installed Skill metadata absent")?,
+    )?;
+    let root = PathBuf::from(
+        installed["config"]["skills"]["review-skill"]["root"]
+            .as_str()
+            .context("Installed package root absent")?,
+    );
+    let entry_before = fs::read(root.join("scripts/entry.sh"))?;
+    let manifest_before = fs::read(root.with_extension("manifest.json"))?;
+    let skill = json!({"tool":"skill_action","arguments":{"skill_id":"review-skill","action":"script","arguments":{"path":"scripts/entry.sh","interpreter":"sh","cwd":"session"}}});
+    let native = program_steps(
+        "/usr/bin/tee",
+        json!(["-a", "auth-review-native-after-skill.log"]),
+        Some("native\n"),
+    )[0]
+    .clone();
+    phone.send("skill-helper",json!([
+        skill.clone(),{"tool":"inspect_command","arguments":{"command":"pwd"}},native.clone(),
+        {"tool":"ask_user","arguments":{"question":"Explicit full cannot skip package integrity"}},
+        skill,{"tool":"inspect_command","arguments":{"command":"pwd"}},native
+    ]),None).await?;
+    let pending = phone.pending("approval").await?;
+    ensure!(
+        pending["tool"] == "skill_action" && pending["can_always"] == false,
+        "Generic interpreter Skill acquired permanent authority"
+    );
+    ensure!(
+        phone
+            .resolve(&pending, "skill-always-forbidden", "always")
+            .await
+            .is_err(),
+        "Generic Skill script accepted an always decision"
+    );
+    fs::write(
+        root.join("scripts/helper.sh"),
+        "/bin/echo changed > auth-review-skill-effect.log\n",
+    )?;
+    ensure!(
+        fs::read(root.join("scripts/entry.sh"))? == entry_before
+            && fs::read(root.with_extension("manifest.json"))? == manifest_before,
+        "Fixture changed more than the helper file"
+    );
+    phone.resolve(&pending, "skill-once-stale", "once").await?;
+    let pending = phone.pending("approval").await?;
+    ensure!(
+        pending["tool"] == "run_program" && pending["can_always"] == true,
+        "Broken Skill helper blocked unrelated reliable native permanent capability"
+    );
+    phone
+        .resolve(&pending, "native-after-skill-rule", "always")
+        .await?;
+    let question = phone.pending("question").await?;
+    fixture
+        .wait_marker("auth-review-native-after-skill.log", "native\n")
+        .await?;
+    phone.full(true).await?;
+    phone.rpc(json!({"action":"resolve","request_id":"skill-full-answer","pending_id":question["id"],"answer":"continue"})).await?;
+    ensure!(
+        phone.settled().await?["state"] == "completed",
+        "Integrity rejection did not return a bounded model result"
+    );
+    ensure!(
+        fixture.marker("auth-review-skill-effect.log").is_none(),
+        "Once/full bypassed a changed declared helper version"
+    );
+    fixture
+        .wait_marker("auth-review-native-after-skill.log", "native\nnative\n")
+        .await?;
+    let results = fixture.results("skill-helper")?;
+    for id in ["auth-skill-helper-0", "auth-skill-helper-4"] {
+        let result = results
+            .iter()
+            .find(|value| value["call_id"] == id)
+            .context("Skill integrity result missing")?;
+        ensure!(
+            result["result"]["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("version")
+                    || error.contains("integrity")
+                    || error.contains("manifest")),
+            "Changed Skill snapshot did not fail version verification: {result}"
+        );
+    }
+    fixture.finish()?;
+    Ok(())
+}
