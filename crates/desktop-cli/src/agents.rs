@@ -22,6 +22,61 @@ pub enum AgentAction {
         message: String,
         #[arg(long)]
         allow_input: bool,
+        #[arg(long, value_parser = ["ask", "read_only"], default_value = "ask")]
+        permission_mode: String,
+        #[arg(long)]
+        request_id: Option<String>,
+    },
+    Permissions {
+        id: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long, value_parser = ["ask", "read_only"])]
+        permission_mode: Option<String>,
+        #[arg(long, action = clap::ArgAction::Set)]
+        full_authorization: Option<bool>,
+        #[arg(long)]
+        expected_revision: Option<u64>,
+    },
+    Pending {
+        id: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        cursor: Option<String>,
+    },
+    ApprovalDetails {
+        pending_id: String,
+        #[arg(long)]
+        agent_id: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        cursor: Option<String>,
+    },
+    Resolve {
+        pending_id: String,
+        #[arg(long)]
+        agent_id: Option<String>,
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long, value_parser = ["once", "always", "deny"], conflicts_with = "answer")]
+        decision: Option<String>,
+        #[arg(long, conflicts_with = "decision")]
+        answer: Option<String>,
+        #[arg(long)]
+        fingerprint: Option<String>,
+        #[arg(long)]
+        details_ack: bool,
+        #[arg(long)]
+        request_id: Option<String>,
+    },
+    Rules {
+        #[arg(long)]
+        cursor: Option<String>,
+    },
+    RevokeRule {
+        rule_id: String,
         #[arg(long)]
         request_id: Option<String>,
     },
@@ -145,7 +200,7 @@ fn call(
     }
     Ok(0)
 }
-pub fn run(command: AgentAction, state: Option<PathBuf>, json_output: bool) -> Result<u32> {
+fn request(command: AgentAction) -> Result<(Option<String>, Value)> {
     let (session, mut value, id) = match command {
         AgentAction::List => (None, json!({"action":"list"}), None),
         AgentAction::Show { id, session } => (session, json!({"action":"state"}), id),
@@ -154,11 +209,74 @@ pub fn run(command: AgentAction, state: Option<PathBuf>, json_output: bool) -> R
             session,
             message,
             allow_input,
+            permission_mode,
             request_id,
         } => (
             session,
-            json!({"action":"send","request_id":request_id.unwrap_or_else(ai_terminal_agent_runtime::request_id),"message":message,"allow_input":allow_input}),
+            json!({"action":"send","request_id":request_id.unwrap_or_else(ai_terminal_agent_runtime::request_id),"message":message,"allow_input":allow_input,"permission_mode":permission_mode}),
             id,
+        ),
+        AgentAction::Permissions {
+            id,
+            session,
+            permission_mode,
+            full_authorization,
+            expected_revision,
+        } => {
+            let value = if permission_mode.is_some() || full_authorization.is_some() {
+                json!({"action":"set_permissions", "expected_revision":expected_revision.context("--expected-revision is required for changes")?,"permission_mode":permission_mode,"full_authorization":full_authorization})
+            } else {
+                ensure!(
+                    expected_revision.is_none(),
+                    "--expected-revision requires a change"
+                );
+                json!({"action":"permissions"})
+            };
+            (session, value, id)
+        }
+        AgentAction::Pending {
+            id,
+            session,
+            cursor,
+        } => (session, json!({"action":"pending","cursor":cursor}), id),
+        AgentAction::ApprovalDetails {
+            pending_id,
+            agent_id,
+            session,
+            cursor,
+        } => (
+            session,
+            json!({"action":"approval_details","pending_id":pending_id,"cursor":cursor}),
+            agent_id,
+        ),
+        AgentAction::Resolve {
+            pending_id,
+            agent_id,
+            session,
+            decision,
+            answer,
+            fingerprint,
+            details_ack,
+            request_id,
+        } => {
+            ensure!(
+                decision.is_some() != answer.is_some(),
+                "exactly one of --decision or --answer is required"
+            );
+            (
+                session,
+                json!({"action":"resolve","pending_id":pending_id,"decision":decision,"answer":answer,"fingerprint":fingerprint,"details_ack":details_ack,"request_id":request_id.unwrap_or_else(ai_terminal_agent_runtime::request_id)}),
+                agent_id,
+            )
+        }
+        AgentAction::Rules { cursor } => (None, json!({"action":"rules","cursor":cursor}), None),
+        AgentAction::RevokeRule {
+            rule_id,
+            request_id,
+        } => (
+            None,
+            json!({"action":"revoke_rule","rule_id":rule_id,"request_id":request_id.unwrap_or_else(ai_terminal_agent_runtime::request_id)}),
+            None,
         ),
         AgentAction::Stop { id, session } => (session, json!({"action":"cancel"}), id),
         AgentAction::History {
@@ -180,6 +298,10 @@ pub fn run(command: AgentAction, state: Option<PathBuf>, json_output: bool) -> R
     if let Some(id) = id {
         value["agent_id"] = json!(id);
     }
+    Ok((session, value))
+}
+pub fn run(command: AgentAction, state: Option<PathBuf>, json_output: bool) -> Result<u32> {
+    let (session, value) = request(command)?;
     call(state, session, value, json_output)
 }
 pub fn history(command: HistoryAction, state: Option<PathBuf>, json_output: bool) -> Result<u32> {
@@ -204,4 +326,89 @@ pub fn history(command: HistoryAction, state: Option<PathBuf>, json_output: bool
         },
     };
     call(state, session, value, json_output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    #[derive(Parser)]
+    struct Cli {
+        #[command(subcommand)]
+        action: AgentAction,
+    }
+    fn parse(args: &[&str]) -> Result<(Option<String>, Value)> {
+        request(Cli::try_parse_from(std::iter::once("agents").chain(args.iter().copied()))?.action)
+    }
+    #[test]
+    fn explicit_permissions_and_resolution_serialize_the_user_rpc() {
+        let (_, value) = parse(&[
+            "permissions",
+            "dialog",
+            "--expected-revision",
+            "3",
+            "--full-authorization",
+            "true",
+        ])
+        .unwrap();
+        assert_eq!(
+            value,
+            json!({"action":"set_permissions","agent_id":"dialog","expected_revision":3,"permission_mode":null,"full_authorization":true})
+        );
+        let (session, value) = parse(&[
+            "resolve",
+            "pending",
+            "--session",
+            "terminal",
+            "--decision",
+            "once",
+            "--fingerprint",
+            "exact",
+            "--details-ack",
+            "--request-id",
+            "nonce",
+        ])
+        .unwrap();
+        assert_eq!(session.as_deref(), Some("terminal"));
+        assert_eq!(value["details_ack"], true);
+        assert_eq!(value["fingerprint"], "exact");
+        assert_eq!(value["request_id"], "nonce");
+        assert!(parse(&["permissions", "--full-authorization", "true"]).is_err());
+        assert!(parse(&["resolve", "pending"]).is_err());
+        assert!(
+            parse(&[
+                "resolve",
+                "pending",
+                "--decision",
+                "once",
+                "--answer",
+                "text"
+            ])
+            .is_err()
+        );
+    }
+    #[test]
+    fn new_send_defaults_to_ask_and_exposes_pending_details_without_input_prompts() {
+        let (_, value) = parse(&["send", "--message", "work"]).unwrap();
+        assert_eq!(value["permission_mode"], "ask");
+        assert_eq!(value["allow_input"], false);
+        let (_, value) = parse(&[
+            "approval-details",
+            "pending",
+            "--agent-id",
+            "dialog",
+            "--cursor",
+            "opaque",
+        ])
+        .unwrap();
+        assert_eq!(
+            value,
+            json!({"action":"approval_details","agent_id":"dialog","pending_id":"pending","cursor":"opaque"})
+        );
+        let (_, value) = parse(&["revoke-rule", "rule", "--request-id", "nonce"]).unwrap();
+        assert_eq!(
+            value,
+            json!({"action":"revoke_rule","rule_id":"rule","request_id":"nonce"})
+        );
+    }
 }

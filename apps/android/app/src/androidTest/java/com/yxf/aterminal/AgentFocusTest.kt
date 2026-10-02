@@ -51,6 +51,8 @@ class AgentFocusTest {
                 val body = MainActivity::class.java.getDeclaredMethod("panel", String::class.java, Boolean::class.javaPrimitiveType).apply { isAccessible = true }.invoke(screen, "AI Agent", false) as LinearLayout
                 panel = AgentPanel(screen, body, listOf("https://focus.invalid", "focus", "desktop"), "session", { true }, { _, text ->
                     when (JSONObject(text).getString("action")) {
+                        "permissions" -> """{"permission_mode":"ask","full_authorization":false,"revision":0,"can_mutate":true}"""
+                        "pending" -> """{"items":[],"cursor":null,"has_more":false}"""
                         "state" -> JSONObject().put("history_generation", 0).put("state", "running").toString()
                         "history" -> {
                             val count = loads.incrementAndGet()

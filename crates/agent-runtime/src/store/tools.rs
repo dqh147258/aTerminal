@@ -20,9 +20,22 @@ struct Tasks {
     cursor: Option<String>,
     limit: Option<usize>,
 }
+#[derive(Serialize, Deserialize)]
+struct SearchCursor {
+    scope: String,
+    filter: String,
+    generation: i64,
+    high: i64,
+    before: i64,
+    // -1 scans event JSON; nonnegative values scan record rowids within this event.
+    source: i64,
+    offset: usize,
+}
+type SearchEvent = (i64, String, String, i64, String);
+type SearchText = (Option<String>, String, i64, usize, Vec<u8>);
 impl Store {
-    /// Searches retained event text and immutable UTF-8 records, with a fixed high watermark.
-    /// At most 2048 candidate rows are examined per call; an empty page may have a cursor.
+    /// Bounded traversal of full retained event/record text. An empty page with a cursor
+    /// means scanning is incomplete, rather than a claim that the query has no matches.
     pub fn search_history(&self, caller: &Scope, args: Value) -> Result<Value> {
         let args: Search =
             serde_json::from_value(args).context("invalid_search_history_arguments")?;
@@ -51,107 +64,113 @@ impl Store {
         let session = caller.session.as_ref().or(args.session_id.as_ref());
         let limit = args.limit.unwrap_or(20);
         ensure!((1..=50).contains(&limit), "invalid_history_limit");
-        let kind = format!(
-            "search/{}",
-            blake3::hash(
-                serde_json::to_string(&json!([
-                    args.query,
-                    session,
-                    args.kind,
-                    args.after_ms,
-                    args.before_ms,
-                    limit
-                ]))?
-                .as_bytes()
-            )
-            .to_hex()
-        );
+        let filter = blake3::hash(
+            serde_json::to_string(&json!([
+                args.query,
+                session,
+                args.kind,
+                args.after_ms,
+                args.before_ms,
+                limit
+            ]))?
+            .as_bytes(),
+        )
+        .to_hex()
+        .to_string();
         let db = self.db.lock().unwrap();
-        let generation: i64 = db.query_row("SELECT COALESCE(SUM(generation),0) FROM scopes WHERE json_extract(scope,'$.owner')=?1 AND json_extract(scope,'$.desktop')=?2 AND (?3 IS NULL OR json_extract(scope,'$.session')=?3)",params![caller.owner,caller.desktop,session],|r|r.get(0))?;
+        let generation:i64=db.query_row("SELECT COALESCE(SUM(generation),0) FROM scopes WHERE json_extract(scope,'$.owner')=?1 AND json_extract(scope,'$.desktop')=?2 AND (?3 IS NULL OR json_extract(scope,'$.session')=?3)",params![caller.owner,caller.desktop,session],|r|r.get(0))?;
         let high: i64 =
             db.query_row("SELECT COALESCE(MAX(seq),0) FROM events", [], |r| r.get(0))?;
         let mut cursor = if let Some(token) = &args.cursor {
-            let c: Cursor = self.decode(token)?;
+            let c: SearchCursor = self.decode(token)?;
             ensure!(
-                c.scope == caller.key()? && c.kind == kind,
+                c.scope == caller.key()? && c.filter == filter,
                 "cursor_scope_mismatch"
             );
             ensure!(c.generation == generation, "cursor_expired");
             c
         } else {
-            Cursor {
+            SearchCursor {
                 scope: caller.key()?,
-                kind,
+                filter,
                 generation,
-                before: high + 1,
                 high,
+                before: high,
+                source: -1,
+                offset: 0,
             }
         };
-        // Bounded candidate traversal also bounds query cost when the requested text is absent.
-        let mut statement = db.prepare("SELECT seq,id,kind,at,value,scope FROM events WHERE seq<?1 AND seq<=?2 AND json_extract(scope,'$.owner')=?3 AND json_extract(scope,'$.desktop')=?4 AND (?5 IS NULL OR json_extract(scope,'$.session')=?5) AND (?6 IS NULL OR at>=?6) AND (?7 IS NULL OR at<=?7) ORDER BY seq DESC LIMIT 2048")?;
-        let rows = statement.query_map(
-            params![
-                cursor.before,
-                cursor.high,
-                caller.owner,
-                caller.desktop,
-                session,
-                args.after_ms,
-                args.before_ms
-            ],
-            |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, i64>(3)?,
-                    r.get::<_, String>(4)?,
-                    r.get::<_, String>(5)?,
-                ))
-            },
-        )?;
         let needle = args.query.to_lowercase();
         let mut items = Vec::new();
-        let mut scanned = 0;
-        for row in rows {
-            let (seq, event_id, event_kind, at, value, scope) = row?;
-            cursor.before = seq;
+        let mut scanned_bytes = 0usize;
+        let mut scanned = 0usize;
+        // Cap database reads and CPU independently from the number of successful matches.
+        while scanned < 128 && scanned_bytes < 256 * 1024 && items.len() < limit {
+            let event:Option<SearchEvent>=db.query_row("SELECT seq,id,kind,at,scope FROM events WHERE seq<=?1 AND seq<=?2 AND json_extract(scope,'$.owner')=?3 AND json_extract(scope,'$.desktop')=?4 AND (?5 IS NULL OR json_extract(scope,'$.session')=?5) AND (?6 IS NULL OR at>=?6) AND (?7 IS NULL OR at<=?7) ORDER BY seq DESC LIMIT 1",params![cursor.before,cursor.high,caller.owner,caller.desktop,session,args.after_ms,args.before_ms],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
+            let Some((seq, event_id, event_kind, at, scope)) = event else {
+                break;
+            };
+            if cursor.before != seq {
+                cursor.before = seq;
+                cursor.source = -1;
+                cursor.offset = 0;
+            }
             scanned += 1;
-            let mut matched = None;
-            if args.kind.as_ref().is_none_or(|k| k == &event_kind) {
-                matched = snippet(&value, &needle).map(|s| (None, event_kind.clone(), s));
-            }
-            if matched.is_none() {
-                let mut records = db.prepare("SELECT records.id,records.kind,SUBSTR(blobs.body,1,65536) FROM records JOIN blobs ON blobs.hash=records.hash WHERE records.event=?1 AND COALESCE(json_extract(records.metadata,'$.binary'),0)=0 LIMIT 16")?;
-                let candidates = records.query_map([seq], |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, Vec<u8>>(2)?,
-                    ))
-                })?;
-                for candidate in candidates {
-                    let (id, kind, body) = candidate?;
-                    if args.kind.as_ref().is_none_or(|k| k == &kind)
-                        && let Ok(text) = std::str::from_utf8(&body)
-                        && let Some(snippet) = snippet(text, &needle)
-                    {
-                        matched = Some((Some(id), kind, snippet));
-                        break;
-                    }
+            let available = (256 * 1024 - scanned_bytes).min(65536);
+            let candidate: Option<SearchText> = if cursor.source < 0 {
+                if args.kind.as_ref().is_none_or(|kind| kind == &event_kind) {
+                    Some(db.query_row("SELECT LENGTH(CAST(value AS BLOB)),SUBSTR(CAST(value AS BLOB),?2,?3) FROM events WHERE seq=?1",params![seq,cursor.offset as i64+1,available as i64],|r|Ok((None,event_kind.clone(),-1,r.get::<_,i64>(0)? as usize,r.get(1)?)))?)
+                } else {
+                    None
                 }
-            }
-            if let Some((record_id, kind, snippet)) = matched {
-                let scope: Scope = serde_json::from_str(&scope)?;
-                items.push(json!({"event_id":event_id,"record_id":record_id,"kind":kind,"created_at":at,"session_id":scope.session,"agent_id":scope.agent,"snippet":snippet}));
-                if items.len() == limit {
+            } else {
+                db.query_row("SELECT records.id,records.kind,records.rowid,LENGTH(blobs.body),SUBSTR(blobs.body,?3,?4) FROM records JOIN blobs ON blobs.hash=records.hash WHERE event=?1 AND records.rowid>=?2 AND COALESCE(json_extract(records.metadata,'$.binary'),0)=0 AND (?5 IS NULL OR records.kind=?5) ORDER BY records.rowid LIMIT 1",params![seq,cursor.source,cursor.offset as i64+1,available as i64,args.kind],|r|Ok((Some(r.get(0)?),r.get(1)?,r.get(2)?,r.get::<_,i64>(3)? as usize,r.get(4)?))).optional()?
+            };
+            let Some((record_id, kind, rowid, length, chunk)) = candidate else {
+                if cursor.source < 0 {
+                    cursor.source = 0;
+                    cursor.offset = 0;
+                } else {
+                    cursor.before = seq - 1;
+                    cursor.source = -1;
+                    cursor.offset = 0;
+                }
+                continue;
+            };
+            scanned_bytes += chunk.len();
+            let text = String::from_utf8_lossy(&chunk);
+            if let Some(snippet) = snippet(&text, &needle) {
+                let target: Scope = serde_json::from_str(&scope)?;
+                items.push(json!({"event_id":event_id,"record_id":record_id,"kind":kind,"created_at":at,"session_id":target.session,"agent_id":target.agent,"snippet":snippet}));
+                cursor.before = seq - 1;
+                cursor.source = -1;
+                cursor.offset = 0;
+            } else if cursor.offset.saturating_add(chunk.len()) >= length {
+                cursor.source = if rowid < 0 { 0 } else { rowid + 1 };
+                cursor.offset = 0;
+            } else {
+                // Include enough UTF-8/case-fold overlap to find queries across chunk edges.
+                let overlap = (args.query.len() * 4 + 8).min(4096);
+                if chunk.len() <= overlap {
                     break;
                 }
+                cursor.source = rowid;
+                cursor.offset += chunk.len() - overlap;
             }
         }
-        let more: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM events WHERE seq<?1 AND seq<=?2 AND json_extract(scope,'$.owner')=?3 AND json_extract(scope,'$.desktop')=?4 AND (?5 IS NULL OR json_extract(scope,'$.session')=?5) AND (?6 IS NULL OR at>=?6) AND (?7 IS NULL OR at<=?7))",params![cursor.before,cursor.high,caller.owner,caller.desktop,session,args.after_ms,args.before_ms],|r|r.get(0))?;
+        let more:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM events WHERE seq<=?1 AND seq<=?2 AND json_extract(scope,'$.owner')=?3 AND json_extract(scope,'$.desktop')=?4 AND (?5 IS NULL OR json_extract(scope,'$.session')=?5) AND (?6 IS NULL OR at>=?6) AND (?7 IS NULL OR at<=?7))",params![cursor.before,cursor.high,caller.owner,caller.desktop,session,args.after_ms,args.before_ms],|r|r.get(0))?;
+        let token = if more {
+            let bytes = serde_json::to_vec(&cursor)?;
+            Some(format!(
+                "{}.{}",
+                URL_SAFE_NO_PAD.encode(&bytes),
+                blake3::keyed_hash(&self.cursor_key, &bytes).to_hex()
+            ))
+        } else {
+            None
+        };
         Ok(
-            json!({"items":items,"cursor":if more{Some(self.encode(&cursor)?)}else{None},"has_more":more,"generation":generation,"snapshot_watermark":cursor.high,"scanned":scanned}),
+            json!({"items":items,"cursor":token,"has_more":more,"generation":generation,"snapshot_watermark":cursor.high,"scanned":scanned,"scanned_bytes":scanned_bytes,"scan_incomplete":more}),
         )
     }
     pub fn list_agent_tasks(&self, caller: &Scope, args: Value) -> Result<Value> {
@@ -533,5 +552,42 @@ mod toolset_tests {
             store.command(&global, &command).unwrap()["state"],
             "unknown"
         );
+    }
+}
+
+#[cfg(test)]
+mod toolset_chunk_tests {
+    use super::*;
+    #[test]
+    fn bounded_search_continues_through_large_record_and_chunk_edges() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(&temp.path().join("data/db")).unwrap();
+        let scope = store.agent("o", "d", Some("s")).unwrap();
+        let run = store.accept_user(&scope, "r", "search", json!({})).unwrap();
+        let mut text = "x".repeat(400 * 1024);
+        text.replace_range(65532..65544, "chunk_needle");
+        text.push_str(" late_needle");
+        let record = store
+            .archive(
+                &scope,
+                &run.run_id,
+                "large",
+                "text",
+                json!({}),
+                text.as_bytes(),
+            )
+            .unwrap();
+        let edge = store
+            .search_history(&scope, json!({"query":"chunk_needle","kind":"text"}))
+            .unwrap();
+        assert_eq!(edge["items"][0]["record_id"], record.id);
+        let mut query = json!({"query":"late_needle","kind":"text"});
+        let first = store.search_history(&scope, query.clone()).unwrap();
+        assert!(first["items"].as_array().unwrap().is_empty());
+        assert_eq!(first["scan_incomplete"], true);
+        assert!(first["scanned_bytes"].as_u64().unwrap() <= 256 * 1024);
+        query["cursor"] = first["cursor"].clone();
+        let next = store.search_history(&scope, query).unwrap();
+        assert_eq!(next["items"][0]["record_id"], record.id);
     }
 }

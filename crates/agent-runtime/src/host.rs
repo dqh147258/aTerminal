@@ -1,4 +1,9 @@
 //! Deterministic user-triggered Agent service. Passive events have no path to start().
+#[path = "host/tools.rs"]
+pub mod tools;
+mod user_interaction;
+pub use user_interaction::AuthorizationPermit;
+
 use crate::{
     history::{Entry, Projection},
     model::{self, ContextEntry, Model, Origin, Protocol, RequestBuilder},
@@ -65,6 +70,40 @@ pub trait TerminalBackend: Send + Sync {
         None
     }
     fn finished(&self) {}
+    fn action_descriptor(
+        &self,
+        context: &ToolContext,
+        name: &str,
+        args: &Value,
+    ) -> Result<crate::authorization::ActionDescriptor> {
+        Ok(crate::authorization::ActionDescriptor {
+            account_id: context.scope.owner.clone(),
+            desktop_id: context.scope.desktop.clone(),
+            tool: name.into(),
+            source: crate::authorization::ToolSource::Builtin,
+            source_id: "builtin".into(),
+            tool_version: Some("1".into()),
+            target: context
+                .scope
+                .session
+                .clone()
+                .unwrap_or_else(|| context.scope.agent.clone()),
+            cwd: None,
+            arguments: args.clone(),
+            execution_identity: None,
+            shell_proof: None,
+            permission_management: false,
+        })
+    }
+    fn action_fence(&self, _context: &ToolContext, _name: &str, _args: &Value) -> Result<Value> {
+        Ok(Value::Null)
+    }
+    fn approval_display(&self, args: &Value) -> Result<(String, Value)> {
+        Ok((
+            crate::authorization::redacted_preview(args),
+            crate::authorization::redacted_details_with_secrets(args, &[]),
+        ))
+    }
     fn is_write(&self, name: &str, _args: &Value) -> bool {
         !matches!(
             name,
@@ -78,6 +117,16 @@ pub trait TerminalBackend: Send + Sync {
                 | "get_agent_task"
                 | "wait_agent_task"
                 | "wait"
+                | "inspect_command"
+                | "ask_user"
+                | "get_capabilities"
+                | "get_command_result"
+                | "wait_command"
+                | "list_agent_tasks"
+                | "get_agent_tasks"
+                | "wait_agent_tasks"
+                | "search_history"
+                | "wait_terminal"
         )
     }
 }
@@ -93,6 +142,7 @@ pub struct ToolContext {
     pub budget: Arc<Budget>,
     pub cancel: watch::Receiver<bool>,
     pub execution_gate: Arc<Mutex<bool>>,
+    pub authorization_check: Option<Arc<AuthorizationPermit>>,
 }
 
 /// Pure delay for the built-in Broker tool; it never observes a Terminal.
@@ -125,6 +175,7 @@ pub async fn wait(context: &ToolContext, args: Value) -> Result<ToolOutput> {
 
 pub struct Budget {
     deadline: Instant,
+    clock: Mutex<user_interaction::ActiveClock>,
     calls: AtomicU32,
     max_calls: u32,
     tokens: AtomicU64,
@@ -140,6 +191,7 @@ impl Budget {
     pub fn new(seconds: u64, calls: u32, tokens: u64, root_scope: Scope) -> Self {
         Self {
             deadline: Instant::now() + Duration::from_secs(seconds),
+            clock: Mutex::new(user_interaction::ActiveClock::default()),
             calls: AtomicU32::new(0),
             max_calls: calls,
             tokens: AtomicU64::new(0),
@@ -154,7 +206,9 @@ impl Budget {
     }
     pub fn remaining(&self) -> Result<Duration> {
         ensure!(!self.cancelled.load(Ordering::Acquire), "cancelled");
-        self.deadline
+        let mut clock = self.clock.lock().unwrap();
+        clock.tick(self.active.load(Ordering::Acquire));
+        (self.deadline + clock.paused)
             .checked_duration_since(Instant::now())
             .context("run_time_budget")
     }
@@ -235,6 +289,7 @@ pub struct AgentHost {
     jobs: Mutex<HashMap<String, Arc<Job>>>,
     runtime: tokio::runtime::Handle,
     task_updates: watch::Sender<()>,
+    human_updates: watch::Sender<()>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -263,7 +318,10 @@ fn entry(origin: Origin, root: &str, message: Message) -> ContextEntry {
     }
 }
 fn running(state: &str) -> bool {
-    matches!(state, "running" | "stopping" | "finishing")
+    matches!(
+        state,
+        "running" | "waiting_for_user" | "stopping" | "finishing"
+    )
 }
 impl AgentHost {
     pub fn new(store: Arc<Store>, runtime: tokio::runtime::Handle) -> Arc<Self> {
@@ -271,6 +329,7 @@ impl AgentHost {
             store,
             jobs: Mutex::new(HashMap::new()),
             runtime,
+            human_updates: watch::channel(()).0,
             task_updates: watch::channel(()).0,
         })
     }
@@ -326,7 +385,10 @@ impl AgentHost {
                             images.is_empty() || job.snapshot.vision,
                             "model_vision_required"
                         );
-                        ensure!(state.state == "running", "agent_stopping");
+                        ensure!(
+                            matches!(state.state.as_str(), "running" | "waiting_for_user"),
+                            "agent_stopping"
+                        );
                         ensure!(state.queue.len() < 32, "agent_mailbox_full");
                         ensure!(
                             !allow_write || !job.budget.write_disabled.load(Ordering::Acquire),
@@ -441,7 +503,7 @@ impl AgentHost {
             let mut state = job.state.lock().unwrap();
             if running(&state.state) {
                 ensure!(
-                    state.state == "running"
+                    matches!(state.state.as_str(), "running" | "waiting_for_user")
                         && job.root == context.root_user_message_id
                         && Arc::ptr_eq(&job.budget, &context.budget),
                     "session_agent_busy"
@@ -486,7 +548,7 @@ impl AgentHost {
         if accepted.duplicate {
             return Ok(json!({"agent_id":scope.agent,"task_id":accepted.run_id,"duplicate":true}));
         }
-        context.budget.active.fetch_add(1, Ordering::AcqRel);
+        context.budget.change_active(true);
         let (cancel, receiver) = watch::channel(false);
         let job = Arc::new(Job {
             scope: scope.clone(),
@@ -549,12 +611,12 @@ impl AgentHost {
             ensure!(job.scope == *scope, "agent_scope_mismatch");
             let state = job.state.lock().unwrap();
             return Ok(
-                json!({"agent_id":scope.agent,"run_id":job.run,"root_user_message_id":job.root,"state":state.state,"live_text":state.live,"error":state.error,"queued_messages":state.queue.len(),"config_revision":job.snapshot.revision}),
+                json!({"agent_id":scope.agent,"run_id":job.run,"root_user_message_id":job.root,"state":state.state,"live_text":state.live,"error":state.error,"queued_messages":state.queue.len(),"config_revision":job.snapshot.revision,"permissions":self.store.permissions(scope)?,"pending":self.store.pending(scope,None)?}),
             );
         }
         let last = self.store.latest_run(scope)?;
         Ok(
-            json!({"agent_id":scope.agent,"state":last.as_ref().and_then(|r|r["state"].as_str()).unwrap_or("idle"),"last_run":last}),
+            json!({"agent_id":scope.agent,"state":last.as_ref().and_then(|r|r["state"].as_str()).unwrap_or("idle"),"last_run":last,"permissions":self.store.permissions(scope)?,"pending":self.store.pending(scope,None)?}),
         )
     }
     fn task_state(&self, context: &ToolContext, task_id: &str) -> Result<Value> {
@@ -611,6 +673,16 @@ impl AgentHost {
     }
     /// Wait for this exact Run without polling the model or creating another user Run.
     pub async fn wait_agent_task(&self, context: &ToolContext, args: Value) -> Result<ToolOutput> {
+        context
+            .budget
+            .waiting_for_tasks(&context.run_id, self.wait_agent_task_inner(context, args))
+            .await
+    }
+    async fn wait_agent_task_inner(
+        &self,
+        context: &ToolContext,
+        args: Value,
+    ) -> Result<ToolOutput> {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Arguments {
@@ -624,7 +696,8 @@ impl AgentHost {
             "invalid_agent_task_timeout_ms"
         );
         let started = Instant::now();
-        let end = started + Duration::from_millis(args.timeout_ms);
+        let timeout = Duration::from_millis(args.timeout_ms);
+        let initial_remaining = context.budget.remaining()?;
         // Subscribe before observing, so completion between the read and wait cannot be lost.
         let mut updates = self.task_updates.subscribe();
         let mut cancel = context.cancel.clone();
@@ -635,7 +708,8 @@ impl AgentHost {
             let remaining = context.budget.remaining()?;
             ensure!(!*cancel.borrow(), "cancelled");
             let done = value["done"] == true;
-            if done || Instant::now() >= end {
+            let active_elapsed = initial_remaining.saturating_sub(remaining);
+            if done || active_elapsed >= timeout {
                 value["timed_out"] = json!(!done);
                 value["elapsed_ms"] = json!(started.elapsed().as_millis() as u64);
                 context.budget.read(serde_json::to_vec(&value)?.len())?;
@@ -644,8 +718,7 @@ impl AgentHost {
             tokio::select! {
                 biased;
                 _ = cancel.wait_for(|v| *v) => bail!("cancelled"),
-                _ = tokio::time::sleep(remaining) => bail!("run_time_budget"),
-                _ = tokio::time::sleep_until(tokio::time::Instant::from_std(end)) => {},
+                _ = tokio::time::sleep(remaining.min(Duration::from_millis(100)).min(timeout.saturating_sub(active_elapsed))) => {},
                 changed = updates.changed() => { changed.context("agent_task_notifications_closed")?; },
             }
         }
@@ -755,7 +828,8 @@ impl AgentHost {
         }
         drop(status);
         self.task_updates.send_replace(());
-        if job.budget.active.fetch_sub(1, Ordering::AcqRel) == 1 {
+        let _ = self.store.cancel_pending_run(&job.scope, &job.run);
+        if job.budget.change_active(false) == 1 {
             job.budget.cancelled.store(true, Ordering::Release);
         }
     }
@@ -1253,7 +1327,7 @@ impl AgentHost {
                         used + job.snapshot.builder.settings.max_tokens as usize + 4096,
                     );
                     ensure!(available >= 1024, "observation_context_budget");
-                    let context = ToolContext {
+                    let mut context = ToolContext {
                         history_unit_id: unit.clone(),
                         vision:job.snapshot.vision,
                         scope: job.scope.clone(),
@@ -1264,12 +1338,19 @@ impl AgentHost {
                         budget: job.budget.clone(),
                         cancel: cancel.clone(),
                         execution_gate:job.execution_gate.clone(),
+                        authorization_check: None,
                     };
+                    if write {
+                        context.authorization_check = Some(self.approve_action(job, &context, name, &call.function.arguments).await?);
+                    }
                     let mut tool_cancel=cancel.clone();
                     let result = tokio::select! {
                         biased;
                         _=tool_cancel.wait_for(|v|*v)=>bail!("cancelled"),
-                        result=tokio::time::timeout(job.budget.remaining()?,gateway.call(context,name,call.function.arguments.clone()))=>result.context("tool_timeout_outcome_unknown")??,
+                        result=job.budget.run_bounded(async {
+                            if name == "ask_user" { self.ask_user(&context,call.function.arguments.clone()).await }
+                            else { gateway.call(context,name,call.function.arguments.clone()).await }
+                        })=>result?,
                     };
                     if write {
                         self.store.action_receipt(
@@ -1418,7 +1499,12 @@ impl AgentHost {
                     }
                     Err(error) => {
                         self.store.unit_update(&job.scope,&unit,json!({"action_id":action.action_id,"name":name,"error":error.to_string()}))?;
-                        if write {
+                        if write && error.to_string().starts_with("authorization_denied") {
+                            let _ =
+                                self.store
+                                    .action_receipt(&job.scope, &action.action_id, "failed");
+                        }
+                        if write && !error.to_string().starts_with("authorization_denied") {
                             requires_observation = true;
                             let _ =
                                 self.store
@@ -1988,6 +2074,7 @@ pub fn terminal_tools(global: bool) -> Vec<ToolDefinition> {
             parameters: object(properties, required),
         })
         .collect::<Vec<_>>();
+    tools::extend_catalog(&mut result, global);
     result.sort_by(|a, b| a.name.cmp(&b.name));
     result
 }
@@ -2259,6 +2346,7 @@ mod runtime_contracts {
             budget: Arc::new(Budget::new(30, 10, 10000, scope)),
             cancel,
             execution_gate: Arc::new(Mutex::new(true)),
+            authorization_check: None,
         };
         let backend = Arc::new(WaitBackend::default());
         let tools = terminal_tools(true);
@@ -2807,6 +2895,8 @@ mod runtime_contracts {
         let path = temp.path().join("data/rejected.db");
         let store = Arc::new(Store::open(&path).unwrap());
         let scope = store.agent("owner", "desktop", Some("session")).unwrap();
+        // This regression exercises the analysis barrier with an explicit user grant.
+        store.set_permissions(&scope, 0, None, Some(true)).unwrap();
         let model = Arc::new(RejectedModel(AtomicU32::new(0)));
         let backend = Arc::new(WriteBackend::default());
         let host = AgentHost::new(store.clone(), tokio::runtime::Handle::current());
@@ -3348,6 +3438,7 @@ mod runtime_contracts {
                 budget: Arc::new(Budget::new(30, 20, 2000000, global.clone())),
                 cancel: receiver,
                 execution_gate: Arc::new(Mutex::new(true)),
+                authorization_check: None,
             };
             Self {
                 _temp: temp,
@@ -3751,6 +3842,7 @@ mod runtime_contracts {
             budget: job.budget.clone(),
             cancel: job.cancel.subscribe(),
             execution_gate: job.execution_gate.clone(),
+            authorization_check: None,
         };
         let first = host
             .delegate(

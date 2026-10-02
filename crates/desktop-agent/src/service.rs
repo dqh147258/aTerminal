@@ -1,3 +1,4 @@
+mod authorization;
 mod runtime;
 mod scrollback;
 use crate::{
@@ -234,6 +235,7 @@ struct ActorMessage {
     request: Request,
     reply: SyncSender<Reply>,
     gate: Option<ExecutionGate>,
+    authorization: Option<Arc<ai_terminal_agent_runtime::host::AuthorizationPermit>>,
 }
 type Actor = SyncSender<ActorMessage>;
 const DESKTOP_LEASE: Duration = Duration::from_secs(15);
@@ -434,11 +436,20 @@ fn request_actor_guarded(
     request: Request,
     gate: Option<ExecutionGate>,
 ) -> Result<Reply> {
+    request_actor_authorized(actor, request, gate, None)
+}
+fn request_actor_authorized(
+    actor: &Actor,
+    request: Request,
+    gate: Option<ExecutionGate>,
+    authorization: Option<Arc<ai_terminal_agent_runtime::host::AuthorizationPermit>>,
+) -> Result<Reply> {
     let (tx, rx) = mpsc::sync_channel(1);
     match actor.try_send(ActorMessage {
         request,
         reply: tx,
         gate,
+        authorization,
     }) {
         Ok(()) => {}
         Err(mpsc::TrySendError::Disconnected(_)) => bail!(SESSION_CLOSED_ERROR),
@@ -806,6 +817,7 @@ fn session_loop(
         availability_epoch: presence.epoch,
         ..SessionInfo::default()
     };
+    authorization::initialize(&mut info);
     let mut snapshots = VecDeque::from([engine.snapshot()]);
     let mut scrollback = scrollback::Views::default();
     let mut eof = false;
@@ -820,10 +832,7 @@ fn session_loop(
             info.availability_epoch = presence.epoch;
         }
         if shell_poll.elapsed() >= Duration::from_millis(250) {
-            info.shell_status = pty
-                .shell_observation()
-                .map(|v| v.to_string())
-                .unwrap_or_default();
+            authorization::observe(&mut info, pty.shell_observation());
             shell_poll = Instant::now();
         }
         info.process_id = pty.process_id().unwrap_or(0);
@@ -901,6 +910,7 @@ fn session_loop(
                     &mut snapshots,
                     &mut scrollback,
                     None,
+                    None,
                 );
                 let _ = tx.send(result.unwrap_or_else(|e| error(e.to_string())));
             } else {
@@ -912,6 +922,7 @@ fn session_loop(
                 request: mut req,
                 reply: reply_tx,
                 gate,
+                authorization,
             }) => {
                 if req.operation == Operation::Watch as i32 {
                     if watchers.len() >= 16 {
@@ -941,6 +952,7 @@ fn session_loop(
                     &mut snapshots,
                     &mut scrollback,
                     gate,
+                    authorization,
                 );
                 if close && let Ok(reply) = &result {
                     drop(pty);
@@ -965,6 +977,7 @@ fn handle_session(
     snapshots: &mut VecDeque<Snapshot>,
     scrollback: &mut scrollback::Views,
     gate: Option<ExecutionGate>,
+    authorization: Option<Arc<ai_terminal_agent_runtime::host::AuthorizationPermit>>,
 ) -> Result<Reply> {
     let op = Operation::try_from(req.operation)?;
     if req.session_epoch != 0 && req.session_epoch != info.epoch {
@@ -1012,6 +1025,13 @@ fn handle_session(
             );
         }
     }
+    if matches!(
+        op,
+        Operation::AgentWrite | Operation::AgentClose | Operation::AgentResize
+    ) && let Some(permit) = &authorization
+    {
+        authorization::commit(permit, info, engine.snapshot_revision())?;
+    }
     let mut reply = Reply::default();
     match op {
         Operation::Scrollback => {
@@ -1046,6 +1066,10 @@ fn handle_session(
             );
             let bytes = encode_input(&req, engine)?;
             pty.write(bytes)?;
+            authorization::input(
+                info,
+                authorization.as_ref().and_then(|p| p.submitted_command()),
+            );
         }
         Operation::ObserveTerminal => {
             reply.history = vec![serde_json::to_string(&engine.read_view(12000, 512 * 1024))?];
@@ -1064,6 +1088,7 @@ fn handle_session(
             }
             let bytes = encode_input(&req, engine)?;
             pty.write(bytes)?;
+            authorization::input(info, None);
         }
         Operation::Input => {
             let started = Instant::now();
@@ -1082,6 +1107,7 @@ fn handle_session(
                 let changed = !bytes.is_empty() && !focus_notification;
                 pty.write(bytes)?;
                 if changed {
+                    authorization::input(info, None);
                     info.manual_revision += 1;
                 }
                 control.commit(req.client, req.input_seq, signature);
@@ -1815,6 +1841,7 @@ mod service_tests {
                 request: Request::default(),
                 reply,
                 gate: None,
+                authorization: None,
             })
             .unwrap();
         assert_eq!(

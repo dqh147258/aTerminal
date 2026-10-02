@@ -1,11 +1,13 @@
 # Agent 操作授权与工具补齐
 
-- 状态：Approved；协调者完成方案后直接执行，无需用户 Review。
+- 状态：In progress；协调者完成方案后直接执行，无需用户 Review。
 - 日期：2026-10-02，Asia/Singapore。
 - 起点：`main` / `f56461eb9b6d7a5cb3ba19cf698779208a81f7ee`；工作树原本干净，AGENTS.md 为空。
 - 用户授权：补充权限和此前建议的六类工具；允许协调者自行决定实现细节、通过 worktree-tasks 分工。用户明确“计划我不Review, 你看着处理”。
 - 已确认：完全授权作用于当前 Agent 对话、持续到关闭；永久授权按命令/参数/目录精确匹配；六类工具全部补齐，Android/iOS/CLI 同步。
 - 管理任务：`aTerminal / 20261002-180220-295-agent-authorization`。
+- 恢复授权（2026-10-02 19:55）：系统故障后用户要求继续并恢复全部子任务，全部模型改为 Sol。已检查保留代码与会话后，六个原子任务使用 `gpt-6.1-sol / high`、各自保存的 thread ID 在原 worktree 恢复；旧 run/终端保留在任务历史，不新建重复子任务。
+- 最新调度约束（2026-10-02 20:56）：系统再次重启、子任务已关闭。用户要求任何时刻最多两个活跃子任务，完成并关闭后才恢复下一项。当前仅恢复 runtime/toolset，policy 已完成且不恢复，Android/iOS/Review 排队；所有恢复仍使用 Sol。大型构建/模拟器错峰，cargo jobs/test threads 最多2，不改变 High 必要验收范围。
 
 ## 目标与实际行为
 
@@ -41,18 +43,22 @@
 
 原始 `input_text` 和 `send_keys` 必须经过同一个判定入口。分次输入、文本内换行、`submit=true`、单独 Enter、粘贴、快捷键、TUI 交互不能绕过审批。只在 Host 能关联完整输入、明确的 Shell 状态和未被人工更改的版本时尝试安全命令识别；否则将原始输入作为待审批动作。新增结构化 `run_command` 方便完整命令审批和结果关联，但不替换正常 PTY 或绕开工作目录变化。
 
+独立审阅确认：实际 Shell 的别名/函数/PATH 不能通过当前观测可靠证明程序身份；普通读取增加 `inspect_command` 正向固定程序/参数入口，在实际 cwd 以原生子进程运行并提供证据（不经 Shell，不改 PTY draft/目录），确保安全读取无需逐项审批。run_command 保持原 PTY 交互语义，未知输入仍审批。此为用户授权范围内的实现细化，不增加 OS/cwd 沙箱；详情及精确永久语言边界见合同。
+
 已安装的 MCP/Skill 可执行能力由用户管理。MCP annotations 仅供显示，不能自行扩大自动放行范围；当前保持所有实际用户 MCP 调用/脚本进入审批或精确规则。`mcp_tools` 会惰性启动已启用服务，此生命周期属于用户配置的既有扩展能力；能力界面明确说明，不把 catalog 查询宣传为 OS 沙箱。
 
 ## 执行分工与依赖
 
 通过指定 skill CLI 启动独立 iTerm Codex worktree；协调者维护本计划、接口决定、集成、Review 和最终验证。子任务不擅自修改其他组件或启动下一层代理。
 
-1. `authorization-policy`：新增纯策略模块、精确指纹/脱敏/命令分类与攻击用例；先提供稳定 API。通常局部明确工作，按 skill 策略使用 `gpt-6.1-sol / xhigh`。
-2. `authorization-runtime`：审批/问答持久化与恢复、对话模式、Host 执行接入、Broker、远程授权和 CLI；依赖策略模块与工具 helper，负责共享文件最终接线。跨模块复杂任务，使用 `gpt-6-astra / high`。
-3. `agent-toolset`：新增 helper 模块实现六类工具、命令关联与 Shell hooks；优先新增 `host/tools.rs`、`store/tools.rs`、`service/runtime/tools.rs`，由 runtime 子任务接入父模块，减少同时编辑同一文件。使用 `gpt-6-astra / high`。
-4. `android-authorization`：Android 模式开关、审批/问答卡片、规则查看撤销、协议和 UI 回归；不改 Rust。使用 `gpt-6-astra / high`。
-5. `ios-authorization`：iOS 同等功能、请求状态恢复与交互测试；不改 Rust。使用 `gpt-6-astra / high`。
-6. 集成后安排独立 Review/验收，按实际复杂度选择 skill 指定模型。存在共享接口冲突时先协调，不能靠同时覆盖文件解决。
+1. `authorization-policy`：新增纯策略模块、精确指纹/脱敏/命令分类与攻击用例；先提供稳定 API。按用户最新要求使用 `gpt-6.1-sol / high`。
+2. `authorization-runtime`：审批/问答持久化与恢复、对话模式、Host 执行接入、Broker、远程授权和 CLI；依赖策略模块与工具 helper，负责共享文件最终接线。使用 `gpt-6.1-sol / high`。
+3. `agent-toolset`：新增 helper 模块实现六类工具、命令关联与 Shell hooks；优先新增 `host/tools.rs`、`store/tools.rs`、`service/runtime/tools.rs`，由 runtime 子任务接入父模块，减少同时编辑同一文件。使用 `gpt-6.1-sol / high`。
+4. `android-authorization`：Android 模式开关、审批/问答卡片、规则查看撤销、协议和 UI 回归；不改 Rust。使用 `gpt-6.1-sol / high`。
+5. `ios-authorization`：iOS 同等功能、请求状态恢复与交互测试；不改 Rust。使用 `gpt-6.1-sol / high`。
+6. 集成后安排独立 Review/验收，也使用用户要求的 `gpt-6.1-sol / high`。存在共享接口冲突时先协调，不能靠同时覆盖文件解决。
+
+当前执行顺序以最多两个活跃执行者为硬约束：先 runtime + toolset；toolset 完成、提交并关闭后可恢复 Review，与 runtime 处理安全/集成；runtime 完成并关闭后恢复 iOS；iOS/Review 任一完成并关闭后恢复 Android，或按未决依赖在两个名额内调整。恢复/发送会重新激活 completed 子任务，操作前必须检查名额，不能向已关闭排队者发送会唤醒执行的指示。完成关闭按用户本次明确授权执行，保留分支/worktree直到最后整合与验证满足清理条件。
 
 子任务读取 main 中本计划的绝对路径；用户执行授权已经覆盖这份方案。用于集成和测试的提交/合并属于本次交付步骤，按 worktree skill 保留未 Review 提交标记。逐支审查后合入实际 `main`，保留无关工作。满足集成、测试与干净 worktree 条件后才清理任务 worktree/分支/终端；现有旧 worktree、账号、活动终端和服务不动。
 
@@ -78,7 +84,7 @@
 - [x] 核对现有权限/工具/移动端/CLI 调用链，确认用户三个范围选择及无需 Review 的授权。
 - [x] 读取规划、worktree-tasks、依赖 worktree-flow 与模型策略；创建顶层管理任务。
 - [x] 编写主计划与统一接口合同；由协调者自审后执行。
-- [ ] 启动并记录五个实现子任务与各自 worktree/分支/SessionID。
+- [x] 启动并记录五个实现子任务与各自 worktree/分支/SessionID，见 [WORKTREES.json](WORKTREES.json)。均从 `main / 3f8ebe0` 创建，无复制旧凭据或运行状态。
 - [ ] 策略、运行时和工具 helper 交付并互相接线。
 - [ ] Android/iOS/CLI 同步并完成各端验证。
 - [ ] 独立 Review、必要修复、最终 main 集成测试。

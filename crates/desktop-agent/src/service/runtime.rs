@@ -1,3 +1,8 @@
+#[cfg(test)]
+#[path = "runtime/authorization_tests.rs"]
+mod authorization_tests;
+#[path = "runtime/tools.rs"]
+mod tools;
 use super::*;
 use crate::builtin_skills::CATALOG as BUILTINS;
 use ai_terminal_agent_runtime::{
@@ -18,15 +23,44 @@ use std::sync::Weak;
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum Command {
-    List,
+    List {},
     GlobalCreate {
         request_id: String,
     },
     GlobalList {
         cursor: Option<i64>,
     },
-    State,
-    Context,
+    State {},
+    Permissions {},
+    ApprovalDetails {
+        pending_id: String,
+        cursor: Option<String>,
+    },
+    SetPermissions {
+        expected_revision: u64,
+        permission_mode: Option<String>,
+        full_authorization: Option<bool>,
+    },
+    Pending {
+        cursor: Option<String>,
+    },
+    Resolve {
+        request_id: String,
+        pending_id: String,
+        decision: Option<String>,
+        answer: Option<Value>,
+        fingerprint: Option<String>,
+        #[serde(default)]
+        details_ack: bool,
+    },
+    Rules {
+        cursor: Option<String>,
+    },
+    RevokeRule {
+        request_id: String,
+        rule_id: String,
+    },
+    Context {},
     Send {
         request_id: String,
         message: String,
@@ -34,6 +68,7 @@ pub(super) enum Command {
         images: Vec<String>,
         #[serde(default)]
         allow_input: bool,
+        permission_mode: Option<String>,
     },
     ImageBegin {
         media_type: String,
@@ -47,7 +82,7 @@ pub(super) enum Command {
         offset: usize,
         data: String,
     },
-    Cancel,
+    Cancel {},
     History {
         cursor: Option<String>,
     },
@@ -166,7 +201,7 @@ fn status(info: &SessionInfo) -> Value {
     json!({"session_id":info.id,"epoch":info.epoch,"initial_cwd":info.cwd,"observed_cwd":Value::Null,"desktop_attached":info.desktop_attached,"manual_revision":info.manual_revision,"observed_at":now(),
  "session_process":{"pid":info.process_id,"start_identity":info.process_identity,"state":if info.exited{"exited"}else{"running"},"exit_code":if info.exited{Some(info.exit_code)}else{None},"evidence_source":"pty_child"},
  "foreground_job":{"process_group":info.foreground_group,"state":"unknown","members":[],"evidence_source":"pty_foreground_group"},"shell":serde_json::from_str::<Value>(&info.shell_status).unwrap_or(Value::Null),"application_task":{"state":"unknown","evidence_source":"no_application_adapter"},
- "capabilities":{"foreground_group":cfg!(unix),"shell_integration":!info.shell_status.is_empty(),"application_completion":false}})
+ "capabilities":{"foreground_group":cfg!(unix),"shell_integration":serde_json::from_str::<Value>(&info.shell_status).ok().is_some_and(|s|s["evidence_source"]=="session_shell_hook"),"application_completion":false}})
 }
 fn poll(host: &Host, session: &str, client: u64) -> Result<Reply> {
     let actor = host
@@ -306,6 +341,10 @@ pub(super) fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
             },
         )?
     };
+    ensure!(
+        request.session.is_empty() || scope.session.as_deref() == Some(request.session.as_str()),
+        "agent_session_scope_mismatch"
+    );
     if let Some(session) = &scope.session
         && host.sessions.lock().unwrap().contains_key(session)
     {
@@ -316,7 +355,7 @@ pub(super) fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
     }
     let value = match command {
         Command::GlobalCreate { .. } | Command::GlobalList { .. } => unreachable!(),
-        Command::List => {
+        Command::List {} => {
             let scopes = host.agents.store.agents(&owner, &desktop)?;
             let rows = scopes
                 .into_iter()
@@ -324,7 +363,59 @@ pub(super) fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
                 .collect::<Result<Vec<_>>>()?;
             json!({"agents":rows})
         }
-        Command::Context => {
+        Command::ApprovalDetails { pending_id, cursor } => {
+            host.agents
+                .store
+                .approval_details(&scope, &pending_id, cursor.as_deref())?
+        }
+        Command::Permissions {} => host.agents.store.permissions(&scope)?,
+        Command::SetPermissions {
+            expected_revision,
+            permission_mode,
+            full_authorization,
+        } => {
+            let result = host.agents.set_permissions(
+                &scope,
+                expected_revision,
+                permission_mode.as_deref(),
+                full_authorization,
+            )?;
+            host.agents.permissions_changed(&scope);
+            result
+        }
+        Command::Pending { cursor } => host.agents.store.pending(&scope, cursor.as_deref())?,
+        Command::Resolve {
+            request_id,
+            pending_id,
+            decision,
+            answer,
+            fingerprint,
+            details_ack,
+        } => {
+            let result = host.agents.store.resolve_pending_ack(
+                &scope,
+                &request_id,
+                &pending_id,
+                decision.as_deref(),
+                answer,
+                fingerprint.as_deref(),
+                details_ack,
+            )?;
+            host.agents.human_response_changed();
+            result
+        }
+        Command::Rules { cursor } => host.agents.store.rules(&scope, cursor.as_deref())?,
+        Command::RevokeRule {
+            request_id,
+            rule_id,
+        } => {
+            ensure!(
+                !request_id.is_empty() && request_id.len() <= 128,
+                "invalid_request_id"
+            );
+            host.agents.revoke_rule(&scope, &request_id, &rule_id)?
+        }
+        Command::Context {} => {
             let info = scope
                 .session
                 .as_deref()
@@ -333,7 +424,7 @@ pub(super) fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
             let cwd = info.as_ref().and_then(crate::process::cwd);
             json!({"cwd":cwd,"available":info.is_some()})
         }
-        Command::State => {
+        Command::State {} => {
             let mut value = host.agents.state(&scope)?;
             value["history_generation"] = json!(host.agents.store.generation(&scope)?);
             value["last_event_sequence"] = json!(host.agents.store.latest_sequence(&scope)?);
@@ -351,7 +442,18 @@ pub(super) fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
             message,
             images,
             allow_input,
+            permission_mode,
         } => {
+            let mode =
+                permission_mode
+                    .as_deref()
+                    .unwrap_or(if allow_input { "ask" } else { "read_only" });
+            ensure!(
+                matches!(mode, "ask" | "read_only"),
+                "invalid_permission_mode"
+            );
+            host.agents.store.initialize_permissions(&scope, mode)?;
+            let allow_input = mode == "ask";
             let observation = capture_status(host, &scope);
             let host_ref = host.clone();
             let target = scope.clone();
@@ -396,7 +498,7 @@ pub(super) fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
             let bytes = STANDARD.decode(&data).context("invalid_image_encoding")?;
             json!({"offset":host.agents.store.image_chunk(&scope,&upload_id,offset,&bytes)?})
         }
-        Command::Cancel => {
+        Command::Cancel {} => {
             host.agents.cancel(&scope)?;
             host.agents.state(&scope)?
         }
@@ -598,6 +700,70 @@ impl Backend {
             }),
         }))
     }
+    pub(super) fn inspection_context(
+        &self,
+        context: &ToolContext,
+        session: &str,
+        cwd: &Path,
+    ) -> Result<ToolContext> {
+        let host = self.host()?;
+        let info = self.info(session)?.info.context("session_unavailable")?;
+        ensure!(
+            crate::process::cwd(&info).as_deref() == Some(cwd),
+            "inspection_cwd_changed"
+        );
+        let session = session.to_owned();
+        let cwd = cwd.to_owned();
+        let owner = self.scope.owner.clone();
+        let generation = self.generation;
+        let epoch = info.epoch;
+        let process = info.process_id;
+        let identity = info.process_identity;
+        let extensions = self.extensions.clone();
+        let provider = self.provider.clone();
+        let client = self.client;
+        let mut context = context.clone();
+        context.authorization_check = Some(
+            ai_terminal_agent_runtime::host::AuthorizationPermit::observation(move || {
+                ensure!(
+                    host.account.owner() == owner && host.account.generation() == generation,
+                    "account_changed"
+                );
+                ensure!(
+                    host.owners.lock().unwrap().get(&session) == Some(&owner),
+                    "session_belongs_to_another_account"
+                );
+                let config = host.config.snapshot(&owner);
+                extensions.check_credentials(&config.config)?;
+                let current = config
+                    .config
+                    .providers
+                    .get(&provider.id)
+                    .context("provider_removed")?;
+                ensure!(
+                    current.enabled
+                        && current.credential_revision == provider.credential_revision
+                        && current.secret_ref == provider.secret_ref,
+                    "provider_credentials_revoked"
+                );
+                let current = poll(&host, &session, client)?
+                    .info
+                    .context("session_unavailable")?;
+                ensure!(
+                    current.epoch == epoch
+                        && current.process_id == process
+                        && current.process_identity == identity,
+                    "inspection_session_changed"
+                );
+                ensure!(
+                    crate::process::cwd(&current).as_deref() == Some(cwd.as_path()),
+                    "inspection_cwd_changed"
+                );
+                Ok(())
+            }),
+        );
+        Ok(context)
+    }
     fn host(&self) -> Result<Arc<Host>> {
         let host = self.host.upgrade().context("desktop_stopped")?;
         ensure!(!host.stop.load(Ordering::Acquire), "desktop_stopped");
@@ -647,6 +813,7 @@ impl Backend {
         Ok(reply)
     }
     fn write(&self, context: &ToolContext, id: &str, mut request: Request) -> Result<ToolOutput> {
+        context.check_authorization()?;
         let fence = self
             .fences
             .lock()
@@ -681,7 +848,17 @@ impl Backend {
         request.client = self.client;
         request.control_epoch = epoch;
         let close = request.operation == Operation::AgentClose as i32;
-        let reply = request_actor_guarded(&actor, request, Some(context.execution_gate.clone()))?;
+        context.check_authorization()?;
+        self.host()?
+            .agents
+            .store
+            .invalidate_command_writes(&self.scope, id, &context.action_id)?;
+        let reply = request_actor_authorized(
+            &actor,
+            request,
+            Some(context.execution_gate.clone()),
+            context.authorization_check.clone(),
+        )?;
         if !reply.error.is_empty() {
             return Ok(ToolOutput {
                 value: json!({"error":reply.error,"executed":false}),
@@ -911,6 +1088,9 @@ impl Backend {
         })
     }
     fn skill(&self, context: &ToolContext, args: Value) -> Result<ToolOutput> {
+        if self.is_write("skill_action", &args) {
+            context.check_authorization()?;
+        }
         let skill = args["skill_id"].as_str().context("skill_id_required")?;
         let action = args["action"].as_str().context("skill_action_required")?;
         let data = args.get("arguments").cloned().unwrap_or_else(|| json!({}));
@@ -982,6 +1162,7 @@ impl Backend {
                     .map(serde_json::from_value::<Vec<String>>)
                     .transpose()?
                     .unwrap_or_default();
+                context.commit_authorization(None)?;
                 let permitted = context.execution_gate.lock().unwrap();
                 ensure!(
                     *permitted && !*context.cancel.borrow(),
@@ -1022,6 +1203,7 @@ impl Backend {
                     host.agents
                         .store
                         .agent(&self.scope.owner, &self.scope.desktop, Some(&id))?;
+                context.commit_authorization(None)?;
                 host.agents.cancel(&scope)?;
                 Ok(ToolOutput::value(host.agents.state(&scope)?))
             }
@@ -1065,6 +1247,152 @@ impl TerminalBackend for Backend {
             Ok(())
         })
     }
+    fn action_fence(&self, _context: &ToolContext, name: &str, args: &Value) -> Result<Value> {
+        if !matches!(name, "run_command" | "input_text" | "send_keys") {
+            return Ok(Value::Null);
+        }
+        let id = self.session(args)?;
+        let info = self.info(&id)?.info.context("session_unavailable")?;
+        let shell: Value = serde_json::from_str(&info.shell_status).unwrap_or(Value::Null);
+        Ok(
+            json!({"session_id":id,"session_epoch":info.epoch,"manual_revision":info.manual_revision,"input_revision":shell["host_input_boundary"]["input_revision"]}),
+        )
+    }
+    fn approval_display(&self, args: &Value) -> Result<(String, Value)> {
+        let secrets = self
+            .host()?
+            .config
+            .authorization_secrets(&self.scope.owner)?;
+        Ok((
+            ai_terminal_agent_runtime::authorization::redacted_preview_with_secrets(args, &secrets),
+            ai_terminal_agent_runtime::authorization::redacted_details_with_secrets(args, &secrets),
+        ))
+    }
+    fn action_descriptor(
+        &self,
+        context: &ToolContext,
+        name: &str,
+        args: &Value,
+    ) -> Result<ai_terminal_agent_runtime::authorization::ActionDescriptor> {
+        use ai_terminal_agent_runtime::authorization::{ActionDescriptor, ToolSource};
+        let host = self.host()?;
+        ensure!(
+            host.account.generation() == self.generation
+                && host.account.owner() == self.scope.owner,
+            "account_changed"
+        );
+        self.extensions
+            .check_credentials(&host.config.snapshot(&self.scope.owner).config)?;
+        let data = if name == "skill_action" {
+            &args["arguments"]
+        } else {
+            args
+        };
+        let session = self
+            .scope
+            .session
+            .clone()
+            .or_else(|| data["session_id"].as_str().map(str::to_owned));
+        let mut descriptor = ActionDescriptor {
+            account_id: self.scope.owner.clone(),
+            desktop_id: self.scope.desktop.clone(),
+            tool: name.into(),
+            source: ToolSource::Builtin,
+            source_id: "aterminal/builtin".into(),
+            tool_version: Some(env!("CARGO_PKG_VERSION").into()),
+            target: session.clone().unwrap_or_else(|| self.scope.agent.clone()),
+            cwd: None,
+            arguments: args.clone(),
+            execution_identity: None,
+            shell_proof: None,
+            permission_management: false,
+        };
+        if let Some(id) = session {
+            let reply = self.info(&id)?;
+            let info = reply.info.context("session_unavailable")?;
+            let fence = self
+                .fences
+                .lock()
+                .unwrap()
+                .get(&id)
+                .cloned()
+                .context("session_requires_new_user_authorization")?;
+            ensure!(
+                info.epoch == fence.epoch && info.manual_revision == fence.manual,
+                "manual_input_preempted_agent"
+            );
+            ensure!(
+                !info.exited && info.desktop_attached,
+                "terminal_unavailable_or_detached"
+            );
+            descriptor.cwd = crate::process::cwd(&info).map(|p| p.to_string_lossy().into_owned());
+            // A prompt alone does not prove the input buffer is empty. The session actor
+            // records the input boundary, including writes made before this run existed.
+            if name == "run_command" {
+                let shell: Value = serde_json::from_str(&info.shell_status).unwrap_or(Value::Null);
+                let dialect = match shell["dialect"].as_str() {
+                    Some("bash") => {
+                        Some(ai_terminal_agent_runtime::authorization::ShellDialect::Bash)
+                    }
+                    Some("zsh") => {
+                        Some(ai_terminal_agent_runtime::authorization::ShellDialect::Zsh)
+                    }
+                    _ => None,
+                };
+                if let Some(dialect) = dialect {
+                    let revision = shell["host_input_boundary"]["input_revision"]
+                        .as_u64()
+                        .unwrap_or(u64::MAX);
+                    descriptor.shell_proof =
+                        Some(ai_terminal_agent_runtime::authorization::ShellProof {
+                            dialect,
+                            at_prompt: shell["phase"] == "prompt",
+                            input_buffer_empty: shell["host_input_boundary"]["input_buffer_empty"]
+                                == true
+                                && crate::process::shell_foreground(&info)
+                                && descriptor.cwd.is_some(),
+                            observed_revision: revision,
+                            current_revision: revision,
+                        });
+                }
+                // Pin the complete command language before reading the executable.
+                // Wrappers/interpreters/expansions cannot inherit the first program's hash.
+                if let Some(program) = args["command"]
+                    .as_str()
+                    .and_then(ai_terminal_agent_runtime::authorization::permanent_command_program)
+                {
+                    let metadata = std::fs::metadata(&program)?;
+                    if metadata.is_file() && metadata.len() <= 64 * 1024 * 1024 {
+                        descriptor.execution_identity =
+                            Some(blake3::hash(&std::fs::read(&program)?).to_hex().to_string());
+                    }
+                }
+                if descriptor.execution_identity.is_none() {
+                    descriptor.source = ToolSource::Unknown;
+                }
+            }
+        }
+        if name == "mcp_call"
+            || (name == "skill_action"
+                && !args["skill_id"]
+                    .as_str()
+                    .unwrap_or("")
+                    .starts_with("builtin/"))
+        {
+            if name == "skill_action"
+                && args["arguments"]["cwd"].as_str().unwrap_or("session") == "session"
+            {
+                let extensions = self
+                    .extensions
+                    .for_session(descriptor.cwd.as_ref().map(PathBuf::from));
+                extensions.authorization_descriptor(&mut descriptor)?;
+            } else {
+                self.extensions.authorization_descriptor(&mut descriptor)?;
+            }
+        }
+        let _ = context;
+        Ok(descriptor)
+    }
     fn is_write(&self, name: &str, args: &Value) -> bool {
         if name == "skill_action" {
             return !matches!(
@@ -1086,6 +1414,16 @@ impl TerminalBackend for Backend {
                 | "get_agent_task"
                 | "wait_agent_task"
                 | "wait"
+                | "inspect_command"
+                | "ask_user"
+                | "get_capabilities"
+                | "get_command_result"
+                | "wait_command"
+                | "list_agent_tasks"
+                | "get_agent_tasks"
+                | "wait_agent_tasks"
+                | "search_history"
+                | "wait_terminal"
         )
     }
     fn invoke<'a>(
@@ -1097,6 +1435,13 @@ impl TerminalBackend for Backend {
         Box::pin(async move {
             context.budget.remaining()?;
             ensure!(!*context.cancel.borrow(), "cancelled");
+            if let Some(mut output) = self.invoke_added(&context, name, args.clone()).await? {
+                if name == "get_capabilities" {
+                    output.value["permissions"] =
+                        self.host()?.agents.permission_capabilities(&context)?;
+                }
+                return Ok(output);
+            }
             match name {
                 "wait" => wait(&context, args).await,
                 "list_sessions" => {
@@ -1261,7 +1606,18 @@ impl TerminalBackend for Backend {
                         .starts_with("builtin/") =>
                 {
                     ensure!(args["action"] == "script", "unknown_skill_action");
-                    self.extensions
+                    let session =
+                        self.scope.session.clone().or_else(|| {
+                            args["arguments"]["session_id"].as_str().map(str::to_owned)
+                        });
+                    let cwd = session
+                        .as_deref()
+                        .map(|id| self.info(id))
+                        .transpose()?
+                        .and_then(|r| r.info)
+                        .and_then(|i| crate::process::cwd(&i));
+                    let extensions = self.extensions.for_session(cwd);
+                    extensions
                         .script(
                             &context,
                             args["skill_id"].as_str().context("skill_id_required")?,
@@ -1338,6 +1694,8 @@ impl TerminalBackend for Backend {
                     let revision = self.revision;
                     let message = args["message"].as_str().context("message_required")?;
                     let inherited = HashMap::from([(id, fence)]);
+                    context.check_authorization()?;
+                    context.commit_authorization(None)?;
                     let value = host.agents.delegate(
                         &context,
                         scope,
@@ -1561,6 +1919,7 @@ mod wait_contracts {
             budget: Arc::new(Budget::new(30, 10, 10000, global)),
             cancel: receiver,
             execution_gate: Arc::new(Mutex::new(true)),
+            authorization_check: None,
         };
         for (name, args) in [
             ("get_agent_task", json!({"task_id":task.run_id})),
@@ -1638,6 +1997,7 @@ mod wait_contracts {
                 budget: Arc::new(Budget::new(30, 10, 10000, scope)),
                 cancel: receiver,
                 execution_gate: Arc::new(Mutex::new(true)),
+                authorization_check: None,
             };
             let args = json!({"duration_ms":1});
             assert!(!backend.is_write("wait", &args));

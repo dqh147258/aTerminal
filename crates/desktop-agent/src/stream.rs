@@ -90,7 +90,7 @@ pub(crate) async fn serve(
             req.client = 0;
             let op = Operation::try_from(req.operation)?;
             let allowed = authorize(read_only, &req);
-            let reply = if let Err(e) = allowed {
+            let mut reply = if let Err(e) = allowed {
                 Reply {
                     error: e.to_string(),
                     ..Reply::default()
@@ -143,6 +143,9 @@ pub(crate) async fn serve(
             } else {
                 call(client.clone(), req).await?
             };
+            if op == Operation::Agent {
+                crate::remote_bridge::annotate_agent_permissions(&mut reply, read_only);
+            }
             channel.stream_reply(id, &reply).await?;
             cache.push_back(Cached {
                 id,

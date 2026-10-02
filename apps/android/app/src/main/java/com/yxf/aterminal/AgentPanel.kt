@@ -36,7 +36,7 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
     private val drafts = AgentDraftStore(activity, identity)
     private val markdown = ChatMarkdown(activity)
     private var details: ToolDetailsPage? = null
-    private var closed = false
+    @Volatile private var closed = false
     private var epoch = 0
     private val globalId = globalConversation?.getJSONObject("scope")?.getString("agent")
     private val globalStore = GlobalConversationStore(activity, identity)
@@ -85,7 +85,10 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
     private var voiceEpoch = 0
     private var pendingVoice = false
     private val voice = activity.iconButton(R.drawable.ic_mic, "语音输入") { if (recognizer == null) startVoice() else stopVoice() }
-    private val tick = object : Runnable { override fun run() { if (!closed) { updatePath(); markRead(); syncDraft(); refresh(); ui.postDelayed(this, 1500) } } }
+    private val authorization = AgentAuthorizationPanel(activity, identity + session,
+        { !closed && valid() }, { writeReason(session) },
+        { command -> rpc(session, command) }, { updateButton() })
+    private val tick = object : Runnable { override fun run() { if (!closed) { updatePath(); markRead(); syncDraft(); refresh(); authorization.refresh(); ui.postDelayed(this, 1500) } } }
     private fun scope(target: String = session) = JSONArray(identity + target).toString()
     private fun rpc(target: String, command: JSONObject): JSONObject {
         globalId?.let { command.put("agent_id", it) }
@@ -112,6 +115,7 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
             addView(conversationTitle)
             if (globalId == null) addView(path)
         }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(12) })
+        header.addView(authorization.entry)
         if (globalId == null) header.addView(close)
         if (globalId != null) body.addView(row().apply {
             setPadding(dp(16), 0, dp(16), dp(12)); setBackgroundColor(Palette.surface)
@@ -209,20 +213,20 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
     }
     fun close() {
         details?.close(); details = null
-        save(); closed = true; epoch++; stopVoice(); ui.removeCallbacks(tick); worker.shutdown()
+        save(); closed = true; authorization.close(); epoch++; stopVoice(); ui.removeCallbacks(tick); worker.shutdown()
         compactLayoutListener?.let { if (body.viewTreeObserver.isAlive) body.viewTreeObserver.removeOnGlobalLayoutListener(it) }
         compactLayoutListener = null
     }
     fun pause() { visible = false; save(); stopVoice(); ui.removeCallbacks(tick) }
     fun resume() { visible = details == null; if (!closed) { ui.removeCallbacks(tick); ui.post(tick) } }
     private fun updateButton() { with(activity) {
-        val running = runState in setOf("running", "monitoring")
+        val running = GlobalConversationStore.active(runState)
         val content = draft.text.toString().isNotBlank() || attachments.isNotEmpty()
         val cancelling = runState in setOf("cancelling", "stopping")
         val reason = writeReason(session)
         val icon = if (running && !content) R.drawable.ic_square else if (running) R.drawable.ic_plus else R.drawable.ic_arrow_up
         sendButton.setImageResource(icon); sendButton.contentDescription = if (cancelling) "取消中" else if (running && !content) "停止" else if (running) "追加" else "发送"
-        sendButton.isEnabled = !submitting && !readingImages && !cancelling && reason == null && (running || content)
+        sendButton.isEnabled = !submitting && !readingImages && !cancelling && reason == null && authorization.canSend && (running || content)
         draft.isEnabled = !submitting
         sendButton.alpha = if (sendButton.isEnabled) 1f else .4f
         updatePath()
@@ -233,8 +237,8 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
         syncDraft()
         if (!sendButton.isEnabled) return
         val text = draft.text.toString().trim(); val pictures = attachments.map { JSONObject(it.toString()) }
-        val target = session; val version = epoch; val id = requestId
-        val cancel = text.isEmpty() && pictures.isEmpty() && runState in setOf("running", "monitoring")
+        val target = session; val mode = authorization.permissionMode; val id = requestId
+        val cancel = text.isEmpty() && pictures.isEmpty() && GlobalConversationStore.active(runState)
         save(); sending.add(target); updateButton()
         worker.execute { val uploaded = mutableListOf<String>(); try {
             val command = JSONObject().put("action", if (cancel) "cancel" else "send")
@@ -251,9 +255,10 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
                     }; uploads.put(upload)
                 }
                 // Request identity includes the stable file identities, while transport upload IDs are retryable.
-                command.put("request_id", id).put("message", text).put("allow_input", true)
+                command.put("request_id", id).put("message", text).put("permission_mode", mode)
                 if (uploads.length() > 0) command.put("images", uploads)
             }
+            check(!closed && valid()) { "连接或对话已变化" }
             val result = rpc(target, command)
             ui.post {
                 sending.remove(target)
@@ -410,7 +415,8 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
         val bottom = atBottom(); val oldY = scroll.scrollY
         val anchor = (0 until messages.childCount).map { messages.getChildAt(it) }.firstOrNull { it.bottom > oldY }
         val anchorId = anchor?.tag; val offset = oldY - (anchor?.top ?: 0)
-        messages.removeAllViews()
+        // Pending answer fields remain attached while other runs update chat history.
+        for (index in messages.childCount - 1 downTo 0) if (messages.getChildAt(index) !== authorization.cards) messages.removeViewAt(index)
         val newest = items.values.sortedByDescending { it.optLong("sequence", it.optLong("created_at")) }
         val all = AgentTimeline.visible(newest, false)
         if (globalId != null && conversationTitle.text == "新会话") all.firstOrNull { it.optString("kind") == "user" }?.let {
@@ -455,15 +461,16 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
             } }
             block.background = shape(if (kind == "user") Palette.control else android.graphics.Color.TRANSPARENT, kind == "user")
             block.setPadding(dp(12), dp(6), dp(8), dp(6))
-            messages.addView(block, LinearLayout.LayoutParams(if (kind == "user") -2 else -1, -2).apply {
+            messages.addView(block, messages.indexOfChild(authorization.cards).takeIf { it >= 0 } ?: messages.childCount, LinearLayout.LayoutParams(if (kind == "user") -2 else -1, -2).apply {
                 gravity = android.view.Gravity.END; bottomMargin = dp(12); if (kind == "user") marginStart = dp(24)
             })
         }
         if (liveText.isNotBlank() && !hasPersistedLive()) {
             val live = column(12).apply { tag = "live"; background = shape(Palette.surface) }
             addMessage(liveText, "aTerminal", live)
-            messages.addView(live)
+            messages.addView(live, messages.indexOfChild(authorization.cards).takeIf { it >= 0 } ?: messages.childCount)
         }
+        if (authorization.cards.parent == null) messages.addView(authorization.cards)
         scroll.post { if (!closed && version == renderVersion && scopeVersion == epoch) {
             val restored = initialScroll; if (items.isNotEmpty()) initialScroll = null
             val anchorView = (0 until messages.childCount).map { messages.getChildAt(it) }.firstOrNull { it.tag != null && it.tag == anchorId }

@@ -26,7 +26,8 @@ class GlobalConversationStore(context: Context, identity: List<String>) {
         get() = prefs.getString("pending-create", "").orEmpty()
         set(value) { prefs.edit().putString("pending-create", value).apply() }
     companion object {
-        fun running(state: String) = state in setOf("running", "monitoring", "stopping", "cancelling")
+        fun active(state: String) = state in setOf("running", "monitoring", "waiting_for_user", "waiting_for_approval", "suspended", "waiting")
+        fun running(state: String) = active(state) || state in setOf("stopping", "cancelling")
         fun stateLabel(state: String) = when (state) {
             "running", "monitoring" -> "执行中"
             "stopping", "cancelling" -> "正在停止"
@@ -34,7 +35,9 @@ class GlobalConversationStore(context: Context, identity: List<String>) {
             "failed" -> "执行失败"
             "cancelled" -> "已停止"
             "orphaned" -> "任务已中断"
-            "paused" -> "等待处理"
+            "waiting_for_user" -> "等待回答"
+            "waiting_for_approval" -> "等待授权"
+            "suspended", "waiting", "paused" -> "等待处理"
             else -> "— 就绪"
         }
     }

@@ -582,6 +582,63 @@ impl Frozen {
             json!({"source":"user_mcp","server_id":id,"revision":catalog.revision,"diagnostics":catalog.connection.diagnostics(),"tools":catalog.tools[start..end],"cursor":if end<catalog.tools.len(){Some(end.to_string())}else{None}}),
         ))
     }
+    pub fn authorization_descriptor(
+        &self,
+        descriptor: &mut ai_terminal_agent_runtime::authorization::ActionDescriptor,
+    ) -> Result<()> {
+        use ai_terminal_agent_runtime::authorization::ToolSource;
+        if descriptor.tool == "mcp_call" {
+            descriptor.source = ToolSource::Mcp;
+            let id = descriptor.arguments["server_id"]
+                .as_str()
+                .context("server_id_required")?;
+            let binding = self.servers.get(id).context("mcp_server_not_found")?;
+            descriptor.source_id = id.into();
+            descriptor.tool_version = Some(
+                blake3::hash(&serde_json::to_vec(&binding.config)?)
+                    .to_hex()
+                    .to_string(),
+            );
+            descriptor.cwd = binding
+                .config
+                .cwd
+                .as_ref()
+                .or(self.cwd.as_ref())
+                .map(|p| p.to_string_lossy().into_owned());
+            // Remote service versions and interpreter dependencies cannot be pinned by
+            // configuration alone. Such calls remain once/full only.
+            descriptor.execution_identity = None;
+        } else {
+            descriptor.source = ToolSource::Skill;
+            let id = descriptor.arguments["skill_id"]
+                .as_str()
+                .context("skill_id_required")?;
+            let skill = self.selected(id)?;
+            descriptor.source_id = id.into();
+            descriptor.tool_version = Some(skill.version.clone());
+            let args = &descriptor.arguments["arguments"];
+            let path = args["path"].as_str().context("script_path_required")?;
+            let bytes = read(skill, path)?;
+            let executable = program(
+                Path::new(
+                    args["interpreter"]
+                        .as_str()
+                        .context("explicit_interpreter_required")?,
+                ),
+                &minimal_environment(),
+            )?;
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&bytes);
+            hasher.update(&std::fs::read(executable)?);
+            descriptor.execution_identity = Some(hasher.finalize().to_hex().to_string());
+            descriptor.cwd = match args["cwd"].as_str().unwrap_or("session") {
+                "package" => Some(skill.root.to_string_lossy().into_owned()),
+                "session" => self.cwd.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                _ => bail!("invalid_script_cwd"),
+            };
+        }
+        Ok(())
+    }
     pub async fn call(
         &self,
         context: &ToolContext,
@@ -601,6 +658,8 @@ impl Frozen {
         let timeout = context.budget.remaining()?.min(Duration::from_millis(
             self.servers[id].config.call_timeout_ms,
         ));
+        context.check_authorization()?;
+        context.commit_authorization(None)?;
         let result = catalog.connection.call(tool, args, timeout).await?;
         let body = serde_json::to_string(&result)?;
         if body.len() <= context.max_read_bytes
@@ -689,12 +748,14 @@ impl Frozen {
         #[cfg(windows)]
         command.wrap(JobObject);
         command.wrap(KillOnDrop);
+        context.check_authorization()?;
         let mut child = {
             let permitted = context.execution_gate.lock().unwrap();
             ensure!(
                 *permitted && !*context.cancel.borrow(),
                 "cancelled_before_script_spawn"
             );
+            context.commit_authorization(None)?;
             command.spawn()?
         };
         let stdout = child.stdout().take().context("script_stdout_missing")?;
