@@ -105,6 +105,47 @@ impl Fixture {
         })
         .await?
     }
+    async fn readonly_channel(&self) -> Result<ai_terminal_remote::Channel> {
+        use ai_terminal_remote::account::AccountSession;
+        use ai_terminal_security::account::ConnectionGrant;
+        let mut account = AccountSession::login(
+            self.config["server"].as_str().unwrap(),
+            None,
+            self.config["username"].as_str().unwrap().into(),
+            self.config["password"].as_str().unwrap().into(),
+            "Read-only review device".into(),
+            "ios".into(),
+        )
+        .await?;
+        let desktop = account
+            .devices()
+            .await?
+            .into_iter()
+            .find(|device| device.platform == "desktop" && device.online)
+            .context("Readonly fixture Desktop missing")?;
+        let now = chrono::Utc::now().timestamp();
+        let grant = ConnectionGrant {
+            version: 2,
+            room: ai_terminal_security::random_secret()?,
+            desktop_id: desktop.id,
+            mobile_id: account.tokens.device_id.clone(),
+            desktop_public: desktop.public_key,
+            mobile_public: account.identity.public.clone(),
+            expires_at: now + 60,
+            read_only: true,
+        };
+        // The disposable directory issues a genuine read-only grant before either
+        // side connects. We do not edit a mobile-returned grant after handshake.
+        // This setup is needed because the production login fixture currently
+        // creates writable v2 connections by default.
+        let db = rusqlite::Connection::open(self.dir.join("demo.db"))?;
+        db.execute(
+            "INSERT INTO connections(room,desktop_id,mobile_id,grant_json,expires_at,lease_expiry) VALUES (?1,?2,?3,?4,?5,?6)",
+            rusqlite::params![grant.room,grant.desktop_id,grant.mobile_id,serde_json::to_string(&grant)?,grant.expires_at,now+3600]
+        )?;
+        drop(db);
+        ai_terminal_remote::Channel::account(&account, &grant, true, &[]).await
+    }
     fn marker(&self, name: &str) -> Option<String> {
         fs::read_to_string(self.dir.join(name)).ok()
     }
@@ -155,6 +196,28 @@ impl Fixture {
             input_kind: 1,
             text: text.into(),
             submit,
+            ..Default::default()
+        })?;
+        Ok(())
+    }
+    fn model_seconds(&self, seconds: u64) -> Result<()> {
+        let reply = self.local.call(Request {
+            operation: Operation::Configuration as i32,
+            text: json!({"action":"show"}).to_string(),
+            ..Default::default()
+        })?;
+        let view: Value = serde_json::from_str(
+            reply
+                .history
+                .first()
+                .context("Fixture configuration missing")?,
+        )?;
+        let mut config = view["config"].clone();
+        config["models"]["fixture"]["max_seconds"] = json!(seconds);
+        self.local.call(Request {
+            operation: Operation::Configuration as i32,
+            text: json!({"action":"replace","expected_revision":view["revision"],"config":config})
+                .to_string(),
             ..Default::default()
         })?;
         Ok(())
@@ -212,8 +275,12 @@ struct Phone {
 impl Phone {
     async fn rpc(&self, mut value: Value) -> Result<Value> {
         value["version"] = json!(1);
+        self.rpc_scope(&self.session, value).await
+    }
+    async fn rpc_scope(&self, session: &str, mut value: Value) -> Result<Value> {
+        value["version"] = json!(1);
         let remote = self.remote.clone();
-        let session = self.session.clone();
+        let session = session.to_owned();
         tokio::task::spawn_blocking(move || {
             let response = remote.agent(session, value.to_string())?;
             Ok(serde_json::from_str(&response)?)
@@ -641,5 +708,363 @@ async fn encrypted_long_action_requires_exact_details_ack_and_preserves_target()
         "Complete details approval failed"
     );
     fixture.finish()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "Requires account_demo built from the same integrated commit; run explicitly with --ignored"]
+async fn encrypted_real_readonly_grant_cannot_mutate_or_forge_rpc_authority() -> Result<()> {
+    let mut fixture = Fixture::start().await?;
+    let phone = fixture.phone().await?;
+    let mut readonly = fixture.readonly_channel().await?;
+    let session = fixture.config["session"].as_str().unwrap().to_owned();
+    let request = |value: Value| Request {
+        operation: Operation::Agent as i32,
+        session: session.clone(),
+        text: json_with_version(value).to_string(),
+        // Deliberately forged payload identity cannot replace the Noise grant.
+        account_scope: "pretend-admin".into(),
+        device_scope: String::new(),
+        client: u64::MAX,
+        ..Default::default()
+    };
+    let response = readonly
+        .request(request(json!({"action":"permissions"})))
+        .await?;
+    ensure!(
+        response.error.is_empty(),
+        "Readonly permissions could not be browsed: {}",
+        response.error
+    );
+    let permissions: Value = serde_json::from_str(
+        response
+            .history
+            .first()
+            .context("Readonly permission payload missing")?,
+    )?;
+    ensure!(
+        permissions["can_mutate"] == false,
+        "Actual read-only grant was advertised as mutable"
+    );
+    phone
+        .send(
+            "readonly-denied",
+            command("/usr/bin/printf 'bad\\n' >> auth-review-readonly.log"),
+            None,
+        )
+        .await?;
+    let pending = phone.pending("approval").await?;
+    for value in [
+        json!({"action":"resolve","pending_id":pending["id"],"request_id":"readonly-resolve","decision":"once"}),
+        json!({"action":"set_permissions","expected_revision":permissions["revision"],"full_authorization":true}),
+        json!({"action":"revoke_rule","request_id":"readonly-revoke","rule_id":"pretend-rule"}),
+        json!({"action":"send","request_id":"readonly-send","message":"forged authority","permission_mode":"ask"}),
+    ] {
+        let denied = readonly.request(request(value)).await?;
+        ensure!(
+            !denied.error.is_empty() && denied.error.contains("read-only"),
+            "Read-only authority mutation was not rejected at the transport boundary: {}",
+            denied.error
+        );
+    }
+    ensure!(
+        fixture.marker("auth-review-readonly.log").is_none(),
+        "Readonly grant approved an action"
+    );
+    phone.rpc(json!({"action":"cancel"})).await?;
+    phone.settled().await?;
+    phone.full(true).await?;
+    phone
+        .send(
+            "readonly-question",
+            json!([{"tool":"ask_user","arguments":{"question":"Read-only device cannot answer"}}]),
+            None,
+        )
+        .await?;
+    let question = phone.pending("question").await?;
+    let denied = readonly.request(request(json!({"action":"resolve","request_id":"readonly-answer","pending_id":question["id"],"answer":"pretend-user"}))).await?;
+    ensure!(
+        denied.error.contains("read-only"),
+        "Full bypassed read-only user-answer permissions"
+    );
+    phone.rpc(json!({"action":"cancel"})).await?;
+    phone.settled().await?;
+    fixture.finish()?;
+    Ok(())
+}
+fn json_with_version(mut value: Value) -> Value {
+    value["version"] = json!(1);
+    value
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "Requires account_demo built from the same integrated commit; run explicitly with --ignored"]
+async fn encrypted_native_inspection_is_usable_without_touching_shell_alias_or_draft() -> Result<()>
+{
+    let mut fixture = Fixture::start().await?;
+    fs::write(
+        fixture.dir.join("auth-review-inspection-source.log"),
+        "inspection\n",
+    )?;
+    fixture.manual_input("ls() { /usr/bin/touch auth-review-alias.log; }", true)?;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    fixture.manual_input("/usr/bin/touch auth-review-draft.log; ", false)?;
+    let phone = fixture.phone().await?;
+    phone.send("inspection",json!([{"tool":"inspect_command","arguments":{"command":"ls auth-review-inspection-source.log"}}]),None).await?;
+    ensure!(
+        phone.settled().await?["state"] == "completed",
+        "Native safe inspection was not usable"
+    );
+    let results = fixture.results("inspection")?;
+    let observed = results
+        .iter()
+        .map(|value| &value["result"])
+        .find(|value| value["source"] == "sidecar_read" && value["body"].is_string())
+        .context("Native inspection did not expose real archived evidence")?;
+    ensure!(
+        observed["program"] == "/bin/ls" && observed["exit_code"] == 0,
+        "Inspection used a mutable shell program or returned unknown"
+    );
+    let body: Value = serde_json::from_str(observed["body"].as_str().unwrap())?;
+    ensure!(
+        body["stdout"]["text"] == "auth-review-inspection-source.log\n",
+        "Inspection returned no real native stdout"
+    );
+    ensure!(
+        fixture.marker("auth-review-alias.log").is_none()
+            && fixture.marker("auth-review-draft.log").is_none(),
+        "Native observation executed shell alias or pending draft"
+    );
+    let page = phone.rpc(json!({"action":"pending"})).await?;
+    ensure!(
+        !page["items"]
+            .as_array()
+            .context("Pending list missing")?
+            .iter()
+            .any(|item| item["state"] == "pending"),
+        "Routine inspection required an operation approval"
+    );
+    phone.send("inspection-attack",json!([{"tool":"inspect_command","arguments":{"command":"ls .; /usr/bin/touch auth-review-inspection-attack.log"}}]),None).await?;
+    phone.settled().await?;
+    ensure!(
+        fixture
+            .results("inspection-attack")?
+            .iter()
+            .any(|value| value["result"]["error"].is_string()),
+        "Composite syntax was accepted by native observation"
+    );
+    ensure!(
+        fixture
+            .marker("auth-review-inspection-attack.log")
+            .is_none(),
+        "Composite native observation executed a side effect"
+    );
+    fixture.finish()?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "Requires account_demo built from the same integrated commit; run explicitly with --ignored"]
+async fn encrypted_human_wait_pauses_active_time_without_refreshing_call_budgets() -> Result<()> {
+    let mut fixture = Fixture::start().await?;
+    let phone = fixture.phone().await?;
+    fixture.model_seconds(4)?;
+    phone.send("human-budget",json!([
+        {"tool":"get_capabilities","arguments":{}},
+        {"tool":"ask_user","arguments":{"question":"Wait longer than this run's active budget"}},
+        {"tool":"get_capabilities","arguments":{}}
+    ]),None).await?;
+    let pending = phone.pending("question").await?;
+    let calls = fixture.calls("human-budget");
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    ensure!(
+        fixture.calls("human-budget") == calls,
+        "Human wait ran a model loop"
+    );
+    let state = phone.rpc(json!({"action":"state"})).await?;
+    ensure!(
+        matches!(
+            state["state"].as_str(),
+            Some("waiting_for_user" | "waiting")
+        ),
+        "Entire human wait consumed active time: {state}"
+    );
+    phone.rpc(json!({"action":"resolve","pending_id":pending["id"],"request_id":"human-budget-answer","answer":"continue"})).await?;
+    ensure!(
+        phone.settled().await?["state"] == "completed",
+        "Suspended active budget failed to resume"
+    );
+    let results = fixture.results("human-budget")?;
+    let before = results
+        .iter()
+        .find(|value| value["call_id"] == "auth-human-budget-0")
+        .context("Budget before wait missing")?;
+    let after = results
+        .iter()
+        .find(|value| value["call_id"] == "auth-human-budget-2")
+        .context("Budget after wait missing")?;
+    for key in ["model_rounds_remaining", "tool_calls_remaining"] {
+        let first = before["result"]["budget"][key]
+            .as_u64()
+            .context("Initial budget counter missing")?;
+        let last = after["result"]["budget"][key]
+            .as_u64()
+            .context("Resumed budget counter missing")?;
+        ensure!(
+            first.checked_sub(last) == Some(2),
+            "Human resume refreshed or recounted {key}: {first} -> {last}"
+        );
+    }
+    phone
+        .send(
+            "active-budget",
+            json!([{"tool":"wait","arguments":{"duration_ms":6000}}]),
+            None,
+        )
+        .await?;
+    let state = phone.settled().await?;
+    ensure!(
+        state["state"] == "paused"
+            && state["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("budget")),
+        "Active work did not retain the original execution budget: {state}"
+    );
+    fixture.finish()?;
+    Ok(())
+}
+
+async fn global_rpc(phone: &Phone, agent: &str, mut value: Value) -> Result<Value> {
+    value["agent_id"] = json!(agent);
+    phone.rpc_scope("", value).await
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "Requires account_demo built from the same integrated commit; run explicitly with --ignored"]
+async fn encrypted_shared_tree_pauses_only_when_all_children_are_human_blocked() -> Result<()> {
+    for active_sibling in [false, true] {
+        let mut fixture = Fixture::start().await?;
+        let phone = fixture.phone().await?;
+        fixture.model_seconds(4)?;
+        let other = fixture
+            .local
+            .call(Request {
+                operation: Operation::Create as i32,
+                command: vec!["/bin/sh".into(), "-i".into()],
+                cwd: fixture.dir.to_string_lossy().into_owned(),
+                rows: 24,
+                cols: 80,
+                ..Default::default()
+            })?
+            .info
+            .context("Second child Session unavailable")?;
+        fixture.local.call(Request {
+            operation: Operation::AttachDesktop as i32,
+            session: other.id.clone(),
+            ..Default::default()
+        })?;
+        let scope = phone
+            .rpc_scope(
+                "",
+                json!({"action":"global_create","request_id":"review-budget-global"}),
+            )
+            .await?;
+        let agent = scope["scope"]["agent"]
+            .as_str()
+            .context("Global scope missing")?
+            .to_owned();
+        let permissions = global_rpc(&phone, &agent, json!({"action":"permissions"})).await?;
+        global_rpc(&phone,&agent,json!({"action":"set_permissions","expected_revision":permissions["revision"],"full_authorization":true})).await?;
+        let question = json!({"id":"tree-child-question","steps":[{"tool":"ask_user","arguments":{"question":"First delegated human wait"}}]});
+        let sibling = if active_sibling {
+            json!({"id":"tree-child-active","steps":[{"tool":"wait","arguments":{"duration_ms":6000}}]})
+        } else {
+            json!({"id":"tree-child-human","steps":[{"tool":"ask_user","arguments":{"question":"Second delegated human wait"}}]})
+        };
+        let root = json!({"id":"tree-root","steps":[
+            {"tool":"send_agent_message","arguments":{"session_id":fixture.config["session"],"message":format!("AUTH_REVIEW:{question}")}},
+            {"tool":"send_agent_message","arguments":{"session_id":other.id,"message":format!("AUTH_REVIEW:{sibling}")}},
+            {"tool":"wait_agent_tasks","arguments":{"task_ids":[
+                {"$fixture_ref":{"step":0,"pointer":"/task_id"}},
+                {"$fixture_ref":{"step":1,"pointer":"/task_id"}}
+            ],"mode":"all","timeout_ms":30000}}
+        ]});
+        global_rpc(&phone,&agent,json!({"action":"send","request_id":"tree-root-start","permission_mode":"ask","message":format!("AUTH_REVIEW:{root}")})).await?;
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let pending = loop {
+            let page = global_rpc(&phone, &agent, json!({"action":"pending"})).await?;
+            let questions = page["items"]
+                .as_array()
+                .context("Delegated pending missing")?
+                .iter()
+                .filter(|item| item["kind"] == "question" && item["state"] == "pending")
+                .cloned()
+                .collect::<Vec<_>>();
+            if questions.len() == if active_sibling { 1 } else { 2 }
+                && fixture.calls("tree-root") >= 3
+            {
+                break questions;
+            }
+            let state = global_rpc(&phone, &agent, json!({"action":"state"})).await?;
+            ensure!(
+                state["state"] != "paused" && Instant::now() < deadline,
+                "Delegated wait did not start: {state}"
+            );
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        };
+        let calls = fixture.calls("tree-root");
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        let state = global_rpc(&phone, &agent, json!({"action":"state"})).await?;
+        if active_sibling {
+            ensure!(
+                state["state"] == "paused"
+                    && state["error"]
+                        .as_str()
+                        .is_some_and(|error| error.contains("budget")),
+                "One waiting child paused a still-active sibling's budget: {state}"
+            );
+        } else {
+            ensure!(
+                matches!(
+                    state["state"].as_str(),
+                    Some("running" | "waiting" | "waiting_for_user")
+                ),
+                "Entire blocked tree exhausted its active budget: {state}"
+            );
+            ensure!(
+                fixture.calls("tree-root") == calls,
+                "Parent polled the model while children awaited humans"
+            );
+            for (index, item) in pending.iter().enumerate() {
+                global_rpc(&phone,&agent,json!({"action":"resolve","request_id":format!("tree-answer-{index}"),"pending_id":item["id"],"answer":"continue"})).await?;
+            }
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                let state = global_rpc(&phone, &agent, json!({"action":"state"})).await?;
+                if state["state"] == "completed" {
+                    break;
+                }
+                ensure!(
+                    state["state"] != "paused" && Instant::now() < deadline,
+                    "Suspended tree failed after answers: {state}"
+                );
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
+            let results = fixture.results("tree-root")?;
+            let waited = results
+                .iter()
+                .find(|value| value["call_id"] == "auth-tree-root-2")
+                .context("Batch wait result missing")?;
+            let tasks = waited["result"]["tasks"]
+                .as_array()
+                .context("Batch exact task results missing")?;
+            ensure!(
+                tasks.len() == 2
+                    && tasks.iter().all(|task| task["state"] == "completed")
+                    && waited["result"]["timed_out"] == false,
+                "Batch wait did not resume exact children: {waited}"
+            );
+        }
+        fixture.finish()?;
+    }
     Ok(())
 }

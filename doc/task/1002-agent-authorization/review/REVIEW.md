@@ -70,6 +70,10 @@ runtime 未提交的 `action_descriptor` 仅 hash 第一个绝对路径 token，
 
 policy 初版 `5eb063c` 把所有普通 operands、文本、路径和未知 MCP 参数隐藏。例如 `rm /tmp/a` 与 `rm /tmp/b` 的预览相同，用户无法理解批准对象。协调者已否决并安排可读 preview followup；普通命令、参数、路径应可读，仅敏感 key/flag/known secret 脱敏。过长动作的新 `approval_details` 分页和完整详情 ack 必须在服务端、CLI、Android、iOS 同时生效；未读齐不能 once/always，deny/stop 应仍可达。
 
+### R13：结构化 once/always 的输入证明在末端可能不检查（高，待修）
+
+恢复后读取 runtime 的 `user_interaction.rs`：`check`/`commit` 仅在 `initially_safe && run_command` 时检查输入 revision/空行，最终合同中 PTY run_command 全部 RequiresApproval，因此这些条件不会成立。永久指纹按设计不含瞬时 revision，common 使用初始 rule_eligible；若另一 Agent 在 pending 等待期间向同 Session 写半行而不改变 manual_revision，旧 grant 仍可能把命令追加到不同 draft。需绑定每次确切动作的 Actor input_revision，结构化输入的已有证明在消费前重新核对；规则命中也必须重新确认当前 can_always。不要拿终端输出 screen revision 代替输入 revision，避免无关输出造成假冲突。本项已通过持久 message 报协调者；CLI direct send 的进程核验失败，未把它当作执行者未恢复的证据。
+
 ## 阶段 2 必要验收矩阵
 
 每项要记录测试名、被测 commit、行为证据与结果；下列均为待执行。
@@ -97,6 +101,7 @@ policy 初版 `5eb063c` 把所有普通 operands、文本、路径和未知 MCP 
 | A19 | 再授权后撤销 | always/revoke/always 后公开 rule ID 仍可撤销，随后同命令再出现审批且没有自动副作用 |
 | A20 | 可变执行目标 | 解释器脚本、wrapper、compound 不因首个绝对程序 hash 获得不完整的永久匹配；身份未固定时 can_always=false |
 | A21 | 可读详情与 ack | 普通危险操作的实际目标和参数可辨认；敏感值脱敏；分页读齐且ack绑定确切pending才能once/always，过期/错scope/错fingerprint不接受 |
+| A22 | Agent 输入竞态 | pending 创建后另一个合法 Agent 改输入draft，旧结构化grant不沿用改变前的inputproof；人工和Agent输入版本均有覆盖 |
 
 ## 验收设施和证据边界
 
