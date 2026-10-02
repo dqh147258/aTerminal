@@ -1,0 +1,38 @@
+{
+  "phase": "completed owned scope",
+  "commits": [
+    "c29f404",
+    "fe8d656",
+    "5ddf090",
+    "b81107f",
+    "c604b8e",
+    "28d5700"
+  ],
+  "verification": {
+    "focused_tests": 22,
+    "passed": 22,
+    "actual_shells": [
+      "/bin/bash",
+      "/bin/zsh"
+    ],
+    "broker": "actual runtime39fcb54 parents; local actor stub around real temporary PTY; native observation permit included",
+    "clippy": "passed two lib crates --locked --jobs2 --no-default-features -Dwarnings",
+    "format": "all and owned rustfmt checks passed",
+    "test_threads": 2,
+    "cargo_jobs": 2
+  },
+  "next": [],
+  "scratch": "/Volumes/Code/public-worktree/aTerminal/.worktree-tasks/toolset-check-0a94b6",
+  "policy_dependency": "5b89a2d",
+  "runtime_dependency": "39fcb54",
+  "remaining_coordinator_scope": [
+    "independent Review",
+    "main integration High validation",
+    "Android/iOS/CLI full acceptance"
+  ],
+  "limits": [
+    "PowerShell unavailable on this Mac; hooks not runtime-tested",
+    "Broker PTY tests use a local Actor stub; actual runtime parents and native observation permit tested",
+    "unknown application tasks have no universal completion adapter"
+  ]
+}
