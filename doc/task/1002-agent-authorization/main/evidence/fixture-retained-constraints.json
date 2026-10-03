@@ -1,0 +1,35 @@
+{
+  "checks": [
+    {
+      "kind": "compression",
+      "prior_scenario": false,
+      "no_tool_calls": true,
+      "valid_summary": true
+    },
+    {
+      "kind": "compression",
+      "prior_scenario": true,
+      "no_tool_calls": true,
+      "valid_summary": true
+    },
+    {
+      "kind": "retained_constraints",
+      "case": "current",
+      "current_selected": true,
+      "old_summary_not_replayed": true
+    },
+    {
+      "kind": "retained_constraints",
+      "case": "delegated",
+      "current_selected": true,
+      "old_summary_not_replayed": true
+    },
+    {
+      "kind": "retained_constraints",
+      "case": "empty",
+      "current_selected": false,
+      "old_summary_not_replayed": true
+    }
+  ],
+  "example_sha256": "62b2b8319c7bf14cc7a09ba45277cd0da9290924e8efb979764e23ca25e20855"
+}

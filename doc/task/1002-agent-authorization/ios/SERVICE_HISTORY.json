@@ -14,5 +14,13 @@
     "cli": "/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/target/debug/aTerminal",
     "scope": "disposable fresh iOS only; local deterministic model; prior service preserved privately",
     "stopped_reason": "Preserve original keyboard failure; replace private mock with compression-aware fixture"
+  },
+  {
+    "fixture_dir": "/var/folders/85/nscyc5g90sn18qw0_2l1qnt40000gn/T/aterminal-ios-auth-compaction-48sdw0bz",
+    "pid": 40621,
+    "example": "/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/target/debug/examples/account_demo",
+    "cli": "/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/target/debug/aTerminal",
+    "scope": "disposable iOS only; compression-aware deterministic fixture; no user state",
+    "stopped_reason": "Retain first compression HTTP evidence; update deterministic current-constraint parser"
   }
 ]

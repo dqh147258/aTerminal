@@ -38,8 +38,25 @@ fn text(message: &Value) -> String {
 
 fn scenario_text(message: &Value) -> Option<String> {
     let content = text(message);
+    if let Some(prompt) = scenario_prompt(&content) {
+        return Some(prompt);
+    }
+    // Host keeps the current user task separately from the lossy history
+    // summary. Recover only that field, never a scenario quoted in old history.
+    content.strip_prefix("Earlier context summary: ")?;
+    let (_, archive) = content.rsplit_once("\nArchive UUID: ")?;
+    let (_, constraints) = archive
+        .split_once(". Original observations can be read by UUID. Current task constraints: ")?;
+    let constraints: Vec<String> = serde_json::from_str(constraints).ok()?;
+    constraints
+        .iter()
+        .rev()
+        .find_map(|constraint| scenario_prompt(constraint))
+}
+
+fn scenario_prompt(content: &str) -> Option<String> {
     if content.starts_with("AUTH_REVIEW:") {
-        return Some(content);
+        return Some(content.to_owned());
     }
     let delegated = content.strip_prefix("Task delegated within the authenticated user run: ")?;
     let delegated: Value = serde_json::from_str(delegated).ok()?;

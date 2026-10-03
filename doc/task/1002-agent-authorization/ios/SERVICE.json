@@ -1,7 +1,7 @@
 {
-  "fixture_dir": "/var/folders/85/nscyc5g90sn18qw0_2l1qnt40000gn/T/aterminal-ios-auth-compaction-48sdw0bz",
-  "pid": 40621,
+  "fixture_dir": "/var/folders/85/nscyc5g90sn18qw0_2l1qnt40000gn/T/aterminal-ios-auth-retained-2fon8__8",
+  "pid": 46707,
   "example": "/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/target/debug/examples/account_demo",
   "cli": "/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/target/debug/aTerminal",
-  "scope": "disposable iOS only; compression-aware deterministic fixture; no user state"
+  "scope": "disposable iOS only; final compression-aware retained-constraint fixture"
 }
