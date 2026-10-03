@@ -1,0 +1,61 @@
+{
+  "real_encrypted_rpc": true,
+  "elapsed_seconds": 79.891,
+  "failed_case": "cwd-back",
+  "state": {
+    "agent_id": "01a0ff25-04f6-74ab-93ee-8a2773b0709d",
+    "available": true,
+    "config_revision": 1,
+    "error": null,
+    "history_generation": 0,
+    "last_event_sequence": 238,
+    "live_text": "",
+    "pending": {
+      "cursor": null,
+      "has_more": false,
+      "items": []
+    },
+    "permissions": {
+      "can_mutate": true,
+      "full_authorization": false,
+      "permission_mode": "ask",
+      "revision": 2
+    },
+    "queued_messages": 0,
+    "root_user_message_id": "01a0ff25-b58f-77a9-bcca-4132869de34f",
+    "run_id": "01a0ff25-b58f-77a9-bcca-4133059b8883",
+    "state": "completed"
+  },
+  "reached_checks": {
+    "real_encrypted_rpc": true,
+    "once_and_idempotent_replay": true,
+    "long_details_before_approval": true,
+    "exact_rule_across_runs": true,
+    "denied_without_side_effect": true,
+    "options_and_free_text": true,
+    "software_ime_answer_focus_recovery": true,
+    "full_persists_across_runs_until_closed": true,
+    "global_full_closed_and_scope_isolated": true,
+    "passed": false
+  },
+  "markers_line_counts": {
+    "auth-review-always.log": 2,
+    "auth-review-cancelled.log": null,
+    "auth-review-closed-write.log": null,
+    "auth-review-cwd.log": null,
+    "auth-review-denied.log": null,
+    "auth-review-full-off.log": 1,
+    "auth-review-full.log": 2,
+    "auth-review-global-full-off.log": null,
+    "auth-review-global-full.log": 1,
+    "auth-review-long.log": 1,
+    "auth-review-once.log": 1,
+    "auth-review-subdir/auth-review-always.log": 1
+  },
+  "runtime_binaries": {
+    "/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/target/debug/aTerminal": "bc255902114bb0c2c4c25aab73f68a2075762a43774689833897dc76207fdd72",
+    "/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/target/debug/examples/account_demo": "d06ede28cc731ce77a2baba34c727019fc3e24398c665376bdcf731c5f20d921"
+  },
+  "artifact_dir": "build/authorization-rpc-final",
+  "diagnosis": "Compacted current AUTH_REVIEW is retained in Host Current task constraints JSON, unsupported by fixture scenario_text; root fixture followup requested"
+}

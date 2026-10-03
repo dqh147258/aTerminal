@@ -53,8 +53,11 @@ class AgentAuthorizationRpcUiTest {
     }
     private fun screenshot(name: String) {
         instrumentation.waitForIdleSync()
-        instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
-            context.filesDir.resolve("agent-ui-$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }; bitmap.recycle()
+        var bitmap: Bitmap? = null
+        repeat(3) { if (bitmap == null) { bitmap = instrumentation.uiAutomation.takeScreenshot(); if (bitmap == null) Thread.sleep(200) } }
+        if (name == "authorization-question") assertNotNull("Fresh screenshot must show the answer and submit button above the IME", bitmap)
+        bitmap?.let { captured ->
+            context.filesDir.resolve("agent-ui-$name.png").outputStream().use { captured.compress(Bitmap.CompressFormat.PNG, 100, it) }; captured.recycle()
         }
     }
     private fun task(id: String, command: String? = null, steps: JSONArray? = null, waitCommand: Boolean = true) {
@@ -125,6 +128,7 @@ class AgentAuthorizationRpcUiTest {
         main { dialog()!!.dismiss() }
     }
 
+    @androidx.test.filters.SdkSuppress(minSdkVersion = 30)
     @Test fun nativeApprovalsQuestionsRulesFullAndCwdRoundTrip() {
         val fixture = JSONObject(context.filesDir.resolve("agent-ui-fixture.json").readText())
         val account = Account(); remote = RemoteTerminal(); session = fixture.getString("session")
@@ -154,7 +158,17 @@ class AgentAuthorizationRpcUiTest {
             waitFor("activity") { main { ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<MainActivity>().firstOrNull { it.hasWindowFocus() }?.also { activity = it } != null } }
             main {
                 root = activity.column(); root.addView(activity.row().apply { addView(activity.heading("Agent")); addView(activity.label("关闭")) })
-                activity.setContentView(root)
+                val frame = FrameLayout(activity).apply {
+                    setBackgroundColor(Palette.background)
+                    // Match MainActivity's production inset owner, including the IME padding.
+                    setOnApplyWindowInsetsListener { view, insets ->
+                        view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+                        insets.consumeSystemWindowInsets()
+                    }
+                    addView(root, FrameLayout.LayoutParams(-1, -1))
+                }
+                activity.setContentView(frame)
+                frame.requestApplyInsets()
                 chat = AgentPanel(activity, root, listOf(fixture.getString("server"), fixture.getString("username"), desktop), session, { true }, { target, raw ->
                     sent.add(target to raw); remote.agent(target, raw)
                 }, {}, cachePath = cache.path, workingPath = { "Fixture Desktop" })
@@ -205,8 +219,16 @@ class AgentAuthorizationRpcUiTest {
                 assertTrue(input.hasFocus()); assertEquals("保留完整说明", input.text.toString()); assertEquals(2, input.selectionStart); assertEquals(4, input.selectionEnd)
                 val button = tagged("answer-submit:$questionId"); button.requestRectangleOnScreen(android.graphics.Rect(0, 0, button.width, button.height), true)
             }
-            waitFor("question submit reachable above IME") { main { val button = tagged("answer-submit:$questionId"); val rect = android.graphics.Rect()
-                button.getGlobalVisibleRect(rect) && rect.height() >= activity.dp(44) } }
+            waitFor("question input and submit fully above IME") { main {
+                val insets = activity.window.decorView.rootWindowInsets ?: return@main false
+                val imeTop = activity.window.decorView.height - insets.getInsets(android.view.WindowInsets.Type.ime()).bottom
+                val input = tagged("answer:$questionId"); val button = tagged("answer-submit:$questionId")
+                button.requestRectangleOnScreen(android.graphics.Rect(0, 0, button.width, button.height), true)
+                fun aboveIme(view: View): Boolean { val visible = android.graphics.Rect(); val location = IntArray(2); view.getLocationOnScreen(location)
+                    return view.getGlobalVisibleRect(visible) && visible.height() >= view.height - 2 && location[1] >= 0 && location[1] + view.height <= imeTop
+                }
+                aboveIme(input) && aboveIme(button) && button.height >= activity.dp(44)
+            } }
             screenshot("authorization-question")
             main { tagged("answer-submit:$questionId").performClick()
                 (activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(root.windowToken, 0) }
@@ -293,6 +315,16 @@ class AgentAuthorizationRpcUiTest {
             // Close only the disposable fixture PTY. Scope history, device grant and management remain usable.
             remote.closeSelected()
             waitFor("fixture terminal closed") { remote.sessions().none { it.id == session } }
+            // The existing mobile transport ends its selected-terminal subscription on close.
+            // Reconnect the same account/Desktop without selecting a new terminal, then validate the archived scope.
+            main { chat?.pause() }
+            remote.disconnect()
+            Thread.sleep(600) // Allow the previous encrypted channel's shutdown to settle before normal reconnect.
+            account.connect(desktop, remote)
+            waitFor("closed scope connection restored") { request("permissions").getBoolean("can_mutate") }
+            assertTrue(remote.sessions().none { it.id == session })
+            main { chat?.resume() }
+            report.put("closed_scope_reconnected_same_desktop", true)
             permissionsDialog()
             main { tagged("mode:read_only").performClick() }
             waitFor("closed scope readonly setting") { request("permissions").optString("permission_mode") == "read_only" }

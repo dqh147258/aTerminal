@@ -43,3 +43,11 @@ Android 源码已实现：
 本地29聚焦首轮28过（16授权全部通过）；唯一旧页paging请求在loading期间被丢，已修为加载完成后继续旧页请求。新增真实路由会修改command字段的R20回归后再跑R20+完整图片/分页/设置用例2/2通过（14.581秒）。成功nonce key在RPC加version/agent_id之前捕获，避免清错key。其他27项首轮已过；后续不无差别扩大测试。
 
 真实RPC首轮79.774秒未过，完整日志/响应/模型observations保存在`build/authorization-rpc-first`：once重放、长详情fp/ack、Native永久跨Run、deny、问答、PTYfull跨Run、Globalfull关闭/Session隔离已实链通过。cwd切入/相同Native不同cwd审批完成，cwd-back时模型fixture未识别Application compression stage、错误返回tool；Host正确报compression_tools_forbidden。已交root最小fixture修复，Android不改Rust。R20第二撤销与Closed链未到达，不能宣称已验收。runner补finally独立保存实际marker，即便失败也保留；首轮旧runner未保留临时marker文件，日志/响应/模型证据仍完整。
+
+第二轮真实RPC79.891秒仍未完成，独立实际marker已保存在`build/authorization-rpc-final/authorization-actual-markers.json`，二进制SHA256与root指定一致。新增软件IME可见、输入/选择跨轮询、按钮可达已真实通过。cwd-back进入completed/pending空：fixture未识别压缩后的官方`Current task constraints`数组，走generic答复；已给root准确源码证据，root最小fixture解析修复中。不改Host/权限、不开新的Rust执行者、不放宽pending/行数判据。缩减的无密失败摘要见`RPC_FAILURE_2.json`，完整日志/响应/模型/截图在生成物目录。
+
+当前源码所有修复已提交86a906d；实际IME测试/runner收尾提交f49d052。当前root短example编译窗口，不运行Gradle或Android UI。待新examplehash后第三轮同CLI、同Required完整真实RPC，只有全判据通过后报告Completed。
+
+第三/第四轮已真实达到 R20 Native 三行、两次 UI revoke rules 为空且 UUID 不同、后续相同参数再次 pending/deny、cwd变化与规则不同指纹、取消、Global模式隔离。末端Closed失败由fixture生命周期导致：account_demo循环固定Poll已关闭唯一Session，返回session_not_found后example退出，账号/模型服务一起掉线；root已准确定位并接管最小授权fixture改动。不是Android权限拒绝，不能靠backoff或忽略异常当通过。完整第三/第四生成物目录独立保留。
+
+root截图审阅发现早期IME断言只用GlobalVisibleRect不足以排除键盘遮挡；fixture setContentView裸column丢生产inset owner，未证明实际可达。已最小修测试：FrameLayout使用生产同OnApplyWindowInsets padding，input与submit完整screen rect均需bottom<=实际IME top，等requestRectangleOnScreen布局；question截图必须当次成功获取，内容和按钮在键盘之上。此严格补丁尚待新fixture后完整实际验收，旧轮次不作为该布局通过证据。Closed正常同账号/Desktop reconnect保留，不选择/重建已关闭PTY；原终端watch连接持续存活不宣称验证。
