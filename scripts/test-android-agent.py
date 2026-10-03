@@ -109,6 +109,18 @@ with tempfile.TemporaryDirectory(prefix='aterminal-agent-ui-') as directory:
             (args.output/'task-durability.json').write_text(json.dumps({'state': persisted[0], 'remaining_child_pins': pins, 'error_truncated': task_error['error_truncated']}, indent=2))
             print('PASS: native Agent settings, encrypted RPC, task results/waits, retention, long errors, PTY evidence and vision upload:', args.output/'results.json')
     finally:
+        if args.authorization:
+            declared = {}
+            result_file = args.output/'results.json'
+            if result_file.exists():
+                declared = json.loads(result_file.read_text()).get('expected_markers', {})
+            names = set(declared) | {str(path.relative_to(state)) for path in state.rglob('auth-review*') if path.is_file()}
+            actual = {}
+            for name in sorted(names):
+                marker = (state/name).resolve()
+                if marker.is_relative_to(state.resolve()) and marker != state.resolve():
+                    actual[name] = marker.read_text(errors='replace').splitlines() if marker.is_file() else None
+            (args.output/'authorization-actual-markers.json').write_text(json.dumps(actual, indent=2))
         for name in ['task-result-observations.json', 'task-error-observations.json', 'authorization-model-observations.jsonl']:
             if (state/name).exists():
                 shutil.copyfile(state/name, args.output/name)

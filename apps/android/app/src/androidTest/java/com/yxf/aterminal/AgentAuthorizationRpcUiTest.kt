@@ -63,10 +63,12 @@ class AgentAuthorizationRpcUiTest {
             .put("command_id", JSONObject().put("\$fixture_ref", JSONObject().put("step", 0).put("pointer", "/command_id")))
             .put("timeout_ms", 30000)))
         val message = "AUTH_REVIEW:" + JSONObject().put("id", id).put("steps", tools)
-        waitFor("composer can send $id") { main { views().any { it.contentDescription == "发送" && it.isEnabled } } }
+        waitFor("composer ready $id") { main { authorization?.canSend == true && views().any { it.contentDescription == "发送" } &&
+            views().filterIsInstance<EditText>().any { it.contentDescription == "发送任务或追加消息" && it.isEnabled } } }
         main {
             (views().first { it.contentDescription == "发送任务或追加消息" } as EditText).setText(message)
-            views().first { it.contentDescription == "发送" && it.isEnabled }.performClick()
+            val send = views().first { it.contentDescription == "发送" }
+            assertTrue("Draft should enable send", send.isEnabled); send.performClick()
         }
         waitFor("task acknowledged $id") { main { (views().first { it.contentDescription == "发送任务或追加消息" } as EditText).text.isEmpty() } }
     }
