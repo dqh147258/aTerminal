@@ -1,5 +1,11 @@
 # 当前恢复摘要
 
+2026-10-03 08:40 当前有效摘要：仅 Android + iOS 两个原 Sol/high Session，系统窗口仍归 Android；iOS `d4f9021` 稳定 presentation 源码已合 main，Foundation 主线检查通过，等待窗口。后端实现仍最终45ab2d4，Review18/18已过；新增只改确定性 example 的 `dd8fa86/d4547bd` 处理压缩 no-tools 与 Host retained Current task constraints，真实 HTTP 2+5例通过。main 最新 `7b4300d`；工具目录 [TOOLS.md](TOOLS.md) 记录 Session21/Global29及实际权限。
+
+Android第三轮真实R20再授/第二次撤销、实际IME文字选择保持、cwd/Globalfull/取消均已过；完整RPC尚未通过：closeSelected后watch连接offline，允许同账号Desktop正常重连后继续测真实closed scope，不select已关PTY，不改Rust；root看third问答截图发现测试setContentView的root缺生产insets处理、getGlobalVisibleRect没排除IME遮挡，已要求补fixture避让与真实可达断言/截图，第四轮仍必需。失败证据在Android build/authorization-rpc-{first,final,third}，不放宽marker。Android释放后通知iOS仅用root最新私有服务：`retained-2fon8__8` / PID46707，准确路径见 ios/SERVICE.json，旧服务已SIGINT停止并保留SERVICE_HISTORY.json；最终exampleSHA256 `62b2b8319c7bf14cc7a09ba45277cd0da9290924e8efb979764e23ca25e20855`，CLI `bc255902114bb0c2c4c25aab73f68a2075762a43774689833897dc76207fdd72`，路径仍Review target/debug。inbox消费至264，唯一receiver进程exec session65453仍在等；恢复先收它，不创建竞争cursor接收器。最终跨端/main验收未完成。
+
+以下为已被替代的历史记录；恢复优先本段、PLAN/CONTRACT和最新SQLite状态。
+
 2026-10-03 08:14（Asia/Singapore）有效摘要：main HEAD `fc88928`；仅 Android/iOS 两个 Sol/high 原执行者存活，没有新启动代理。policy/toolset/runtime/后端 Review 已完成关闭，代码已整合；18/18 加密后端场景通过。Android 独占构建/模拟器窗口：16 授权本地用例已过，29 聚焦中旧页加载竞态暴露并正在修复；R20 追加 version/agent_id 后重算 nonceKey 的问题已定位，必须发送前捕获 key。iOS 正静态修复 LazyVStack 问答 sheet 生命周期，移动到稳定 ChatPanel 并把草稿存至 AssistantModel；在 Android 释放前不运行 Xcode/模拟器。
 
 当前 run/Session/thread 仍见 WORKTREES.json；inbox 消费至257。下一步收两个执行者阶段结果，Android 释放后给 iOS 系统窗口；真实 UI/RPC 和最终 main 必要检查通过前不标 Completed。root 私有 iOS 服务仍为 `fresh-jcrw0hv_` / PID76779，准确路径见 ios/SERVICE.json；旧 `final-ohadryvi` 已停止并保留于 SERVICE_HISTORY.json。main 仅这两份服务记录未提交，凭据未写入文档。后续历史段落被本段及 CONTRACT 取代，不能作为当前调度依据。
