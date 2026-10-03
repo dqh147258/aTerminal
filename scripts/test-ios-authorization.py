@@ -70,6 +70,14 @@ try:
     report['pty_and_native_markers'] = observed
     report['passed'] = True
 finally:
+    # Failure evidence is equally important: retain only this synthetic prefix,
+    # never credentials or a copy of the account database.
+    actual = {}
+    for suffix in ['once', 'always', 'full', 'long', 'deny', 'full-off']:
+        marker = fixture / (prefix + '-' + suffix + '.log')
+        actual[suffix] = marker.read_text() if marker.exists() else None
+    report['actual_markers'] = actual
+    (args.output / 'actual-markers.json').write_text(json.dumps(actual, indent=2) + '\n')
     observations = fixture / 'authorization-model-observations.jsonl'
     if observations.exists():
         shutil.copyfile(observations, args.output / observations.name)
