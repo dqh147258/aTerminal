@@ -2,6 +2,8 @@
 
 状态：In progress。以下是阶段证据，尚未达到任务 Completed 条件。
 
+2026-10-03 09:37 当前有效结果：Android最终415a5c3已合main（7f480f6）并关闭其执行者/辅助终端，close.errors为空；16授权、最终滚动/焦点等10项相关回归和真实加密UI/RPC119.11s通过（1执行、0忽略）。root复核最终IME鲜图可同时看到回答文字/选择和提交按钮；R20两次撤销、精确三行与R21closed scope问答/设置/精确拒绝+无marker通过，[审查与证据](main/MOBILE_REVIEW.md)已归档。iOS d4f9021最新build与稳定sheet键盘聚焦1/1通过，9项本地与完整真实UI/RPC正在独占窗口执行。仅iOS活跃，最终main Rust/CLI/相关移动检查仍待，不宣称整体完成。以下历史阶段不覆盖本段。
+
 2026-10-03 08:14 当前结果：后端最终 `45ab2d4` 与独立 Review `287b7e4` 已合 main，18/18 实际加密 RPC 通过；当前 main `fc88928`。Android 本地16项授权通过，最终聊天回归/实际 UI-RPC 和 R20 路由字段变更下的 nonce 清除修复正在验证；iOS 需要稳定父视图问答生命周期修复、最终本地与实际 UI-RPC。两端仅有阶段通过证据，最终 main aggregate 尚待执行。以下早期阶段记录保留用于追溯，不代表当前完整验收。
 
 最新阶段：后端Review287b7e4通过18/18独立真实加密RPC（0ignored，107.33s）及strictclippy，完整marker/工具结果和原fixture失败日志已合main。报告[review/RESULTS.md](review/RESULTS.md)明确Android R20/R21与两端原生UI/RPC为open transferred_required，不是可选项。iOS3f7a2b源已合main，最新build-for-testing+7/7本地XCTest通过，真实RPC正在独立服务跑；Android恢复后静态准备，暂不并发大构建。最终mainaggregate和跨端必要验收仍未完成。

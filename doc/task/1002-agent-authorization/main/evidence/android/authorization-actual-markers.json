@@ -1,0 +1,33 @@
+{
+  "auth-review-always.log": [
+    "always",
+    "always",
+    "always"
+  ],
+  "auth-review-cancelled.log": null,
+  "auth-review-closed-write.log": null,
+  "auth-review-cwd.log": [
+    "cwd"
+  ],
+  "auth-review-denied.log": null,
+  "auth-review-full-off.log": [
+    "after-off"
+  ],
+  "auth-review-full.log": [
+    "full",
+    "full"
+  ],
+  "auth-review-global-full-off.log": null,
+  "auth-review-global-full.log": [
+    "global-full"
+  ],
+  "auth-review-long.log": [
+    "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                long"
+  ],
+  "auth-review-once.log": [
+    "once"
+  ],
+  "auth-review-subdir/auth-review-always.log": [
+    "always"
+  ]
+}

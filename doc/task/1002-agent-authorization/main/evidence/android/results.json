@@ -1,0 +1,71 @@
+{
+  "real_encrypted_rpc": true,
+  "model_source": "local deterministic fixture",
+  "expected_markers": {
+    "auth-review-once.log": [
+      "once"
+    ],
+    "auth-review-always.log": [
+      "always",
+      "always",
+      "always"
+    ],
+    "auth-review-long.log": [
+      "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                long"
+    ],
+    "auth-review-global-full.log": [
+      "global-full"
+    ],
+    "auth-review-global-full-off.log": null,
+    "auth-review-closed-write.log": null,
+    "auth-review-cancelled.log": null,
+    "auth-review-denied.log": null,
+    "auth-review-full.log": [
+      "full",
+      "full"
+    ],
+    "auth-review-full-off.log": [
+      "after-off"
+    ],
+    "auth-review-cwd.log": [
+      "cwd"
+    ],
+    "auth-review-subdir\/auth-review-always.log": [
+      "always"
+    ]
+  },
+  "expected_refusals": {
+    "closed-write": {
+      "auth-closed-write-0": "observe_terminal_after_uncertain_action",
+      "auth-closed-write-0-observe": "session_belongs_to_another_account"
+    }
+  },
+  "cwd": "\/private\/var\/folders\/85\/nscyc5g90sn18qw0_2l1qnt40000gn\/T\/aterminal-agent-ui-n5bhnv4u\/desktop",
+  "once_and_idempotent_replay": true,
+  "long_details_before_approval": true,
+  "exact_rule_across_runs": true,
+  "denied_without_side_effect": true,
+  "ime_layout": {
+    "ime_top": 1507,
+    "input_rect": "[77,986][1003,1123]",
+    "button_rect": "[77,1139][1003,1271]",
+    "scroll_rect": "[0,379][1080,1271]",
+    "scroll_y": 8979
+  },
+  "options_and_free_text": true,
+  "software_ime_answer_focus_recovery": true,
+  "full_persists_across_runs_until_closed": true,
+  "global_full_closed_and_scope_isolated": true,
+  "cwd_reassessed_exact_rule": true,
+  "regrant_second_revoke_new_nonce": true,
+  "revocation_requires_new_approval": true,
+  "waiting_run_can_stop": true,
+  "read_only_uses_desktop_mode": true,
+  "closed_scope_reconnected_same_desktop": true,
+  "closed_write_blocked_by_safety_barrier": true,
+  "closed_observation_unavailable": true,
+  "closed_scope_queries_questions_settings": true,
+  "closed_write_denied_by_host": true,
+  "primary_preferences_unchanged": true,
+  "passed": true
+}

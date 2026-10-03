@@ -1,0 +1,6 @@
+{
+  "closed-write": {
+    "auth-closed-write-0": "observe_terminal_after_uncertain_action",
+    "auth-closed-write-0-observe": "session_belongs_to_another_account"
+  }
+}

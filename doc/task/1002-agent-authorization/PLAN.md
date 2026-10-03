@@ -89,7 +89,7 @@
 - [x] 启动并记录五个实现子任务与各自 worktree/分支/SessionID，见 [WORKTREES.json](WORKTREES.json)。均从 `main / 3f8ebe0` 创建，无复制旧凭据或运行状态。
 - [x] 策略、运行时和工具 helper 交付并互相接线；最终后端实现已合 main。相关执行者均完成并关闭。
 - [x] 后端独立源码 Review + 18 个实际加密 RPC 通过（287b7e4，0 ignored，107.33s），阶段完成并关闭；移动端必要问题转交 root，仍需完成。
-- [ ] Android 最终构建、16 项授权 UI 与13项聊天回归、实际加密 UI/RPC；R20 请求被路由追加字段后仍需清除原 nonce，R21 管理权限与 Terminal 状态分离需闭环。
+- [x] Android 最终415a5c3已合main并关闭子任务：16项授权、原聊天回归、最新滚动/焦点等10项相关回归以及完整真实加密UI/RPC通过；R20两次实际撤销、新nonce、三行marker正确；R21 closed scope查询/问答/设置可用，full写入仍被确切Host屏障/closed观测拒绝，无marker。root最终截图确认input/submit同现IME上方，证据在main/evidence/android；不宣称原连接关闭后持续在线或实际detached Android链已测试。
 - [ ] iOS 问答/详情改由稳定 ChatPanel 承载、按 scope/pending 保留草稿；最终 Foundation、XCTest 与完整实际加密 UI/RPC。
 - [ ] Android/iOS/CLI 同步并完成各端验证。
 - [ ] 独立 Review、必要修复、最终 main 集成测试。

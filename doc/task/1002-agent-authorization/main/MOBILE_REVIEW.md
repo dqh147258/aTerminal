@@ -15,3 +15,7 @@ iOS 生命周期（`d4f9021`）：question/details 的 sheet 从 LazyVStack 卡�
 审查未发现本轮修复扩大调用权限或改变 Terminal 的 cwd/PTY 语义。Android 新 IME 回归（`f49d052`）暂时开启 software keyboard 并在 finally 恢复原设置；专用授权包继续隔离正常账号。最终 main 必要检查、实际 marker 与原失败证据仍需在交付前归档。
 
 关闭 Session 的测试服务生命周期：第三/四轮 offline/channel closed 的明确根因为 account_demo 每2秒 Poll 唯一临时 Session，关闭后错误使测试服务退出；不归因旧 JNI 缓存或未证实的生产连接问题。仅授权 fixture 改为 Poll 失败时通过健康 List 确认该确切 Session 已删除后继续存活，其他错误保留。真实 CLI 关闭临时 PTY 后跨两个 Poll 周期，List、closed scope permissions 和模型 HTTP 均继续可用，见 [fixture-close.json](evidence/fixture-close.json)。Android 测试的正常重连、真实键盘避让和闭环断言仍须完成。
+
+Android最终审查已完成（415a5c3，已合main）：after-layout PreDraw恢复避免旧高度/anchor覆盖回答滚动；history/IME变化保持focus/文字/选择与answer+submit可见，手工touch滚动有独立revision/hold。最新相关10项回归55.754s通过，完整实际加密UI/RPC119.11s通过（1执行、0忽略）。root逐张比对旧弱图和最终鲜图，确认最终[回答文字及提交按钮](evidence/android/authorization-question.png)同现在软键盘上方，连续两个实际轮询稳定；Root R20/R21移交项据此关闭。
+
+R21负向结果按实际含义判断：closed scope query/真实authenticated_user答复/settings均通过，full开启后原run_command被observe_terminal_after_uncertain_action屏障拦住，观察不存在PTY又被session_belongs_to_another_account拒绝；[两个精确拒绝](evidence/android/authorization-host-refusals.json)与[marker不存在](evidence/android/authorization-actual-markers.json)共同验证未写入。模型fixture返回观察不可用的特定错误，不能等待成功DONE或把它当写成功。正常重连同账号/Desktop后完成闭合；原连接连续在线和Android实际detached传输未验证。源码与最终[结果](evidence/android/results.json)一致，主线汇总和iOS仍待。

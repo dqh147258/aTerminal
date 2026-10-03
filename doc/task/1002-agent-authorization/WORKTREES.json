@@ -59,7 +59,8 @@
     "handshake_timeout": null,
     "codex_thread_id": "01a0fc18-1a04-7701-890b-6d4e53d93864",
     "recovered_at": "2026-10-02 19:57:33",
-    "schedule_state": "running"
+    "schedule_state": "closed_completed",
+    "source_commit": "415a5c35433e1604e4f93e91866f13577290edfd"
   },
   {
     "name": "20261002-181033-557-ios-authorization",
