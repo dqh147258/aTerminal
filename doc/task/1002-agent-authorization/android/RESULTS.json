@@ -1,0 +1,87 @@
+{
+  "status": "Completed (Android executor scope)",
+  "date": "2026-10-03",
+  "test_intensity": "High",
+  "real_encrypted_rpc": true,
+  "model_source": "Local deterministic AUTH_REVIEW fixture; no paid provider",
+  "package": "com.yxf.aterminal.authorizationfixture",
+  "emulator": "emulator-5586 Android 16",
+  "build": "assembleDebug / assembleDebugAndroidTest / lintDebug passed with max-workers=2/no-parallel",
+  "local_ui": "16 authorization cases passed; 29-case round 28 passed and one paging race repaired with 2 targeted passes; latest measured-layout/answer-focus/viewport/image/paging/draft regression 10/10 passed in 55.754s",
+  "rpc_test": {
+    "passed": true,
+    "tests": 1,
+    "ignored": 0,
+    "seconds": 119.11,
+    "checks": {
+      "real_encrypted_rpc": true,
+      "once_and_idempotent_replay": true,
+      "long_details_before_approval": true,
+      "exact_rule_across_runs": true,
+      "denied_without_side_effect": true,
+      "options_and_free_text": true,
+      "software_ime_answer_focus_recovery": true,
+      "full_persists_across_runs_until_closed": true,
+      "global_full_closed_and_scope_isolated": true,
+      "cwd_reassessed_exact_rule": true,
+      "regrant_second_revoke_new_nonce": true,
+      "revocation_requires_new_approval": true,
+      "waiting_run_can_stop": true,
+      "read_only_uses_desktop_mode": true,
+      "closed_scope_reconnected_same_desktop": true,
+      "closed_write_blocked_by_safety_barrier": true,
+      "closed_observation_unavailable": true,
+      "closed_scope_queries_questions_settings": true,
+      "closed_write_denied_by_host": true,
+      "primary_preferences_unchanged": true,
+      "passed": true
+    },
+    "exact_marker_line_counts": {
+      "auth-review-once.log": 1,
+      "auth-review-always.log": 3,
+      "auth-review-long.log": 1,
+      "auth-review-global-full.log": 1,
+      "auth-review-global-full-off.log": null,
+      "auth-review-closed-write.log": null,
+      "auth-review-cancelled.log": null,
+      "auth-review-denied.log": null,
+      "auth-review-full.log": 2,
+      "auth-review-full-off.log": 1,
+      "auth-review-cwd.log": 1,
+      "auth-review-subdir/auth-review-always.log": 1
+    },
+    "host_refusals": {
+      "closed-write": {
+        "auth-closed-write-0": "observe_terminal_after_uncertain_action",
+        "auth-closed-write-0-observe": "session_belongs_to_another_account"
+      }
+    },
+    "ime_layout": {
+      "ime_top": 1507,
+      "input_rect": "[77,986][1003,1123]",
+      "button_rect": "[77,1139][1003,1271]",
+      "scroll_rect": "[0,379][1080,1271]",
+      "scroll_y": 8979
+    },
+    "binary_sha256": {
+      "/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/target/debug/aTerminal": "bc255902114bb0c2c4c25aab73f68a2075762a43774689833897dc76207fdd72",
+      "/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/target/debug/examples/account_demo": "05bcb1bd04ed7e984a3774ce4115a8355fa55b91cb22ed0c0a563ca435e3a5a3"
+    }
+  },
+  "artifacts": "build/authorization-rpc-seventh",
+  "ime_visual_evidence": "authorization-question.png freshly inspected: selected answer text and submit button simultaneously visible above software IME",
+  "cleanup": "Temporary account/Desktop/PTY/model fixture stopped, daemon cleanup exit0, show_ime_with_hard_keyboard restored to original0. Original app/account preferences unchanged. Emulator retained for coordinator. System window released before documentation.",
+  "limitations": [
+    "Closed scope validated after normal same-account/Desktop reconnect without selecting/recreating the closed PTY. Original selected-terminal stream staying live after close was not claimed.",
+    "Detached tested by local UI/core evidence, not Android real detached transport.",
+    "No physical device or paid provider tested. Aggregate main/iOS and final mobile review remain coordinator-owned."
+  ],
+  "failure_evidence": [
+    "build/authorization-rpc-first",
+    "build/authorization-rpc-final (second)",
+    "build/authorization-rpc-third",
+    "build/authorization-rpc-fourth",
+    "build/authorization-rpc-fifth",
+    "build/authorization-rpc-sixth"
+  ]
+}

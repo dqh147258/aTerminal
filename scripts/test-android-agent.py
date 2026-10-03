@@ -96,6 +96,18 @@ with tempfile.TemporaryDirectory(prefix='aterminal-agent-ui-') as directory:
                 assert actual == lines, f'PTY side effect mismatch for {name}: {actual!r} != {lines!r}'
                 observed[name] = actual
             (args.output/'authorization-pty-markers.json').write_text(json.dumps(observed, indent=2))
+            expected_refusals = result.get('expected_refusals', {})
+            observations = [json.loads(line) for line in (state/'authorization-model-observations.jsonl').read_text().splitlines()]
+            refusals = {}
+            for scenario, expected_calls in expected_refusals.items():
+                actual_calls = {}
+                for call_id, expected_error in expected_calls.items():
+                    errors = [tool.get('result', {}).get('error') for row in observations if row.get('id') == scenario for tool in row.get('results', [])
+                              if tool.get('call_id') == call_id]
+                    assert expected_error in errors, f'Expected precise Host refusal {scenario}/{call_id}: {expected_error!r}, got {errors!r}'
+                    actual_calls[call_id] = expected_error
+                refusals[scenario] = actual_calls
+            (args.output/'authorization-host-refusals.json').write_text(json.dumps(refusals, indent=2))
             print('PASS: native authorization UI, encrypted RPC, and independently observed PTY side effects:', args.output/'results.json')
         else:
             saved = subprocess.check_output([str(args.cli), '--state-dir', str(state), 'config', 'terminal-reading', '--json'], text=True)

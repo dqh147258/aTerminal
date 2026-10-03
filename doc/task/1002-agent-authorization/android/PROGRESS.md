@@ -1,6 +1,6 @@
 # Android 授权与问答
 
-状态：Approved / In progress。沿用协调者 PLAN.md / CONTRACT.md 与用户全面执行授权；High 覆盖。当前 run：8dc5141e-1c4c-4837-82d3-5cb0d4522827。
+状态：Completed（Android 执行者范围；整体跨端验收仍由协调者完成）。沿用协调者 PLAN.md / CONTRACT.md 与用户全面执行授权；High 覆盖。当前 run：c0ea835a-41c8-447a-a34c-fd46b0befc01。
 
 Android 源码已实现：
 
@@ -51,3 +51,17 @@ Android 源码已实现：
 第三/第四轮已真实达到 R20 Native 三行、两次 UI revoke rules 为空且 UUID 不同、后续相同参数再次 pending/deny、cwd变化与规则不同指纹、取消、Global模式隔离。末端Closed失败由fixture生命周期导致：account_demo循环固定Poll已关闭唯一Session，返回session_not_found后example退出，账号/模型服务一起掉线；root已准确定位并接管最小授权fixture改动。不是Android权限拒绝，不能靠backoff或忽略异常当通过。完整第三/第四生成物目录独立保留。
 
 root截图审阅发现早期IME断言只用GlobalVisibleRect不足以排除键盘遮挡；fixture setContentView裸column丢生产inset owner，未证明实际可达。已最小修测试：FrameLayout使用生产同OnApplyWindowInsets padding，input与submit完整screen rect均需bottom<=实际IME top，等requestRectangleOnScreen布局；question截图必须当次成功获取，内容和按钮在键盘之上。此严格补丁尚待新fixture后完整实际验收，旧轮次不作为该布局通过证据。Closed正常同账号/Desktop reconnect保留，不选择/重建已关闭PTY；原终端watch连接持续存活不宣称验证。
+
+## 当前有效最终结果
+
+Android 执行者范围 Completed。最小产品布局修复使历史重建后的滚动定位在已测量布局的 PreDraw 执行；IME/viewport变化优先保持当前回答+提交控件一同可见，触摸滚动revision/hold保护用户主动位置，已有文字/选择保持。最新10个相关原生焦点、缩小viewport、图片/分页/草稿回归55.754秒全部通过。
+
+最终第七轮完整真实加密RPC119.110秒 `OK (1 test)`，0 ignored，runner独立核全部marker及精确Host拒绝均PASS。fresh问答图经实际视觉检查：选中的回答文字和“提交回答”按钮同时处于键盘上方；两个连续1.6秒真实poll期间不由测试重复滚动，输入、选择、input/button/scroll/IME bounds保持有效。输入bounds `[77,986][1003,1123]`、按钮 `[77,1139][1003,1271]`、Scroll `[0,379][1080,1271]`、IME top1507；图与实际可见控件相符。
+
+R20：实际Native tee精确3行（首次always、规则自动执行、撤销后regrant），两次UI revoke原ruleID相同但request UUID不同、rules为空，最后同参数再次pending并deny，没有第四行。R21：临时Session真正关闭后同账号/Desktop正常重连，未select/重建已关PTY；read_only能力查询、authenticated_user问答、模式设置与full修改均真实可达。Closed写负向判据分别为原调用精确 `observe_terminal_after_uncertain_action` 与缺失终端观察精确 `session_belongs_to_another_account`，Host终态/noactivepending、UI显示精确fixture拒绝，独立closed marker不存在；这是安全拒绝，不叫写成功，也不强等成功DONE。
+
+一次与幂等重放、长期规则/cwd变化、deny、两种问答、完整详情fingerprint/details_ack、Session/Global full启停及隔离、waiting取消、Closed模式与最终full关闭均通过。CLI SHA256 `bc255902114bb0c2c4c25aab73f68a2075762a43774689833897dc76207fdd72`，fixture `05bcb1bd04ed7e984a3774ce4115a8355fa55b91cb22ed0c0a563ca435e3a5a3`，保持生产CLI固定，只fixture修阶段处理/closed生命周期。
+
+生成物完整保留 `build/authorization-rpc-seventh`（results、独立marker、精确Host拒绝、model observations、binary hashes、screenshots）。前六轮各自失败目录仍保留；第一轮旧runner没有临时marker副本的限制如前所述。无密最终可合入摘要 `RESULTS.json`。
+
+软件IME设置恢复原0，fixture账号/Desktop/model服务和临时daemon结束退出0；正常用户package/账号/终端不修改，模拟器留给协调者。已在写最终说明前立即通知root释放系统窗口给iOS。物理设备、付费模型和Android真实detached transport不宣称验证；detached为本地UI+后端core证据，关闭后原watch连接持续存活不宣称验证。主线聚合/iOS与最后移动端diff Review仍由root负责，单端Completed不等于总体完成。

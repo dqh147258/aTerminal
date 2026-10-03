@@ -60,6 +60,9 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
     private var requestId = UUID.randomUUID().toString()
     private var restoring = false
     private var initialScroll: Int? = null
+    private var answerFocusSignature = ""
+    private var answerScrollHeld = false
+    private var manualScrollRevision = 0L
     private val items = linkedMapOf<String, JSONObject>()
     private val attachments = mutableListOf<JSONObject>()
     private val state = activity.label("", 12f, Palette.muted)
@@ -130,6 +133,13 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
             addView(latest, FrameLayout.LayoutParams(-2, dp(44), android.view.Gravity.BOTTOM or android.view.Gravity.END).apply { rightMargin = dp(12); bottomMargin = dp(8) })
         })
         state.setPadding(dp(16), 0, dp(16), 0); state.visibility = View.GONE; body.addView(state)
+        scroll.setOnTouchListener { _, event ->
+            if (event.actionMasked == android.view.MotionEvent.ACTION_MOVE) {
+                manualScrollRevision++; initialScroll = null
+                focusedAnswer()?.let { answerFocusSignature = answerSignature(it); answerScrollHeld = true }
+            }
+            false
+        }
         scroll.setOnScrollChangeListener { _, _, y, _, old ->
             if (y < old && y < dp(80)) load(false)
             if (atBottom()) { latestVisible(false); markRead() }
@@ -167,11 +177,28 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
             val visibility = if (body.height < dp(280)) View.GONE else View.VISIBLE
             val changed = listOf(composerLabel, scopeLabel, path, taskState).filter { it.visibility != visibility }
             changed.forEach { it.visibility = visibility }
+            keepAnswerControlsVisible()
         }
         body.viewTreeObserver.addOnGlobalLayoutListener(compactLayoutListener)
         draft.addTextChangedListener(watcher { if (!restoring) { requestId = UUID.randomUUID().toString(); saveComposer() }; updateButton() })
         restore(); load(true); ui.post(tick)
     } }
+    private fun focusedAnswer(): EditText? = (authorization.cards.findFocus() as? EditText)?.takeIf { it.tag?.toString()?.startsWith("answer:") == true }
+    private fun answerSignature(input: EditText) = "${input.tag}:${input.text}:${input.selectionStart}:${input.selectionEnd}"
+    private fun keepAnswerControlsVisible() {
+        val input = focusedAnswer() ?: run { answerFocusSignature = ""; answerScrollHeld = false; return }
+        val signature = answerSignature(input)
+        if (signature != answerFocusSignature) { answerFocusSignature = signature; answerScrollHeld = false }
+        if (closed || answerScrollHeld || scroll.isLayoutRequested || messages.isLayoutRequested) return
+        val id = input.tag.toString().substringAfter("answer:")
+        val submit = authorization.cards.findViewWithTag<View>("answer-submit:$id") ?: return
+        if (!input.isShown || !submit.isShown || submit.parent !== input.parent) return
+        val pairHeight = submit.bottom - input.top
+        if (pairHeight <= 0 || pairHeight > scroll.height) return
+        // Ask the measured parent to reveal both controls, preserving the focused field and its selection.
+        submit.requestRectangleOnScreen(android.graphics.Rect(0, input.top - submit.top, submit.width, submit.height), true)
+    }
+
     private fun feedback(text: String) { state.text = text; state.visibility = if (text.isEmpty()) View.GONE else View.VISIBLE }
     private fun latestVisible(show: Boolean) { latest.visibility = if (show) View.VISIBLE else View.GONE }
     private fun atBottom() = scroll.scrollY + scroll.height >= messages.height - activity.dp(48)
@@ -414,6 +441,7 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
     private fun render(older: Boolean) { with(activity) {
         val version = ++renderVersion
         val scopeVersion = epoch
+        val scrollRevision = manualScrollRevision
         val bottom = atBottom(); val oldY = scroll.scrollY
         val anchor = (0 until messages.childCount).map { messages.getChildAt(it) }.firstOrNull { it.bottom > oldY }
         val anchorId = anchor?.tag; val offset = oldY - (anchor?.top ?: 0)
@@ -473,14 +501,24 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
             messages.addView(live, messages.indexOfChild(authorization.cards).takeIf { it >= 0 } ?: messages.childCount)
         }
         if (authorization.cards.parent == null) messages.addView(authorization.cards)
-        scroll.post { if (!closed && version == renderVersion && scopeVersion == epoch) {
-            val restored = initialScroll; if (items.isNotEmpty()) initialScroll = null
-            val anchorView = (0 until messages.childCount).map { messages.getChildAt(it) }.firstOrNull { it.tag != null && it.tag == anchorId }
-            if (restored != null) scroll.scrollTo(0, restored)
-            else if (bottom && !older) scroll.scrollTo(0, (messages.height - scroll.height).coerceAtLeast(0))
-            else { scroll.scrollTo(0, anchorView?.let { it.top + offset } ?: oldY); if (!older) latestVisible(true) }
-            markRead()
-        } }
+        val observer = messages.viewTreeObserver
+        val positioned = object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (observer.isAlive) observer.removeOnPreDrawListener(this)
+                if (!closed && version == renderVersion && scopeVersion == epoch) {
+                    if (scrollRevision == manualScrollRevision) {
+                        val restored = initialScroll; if (items.isNotEmpty()) initialScroll = null
+                        val anchorView = (0 until messages.childCount).map { messages.getChildAt(it) }.firstOrNull { it.tag != null && it.tag == anchorId }
+                        if (restored != null) scroll.scrollTo(0, restored)
+                        else if (bottom && !older) scroll.scrollTo(0, (messages.height - scroll.height).coerceAtLeast(0))
+                        else { scroll.scrollTo(0, anchorView?.let { it.top + offset } ?: oldY); if (!older) latestVisible(true) }
+                    }
+                    keepAnswerControlsVisible(); markRead()
+                }
+                return true
+            }
+        }
+        observer.addOnPreDrawListener(positioned)
     } }
     private fun renderAttachments() { with(activity) {
         preview.removeAllViews(); preview.visibility = if (attachments.isEmpty()) View.GONE else View.VISIBLE

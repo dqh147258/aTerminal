@@ -38,9 +38,9 @@
     "MobilePrototypeTest#scopesComposerImagesPagingAndSettings: optional screenshot returned null",
     "MobilePrototypeTest#compactToolsKeepNarrationAndFullDetailsAcrossRefresh: optional screenshot returned null"
   ],
-  "followup": "R20/R21/native final source prepared; awaiting coordinated Android build/emulator window",
-  "real_encrypted_rpc": "First 79.774s failed at cwd-back due deterministic fixture compression stage missing; early real cases passed, R20 second revoke/Closed not reached. Root fixture fix pending",
+  "followup": "Completed: latest render/layout regression10/10 and full real RPC1/1 in119.11s passed; see RESULTS.json",
+  "real_encrypted_rpc": "All required exact markers, two precise Closed refusals and fresh visible software-IME answer+submit evidence passed",
   "latest_build": "assembleDebug/assembleDebugAndroidTest/lintDebug max-workers2 no-parallel passed",
   "latest_local": "29 first round: 28 passed including all 16 authorization; paging repaired then R20 routing+image/paging/settings 2/2 passed",
-  "artifacts": "build/authorization-rpc-first"
+  "artifacts": "build/authorization-rpc-seventh"
 }
