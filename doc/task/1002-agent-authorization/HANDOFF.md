@@ -1,5 +1,9 @@
 # 当前恢复摘要
 
+2026-10-03 08:14（Asia/Singapore）有效摘要：main HEAD `fc88928`；仅 Android/iOS 两个 Sol/high 原执行者存活，没有新启动代理。policy/toolset/runtime/后端 Review 已完成关闭，代码已整合；18/18 加密后端场景通过。Android 独占构建/模拟器窗口：16 授权本地用例已过，29 聚焦中旧页加载竞态暴露并正在修复；R20 追加 version/agent_id 后重算 nonceKey 的问题已定位，必须发送前捕获 key。iOS 正静态修复 LazyVStack 问答 sheet 生命周期，移动到稳定 ChatPanel 并把草稿存至 AssistantModel；在 Android 释放前不运行 Xcode/模拟器。
+
+当前 run/Session/thread 仍见 WORKTREES.json；inbox 消费至257。下一步收两个执行者阶段结果，Android 释放后给 iOS 系统窗口；真实 UI/RPC 和最终 main 必要检查通过前不标 Completed。root 私有 iOS 服务仍为 `fresh-jcrw0hv_` / PID76779，准确路径见 ios/SERVICE.json；旧 `final-ohadryvi` 已停止并保留于 SERVICE_HISTORY.json。main 仅这两份服务记录未提交，凭据未写入文档。后续历史段落被本段及 CONTRACT 取代，不能作为当前调度依据。
+
 2026-10-03 02:38：当前两个执行者是iOS + Android，均Sol/high。policy/toolset/runtime/review已完成对应阶段并关闭终端；Review最终287b7e4实际18/18加密0ignored+strictclippy通过并合main，客户端必要事项仍open transferred_required。iOS获系统独占窗口，最新build-for-testing和7/7本地原生XCTest通过，真实RPC正在跑；Android只静态修R20/R21和native永久测试，待iOS释放后才Gradle/模拟器。任务仍In progress，不是整体完成。
 
 有效恢复摘要：main已合runtime45ab2d4（含06b4c9d/fa29899/ad5bd37）、Review18场景ca3661e及Android92de04e。run_program独立nativeexec/env_clear/实际cwd/参数+stdin精确规则v3已落地，PTY仅once/full；native结果不被PTY失效或Shellcorrelate，持久run_id/重启unknown/immutable stdout档案。整Skill注册包文件actualhash末端复核，generic脚本依赖不稳定所以always=false，仍once/full。Native叶子永久真实CLI闭环已通过。

@@ -1,7 +1,7 @@
 {
-  "fixture_dir": "/var/folders/85/nscyc5g90sn18qw0_2l1qnt40000gn/T/aterminal-ios-auth-final-ohadryvi",
-  "pid": 55669,
+  "fixture_dir": "/var/folders/85/nscyc5g90sn18qw0_2l1qnt40000gn/T/aterminal-ios-auth-fresh-jcrw0hv_",
+  "pid": 76779,
   "example": "/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/target/debug/examples/account_demo",
   "cli": "/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/target/debug/aTerminal",
-  "scope": "disposable iOS only; local deterministic model"
+  "scope": "disposable fresh iOS only; local deterministic model; prior service preserved privately"
 }

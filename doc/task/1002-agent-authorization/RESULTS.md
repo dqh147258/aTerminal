@@ -2,6 +2,8 @@
 
 状态：In progress。以下是阶段证据，尚未达到任务 Completed 条件。
 
+2026-10-03 08:14 当前结果：后端最终 `45ab2d4` 与独立 Review `287b7e4` 已合 main，18/18 实际加密 RPC 通过；当前 main `fc88928`。Android 本地16项授权通过，最终聊天回归/实际 UI-RPC 和 R20 路由字段变更下的 nonce 清除修复正在验证；iOS 需要稳定父视图问答生命周期修复、最终本地与实际 UI-RPC。两端仅有阶段通过证据，最终 main aggregate 尚待执行。以下早期阶段记录保留用于追溯，不代表当前完整验收。
+
 最新阶段：后端Review287b7e4通过18/18独立真实加密RPC（0ignored，107.33s）及strictclippy，完整marker/工具结果和原fixture失败日志已合main。报告[review/RESULTS.md](review/RESULTS.md)明确Android R20/R21与两端原生UI/RPC为open transferred_required，不是可选项。iOS3f7a2b源已合main，最新build-for-testing+7/7本地XCTest通过，真实RPC正在独立服务跑；Android恢复后静态准备，暂不并发大构建。最终mainaggregate和跨端必要验收仍未完成。
 
 2026-10-03更新：runtime最终45ab2d4本地交付完成并关闭；Current Review+iOS两项，Android排队。此前runtime99/Desktop57、Host11、CLI2参数+3实际流程通过；原生状态分流新增Store6与真实双Agent concurrent get/PTY/wait/immutable stdout1、helper-only包版本1、动态cwd相关1通过，strictclippy/fmt/diff过。Review18个明确ignored加密case正在准备实际执行，最终mainaggregate与两端真实UI/RPC仍待，不能替代为可选建议或标Completed。

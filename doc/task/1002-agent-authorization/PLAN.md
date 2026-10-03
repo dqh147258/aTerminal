@@ -7,7 +7,7 @@
 - 已确认：完全授权作用于当前 Agent 对话、持续到关闭；永久授权按命令/参数/目录精确匹配；六类工具全部补齐，Android/iOS/CLI 同步。
 - 管理任务：`aTerminal / 20261002-180220-295-agent-authorization`。
 - 恢复授权（2026-10-02 19:55）：系统故障后用户要求继续并恢复全部子任务，全部模型改为 Sol。已检查保留代码与会话后，六个原子任务使用 `gpt-6.1-sol / high`、各自保存的 thread ID 在原 worktree 恢复；旧 run/终端保留在任务历史，不新建重复子任务。
-- 最新调度约束（2026-10-02 20:56）：系统再次重启、子任务已关闭。用户要求任何时刻最多两个活跃子任务，完成并关闭后才恢复下一项。当前仅恢复 runtime/toolset，policy 已完成且不恢复，Android/iOS/Review 排队；所有恢复仍使用 Sol。大型构建/模拟器错峰，cargo jobs/test threads 最多2，不改变 High 必要验收范围。
+- 最新调度约束：用户要求任何时刻最多两个活跃子任务，完成并关闭后才恢复下一项；所有子任务使用 Sol。大型构建/模拟器串行，jobs/workers 最多2，不改变 High 必要验收范围。2026-10-03 08:14 恢复核验时仅 Android/iOS 活跃，原 Session 均存活，没有重复启动。系统窗口归 Android，iOS 仅静态修复及轻量 Foundation 检查。
 
 ## 目标与实际行为
 
@@ -87,10 +87,10 @@
 - [x] 读取规划、worktree-tasks、依赖 worktree-flow 与模型策略；创建顶层管理任务。
 - [x] 编写主计划与统一接口合同；由协调者自审后执行。
 - [x] 启动并记录五个实现子任务与各自 worktree/分支/SessionID，见 [WORKTREES.json](WORKTREES.json)。均从 `main / 3f8ebe0` 创建，无复制旧凭据或运行状态。
-- [ ] 策略、运行时和工具 helper 交付并互相接线。
-- [x] 策略与工具 helper 自身范围已完成并提交；toolset 22/22聚焦测试、strict clippy通过，2026-10-02 23:37 已按用户要求关闭其终端。runtime最后必要检查仍在进行。
-- [x] runtime最终45ab2d4实现及必要本地回归完成并合main，2026-10-03 01:36关闭终端；之后只恢复iOS，当前Review+iOS两项，Android排队。独立加密与最终跨端整体验收仍未完成。
-- [x] 后端独立源码Review+18个实际加密RPC通过（287b7e4，0ignored，107.33s），阶段完成关闭；Android必要R20/R21和两端真实UI/RPC仍保留必做。当前仅Android+iOS，系统构建/模拟器窗口归iOS。
+- [x] 策略、运行时和工具 helper 交付并互相接线；最终后端实现已合 main。相关执行者均完成并关闭。
+- [x] 后端独立源码 Review + 18 个实际加密 RPC 通过（287b7e4，0 ignored，107.33s），阶段完成并关闭；移动端必要问题转交 root，仍需完成。
+- [ ] Android 最终构建、16 项授权 UI 与13项聊天回归、实际加密 UI/RPC；R20 请求被路由追加字段后仍需清除原 nonce，R21 管理权限与 Terminal 状态分离需闭环。
+- [ ] iOS 问答/详情改由稳定 ChatPanel 承载、按 scope/pending 保留草稿；最终 Foundation、XCTest 与完整实际加密 UI/RPC。
 - [ ] Android/iOS/CLI 同步并完成各端验证。
 - [ ] 独立 Review、必要修复、最终 main 集成测试。
 - [ ] 保存最终结果和恢复信息，完成 task，按条件清理新建子任务资源。

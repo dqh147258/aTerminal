@@ -1,0 +1,10 @@
+[
+  {
+    "fixture_dir": "/var/folders/85/nscyc5g90sn18qw0_2l1qnt40000gn/T/aterminal-ios-auth-final-ohadryvi",
+    "pid": 55669,
+    "example": "/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/target/debug/examples/account_demo",
+    "cli": "/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/target/debug/aTerminal",
+    "scope": "disposable iOS only; local deterministic model",
+    "stopped_reason": "UI retries exhausted mock context; compression_tools_forbidden; original successful answer and failures retained privately"
+  }
+]
