@@ -1,5 +1,5 @@
 {
-  "phase": "stable presentation source ready; waiting for Android window",
+  "phase": "iOS scope completed; exclusive window released",
   "implemented": [
     "Desktop-backed permissions",
     "approval/question cards",
@@ -7,15 +7,18 @@
     "scope/account/epoch fences"
   ],
   "tests": {
-    "host": "passed including scoped presentation/draft lifetime, stale-editor fences, consumption, original CAS/grant/details/revoke checks",
-    "swift_parse": "passed modified product/UI test source",
-    "xcode": "not run latest stable-presentation followup; Android owns window",
-    "encrypted_rpc": "not passed before fix; failure evidence retained"
+    "host": "passed scoped presentation/draft and authorization contract checks",
+    "xcode_build": "passed build-for-testing",
+    "focused_keyboard": "1/1 passed",
+    "local_ui": "9/9 passed",
+    "encrypted_rpc": "1/1 passed; independent once/always/full/long exact files and deny absence verified"
   },
-  "next": "root grants exclusive window after Android; compile, focused keyboard lifecycle + existing 9 local regressions, real user-facing RPC on current private fixture",
+  "next": "root Git-integrates final runner/evidence commit, runs final main checks, stops its private fixture and closes this subtask per instruction",
   "plan": "doc/task/1002-agent-authorization/PLAN.md",
   "contract": "/Volumes/Code/My/aTerminal/doc/task/1002-agent-authorization/CONTRACT.md",
   "run": "9668ea3b-fde7-44b0-903e-ead1fbf05cb1",
   "simulator": "079C5369-F052-45A8-A767-70B1A9FA6707",
-  "evidence": "doc/task/1002-agent-authorization/ios/HANDOFF.md"
+  "evidence": "doc/task/1002-agent-authorization/ios/HANDOFF.md",
+  "source_commit": "d4f9021",
+  "verification": "doc/task/1002-agent-authorization/ios/VERIFICATION.json"
 }

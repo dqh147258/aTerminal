@@ -1,0 +1,53 @@
+{
+  "source_commit": "d4f9021",
+  "scope": "iOS Simulator/native UI and real encrypted Agent RPC with local deterministic fixture",
+  "physical_device": false,
+  "paid_model": false,
+  "local_xctest": {
+    "passed": 9,
+    "failed": 0,
+    "result": "build/authorization-stable-final-local9.xcresult"
+  },
+  "focused_keyboard_xctest": {
+    "passed": 1,
+    "failed": 0,
+    "result": "build/authorization-stable-sheet-focused.xcresult"
+  },
+  "encrypted_rpc": {
+    "passed": true,
+    "xcode_exit_code": 0,
+    "prefix": "ios-auth-20793b75d54f",
+    "fixture_example_sha256": "05bcb1bd04ed7e984a3774ce4115a8355fa55b91cb22ed0c0a563ca435e3a5a3",
+    "result": "build/authorization-stable-final-rpc/rpc.xcresult",
+    "marker_evidence": {
+      "once": {
+        "utf8_bytes": 5,
+        "lines": 1,
+        "sha256": "ad06e72726f6d8ff00228160453949c1ceb89571c99332e4815f9edce2acad07"
+      },
+      "always": {
+        "utf8_bytes": 21,
+        "lines": 3,
+        "sha256": "87e4bf80b7910f337b3c97ca22f1153b0b054c2f10706e6eb818184525dbe59a"
+      },
+      "full": {
+        "utf8_bytes": 10,
+        "lines": 2,
+        "sha256": "5ba46c44f0e9744f99475fad28f35b9d7473161342f9f16664d008f4cf52a629"
+      },
+      "long": {
+        "utf8_bytes": 6651,
+        "lines": 1,
+        "sha256": "bca0c0ce704feb7a16f4d8f5566c1573bb3fd266e486678a81660e4a9c69b3a1"
+      },
+      "deny": null,
+      "full-off": null
+    },
+    "question_evidence": [
+      {
+        "state": "consumed",
+        "answer": "iOS custom answer"
+      }
+    ]
+  }
+}
