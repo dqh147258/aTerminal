@@ -53,6 +53,7 @@ class AgentAuthorizationRpcUiTest {
     }
     private fun screenshot(name: String) {
         instrumentation.waitForIdleSync()
+        Thread.sleep(350) // Allow the requested scroll/layout to reach the compositor before capturing visual evidence.
         var bitmap: Bitmap? = null
         repeat(3) { if (bitmap == null) { bitmap = instrumentation.uiAutomation.takeScreenshot(); if (bitmap == null) Thread.sleep(200) } }
         if (name == "authorization-question") assertNotNull("Fresh screenshot must show the answer and submit button above the IME", bitmap)
@@ -146,7 +147,7 @@ class AgentAuthorizationRpcUiTest {
             .put("auth-review-full-off.log", JSONArray(listOf("after-off")))
             .put("auth-review-cwd.log", JSONArray(listOf("cwd")))
             .put("auth-review-subdir/auth-review-always.log", JSONArray(listOf("always")))
-        report.put("expected_markers", expected)
+        report.put("expected_markers", expected).put("expected_refusals", JSONObject().put("closed-write", JSONObject().put("auth-closed-write-0", "observe_terminal_after_uncertain_action").put("auth-closed-write-0-observe", "session_belongs_to_another_account")))
         try {
             account.login(fixture.getString("server"), fixture.getString("username"), fixture.getString("password"), "Authorization UI fixture", "android", "")
             var desktop = ""
@@ -223,12 +224,36 @@ class AgentAuthorizationRpcUiTest {
                 val insets = activity.window.decorView.rootWindowInsets ?: return@main false
                 val imeTop = activity.window.decorView.height - insets.getInsets(android.view.WindowInsets.Type.ime()).bottom
                 val input = tagged("answer:$questionId"); val button = tagged("answer-submit:$questionId")
-                button.requestRectangleOnScreen(android.graphics.Rect(0, 0, button.width, button.height), true)
+                val viewport = AgentPanel::class.java.getDeclaredField("scroll").apply { isAccessible = true }.get(chat) as ScrollView
+                val scrollRect = android.graphics.Rect()
+                if (!viewport.getGlobalVisibleRect(scrollRect) || viewport.isLayoutRequested) return@main false
+                val inputLocation = IntArray(2); val buttonLocation = IntArray(2)
+                input.getLocationOnScreen(inputLocation); button.getLocationOnScreen(buttonLocation)
+                button.requestRectangleOnScreen(android.graphics.Rect(0, inputLocation[1] - buttonLocation[1], button.width, button.height), true)
                 fun aboveIme(view: View): Boolean { val visible = android.graphics.Rect(); val location = IntArray(2); view.getLocationOnScreen(location)
-                    return view.getGlobalVisibleRect(visible) && visible.height() >= view.height - 2 && location[1] >= 0 && location[1] + view.height <= imeTop
+                    val full = android.graphics.Rect(location[0], location[1], location[0] + view.width, location[1] + view.height)
+                    return !view.isLayoutRequested && view.getGlobalVisibleRect(visible) && visible.height() >= view.height - 2 && scrollRect.contains(full) && location[1] >= 0 && location[1] + view.height <= imeTop
                 }
+                val inputRect = android.graphics.Rect(); val buttonRect = android.graphics.Rect()
+                input.getGlobalVisibleRect(inputRect); button.getGlobalVisibleRect(buttonRect)
+                report.put("ime_layout", JSONObject().put("ime_top", imeTop).put("input_rect", inputRect.toShortString()).put("button_rect", buttonRect.toShortString()).put("scroll_rect", scrollRect.toShortString()).put("scroll_y", viewport.scrollY))
                 aboveIme(input) && aboveIme(button) && button.height >= activity.dp(44)
             } }
+            repeat(2) {
+                Thread.sleep(1600)
+                main {
+                    val viewport = AgentPanel::class.java.getDeclaredField("scroll").apply { isAccessible = true }.get(chat) as ScrollView
+                    val viewportRect = android.graphics.Rect(); assertTrue(viewport.getGlobalVisibleRect(viewportRect))
+                    val imeTop = activity.window.decorView.height - activity.window.decorView.rootWindowInsets!!.getInsets(android.view.WindowInsets.Type.ime()).bottom
+                    for (tag in listOf("answer:$questionId", "answer-submit:$questionId")) {
+                        val view = tagged(tag); val xy = IntArray(2); view.getLocationOnScreen(xy)
+                        val rect = android.graphics.Rect(xy[0], xy[1], xy[0] + view.width, xy[1] + view.height)
+                        assertTrue("Answer controls remain fully visible through history polling: $tag $rect $viewportRect", viewportRect.contains(rect) && rect.bottom <= imeTop)
+                    }
+                    val input = tagged("answer:$questionId") as EditText
+                    assertEquals("保留完整说明", input.text.toString()); assertEquals(2, input.selectionStart); assertEquals(4, input.selectionEnd)
+                }
+            }
             screenshot("authorization-question")
             main { tagged("answer-submit:$questionId").performClick()
                 (activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(root.windowToken, 0) }
@@ -312,6 +337,9 @@ class AgentAuthorizationRpcUiTest {
             main { dialog()!!.dismiss() }
             report.put("read_only_uses_desktop_mode", true)
 
+            // Finish the cancelled/uncertain action observation before the terminal disappears.
+            task("pre-close-observation", steps = JSONArray().put(JSONObject().put("tool", "inspect_command").put("arguments", JSONObject().put("command", "pwd"))))
+            completed("pre-close-observation")
             // Close only the disposable fixture PTY. Scope history, device grant and management remain usable.
             remote.closeSelected()
             waitFor("fixture terminal closed") { remote.sessions().none { it.id == session } }
@@ -342,7 +370,11 @@ class AgentAuthorizationRpcUiTest {
             main { dialog()!!.dismiss() }
             full(true)
             task("closed-write", "printf 'unexpected\\n' >> auth-review-closed-write.log", waitCommand = false)
-            completed("closed-write")
+            waitFor("closed write reaches a refusal terminal state") { val state = request("state")
+                state.optString("state") == "completed" && state.isNull("error") && activePending() == null
+            }
+            waitFor("closed unavailable observation refusal shown") { main { views().filterIsInstance<TextView>().any { it.text.toString() == "AUTH_REVIEW_FIXTURE_ERROR: Fixture native observation failed" } } }
+            report.put("closed_write_blocked_by_safety_barrier", true).put("closed_observation_unavailable", true)
             full(false)
             assertFalse(request("permissions").getBoolean("full_authorization"))
             report.put("closed_scope_queries_questions_settings", true).put("closed_write_denied_by_host", true)

@@ -280,6 +280,13 @@ class AgentAuthorizationUiTest {
             waitFor("history update ${index + 1}") { main { views().filterIsInstance<TextView>().any { it.text.toString() == "其他任务进度 ${index + 1}" } } }
             main { val input = tagged("answer:q") as EditText; assertTrue(input.hasFocus()); assertEquals("保留我的回答草稿", input.text.toString()); assertEquals(2, input.selectionStart); assertEquals(5, input.selectionEnd) }
         }
+        main { root.layoutParams = FrameLayout.LayoutParams(-1, activity.dp(420)); root.requestLayout() }
+        waitFor("answer pair survives viewport resize") { main {
+            val viewport = AgentPanel::class.java.getDeclaredField("scroll").apply { isAccessible = true }.get(chat) as ScrollView
+            val visible = Rect(); viewport.getGlobalVisibleRect(visible)
+            listOf("answer:q", "answer-submit:q").all { tag -> val view = tagged(tag); val xy = IntArray(2); view.getLocationOnScreen(xy)
+                visible.contains(Rect(xy[0], xy[1], xy[0] + view.width, xy[1] + view.height)) }
+        } }
         pending.add(approval("arrived"))
         main { authorization!!.refresh() }
         waitFor("new delegated approval") { main { views().any { it.tag == "pending:arrived" } } }
