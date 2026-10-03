@@ -1,0 +1,18 @@
+{
+  "checks": [
+    {
+      "prior_scenario": false,
+      "valid_summary": true,
+      "tool_calls": false,
+      "finish_reason": "stop"
+    },
+    {
+      "prior_scenario": true,
+      "valid_summary": true,
+      "tool_calls": false,
+      "finish_reason": "stop"
+    }
+  ],
+  "prior_scenario_not_advanced": true,
+  "example_sha256": "d06ede28cc731ce77a2baba34c727019fc3e24398c665376bdcf731c5f20d921"
+}

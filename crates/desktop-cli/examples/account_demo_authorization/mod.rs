@@ -90,6 +90,16 @@ fn arguments(value: &Value, scenario: &str, results: &[Value]) -> Result<Value> 
 
 pub(super) fn respond(body: &Value, dir: &Path) -> Result<Option<axum::response::Response>> {
     let messages = body["messages"].as_array().context("messages required")?;
+    // Compaction contains earlier scenario prompts, but is never an execution
+    // request. Handle it before selecting a scenario so old steps cannot replay.
+    if messages
+        .last()
+        .is_some_and(|message| text(message).starts_with("Application compression stage."))
+    {
+        return Ok(Some(super::fixture_sse(json!({"content":json!({
+            "summary":"Earlier authorization fixture tasks are archived. Real execution and approval results remain in immutable records and independent marker files. Do not replay completed or uncertain actions; follow the current task only."
+        }).to_string()}))));
+    }
     let Some((start, prompt)) = messages
         .iter()
         .enumerate()
