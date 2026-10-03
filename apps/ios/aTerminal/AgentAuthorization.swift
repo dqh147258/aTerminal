@@ -238,6 +238,72 @@ enum AuthorizationFailure: LocalizedError {
     }
 }
 
+/// Owned by AssistantModel, independently of LazyVStack row and sheet lifetimes.
+struct AgentInteractionPresentation: Identifiable {
+    enum Kind: String { case question, details }
+    let kind: Kind
+    let item: AgentPending
+    let scopeKey: String
+    let context: String
+    var id: String { scopeKey + ":" + item.id + ":" + kind.rawValue }
+}
+
+@MainActor final class AgentInteractionState {
+    private struct DraftKey: Hashable { let scope: String; let pending: String }
+    private(set) var presentation: AgentInteractionPresentation?
+    private var drafts: [DraftKey: String] = [:]
+    private var consumed = Set<DraftKey>()
+    private var scopeKey: String?
+    private var context = ""
+    var changed: (() -> Void)?
+    func bind(scopeKey: String?, context: String) {
+        guard self.scopeKey != scopeKey || self.context != context else { return }
+        self.scopeKey = scopeKey; self.context = context
+        presentation = nil; changed?()
+    }
+    func open(_ item: AgentPending, kind: AgentInteractionPresentation.Kind, scopeKey: String) {
+        guard self.scopeKey == scopeKey,
+              (kind == .question && item.kind == "question" && item.actionable) || (kind == .details && item.kind == "approval") else { return }
+        let key = DraftKey(scope: scopeKey, pending: item.id)
+        guard !consumed.contains(key) else { return }
+        presentation = AgentInteractionPresentation(kind: kind, item: item, scopeKey: scopeKey, context: context)
+        changed?()
+    }
+    func dismiss() { presentation = nil; changed?() }
+    private func matches(_ value: AgentInteractionPresentation) -> Bool { scopeKey == value.scopeKey && context == value.context }
+    func isCurrent(_ value: AgentInteractionPresentation) -> Bool { matches(value) && presentation?.id == value.id }
+    func draft(_ value: AgentInteractionPresentation) -> String {
+        guard matches(value) else { return "" }
+        return drafts[DraftKey(scope: value.scopeKey, pending: value.item.id)] ?? ""
+    }
+    func setDraft(_ text: String, for value: AgentInteractionPresentation) {
+        let key = DraftKey(scope: value.scopeKey, pending: value.item.id)
+        guard value.kind == .question, matches(value), !consumed.contains(key),
+              presentation == nil || presentation?.id == value.id else { return }
+        // Dismissal keeps the same pending draft; a late edit cannot cross scope/epoch.
+        drafts[key] = text; changed?()
+    }
+    /// Call only for a fully fetched, successful pending snapshot in this context.
+    func reconcile(scopeKey: String, pending: [AgentPending]) {
+        guard self.scopeKey == scopeKey else { return }
+        var current: [String: AgentPending] = [:]
+        for item in pending { current[item.id] = item }
+        for key in Array(drafts.keys) where key.scope == scopeKey {
+            // The server omits consumed requests; cancelled/expired requests remain
+            // visible and must retain their draft rather than imply consumption.
+            if current[key.pending] == nil || current[key.pending]?.state == "consumed" {
+                drafts[key] = nil; consumed.insert(key)
+            }
+        }
+        if let value = presentation, value.scopeKey == scopeKey {
+            if let item = current[value.item.id] {
+                if item.kind != value.item.kind || item.fingerprint != value.item.fingerprint || !item.actionable && value.kind == .question { presentation = nil }
+            } else { presentation = nil }
+        }
+        changed?()
+    }
+}
+
 #if DEBUG
 /// In-memory UI fixture, enabled only alongside the existing isolated settings fixture.
 @MainActor final class AuthorizationFixture {

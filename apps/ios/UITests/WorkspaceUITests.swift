@@ -663,7 +663,13 @@ final class AuthorizationUITests: XCTestCase {
         tap("authorization.option.0", app)
         let answer = app.textFields["authorization.answer"]
         XCTAssertEqual(answer.value as? String, "Markdown")
+        tap("authorization.question.close", app)
+        tap("authorization.pending.jump", app)
+        tap("authorization.question.open", app)
+        XCTAssertEqual(answer.value as? String, "Markdown", "Dismiss/reopen lost the scoped pending draft")
         UITestInput.replace(answer, with: "Custom output", app: app)
+        XCTAssertTrue(app.buttons["authorization.question.close"].exists, "Keyboard activation dismissed the stable editor")
+        XCTAssertTrue(app.keyboards.firstMatch.exists)
         if app.buttons["authorization.answer.keyboard"].exists { tap("authorization.answer.keyboard", app) }
         else { tap("authorization.answer.send", app) }
         wait { app.staticTexts["Fixture result: Custom output"].exists }

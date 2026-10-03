@@ -73,7 +73,7 @@ struct ChatPanel: View {
                     }
                     if !model.browsing {
                         ForEach(model.authorization.pending) { item in
-                            AgentPendingCard(model: model, item: item).id(item.id)
+                            AgentPendingCard(model: model, item: item, destination: model.target).id(item.id)
                         }
                         Color.clear.frame(height: 1).id("chat.bottom").onAppear { latestBottomVisible = true; model.markGlobalRead() }.onDisappear { latestBottomVisible = false }
                     }
@@ -170,6 +170,18 @@ struct ChatPanel: View {
         }
         .sheet(isPresented: $model.evidenceVisible) {
             NavigationView { ScrollView { if let image = model.image { Image(uiImage: image).resizable().scaledToFit() } else { Text(model.evidence).textSelection(.enabled).padding() } }.navigationTitle("证据原文").toolbar { Button("关闭") { model.evidenceVisible = false } } }
+        }
+        .sheet(item: Binding(get: { model.interactions.presentation }, set: { if $0 == nil { model.interactions.dismiss() } })) { presentation in
+            if presentation.kind == .question {
+                AgentQuestionView(model: model, presentation: presentation)
+            } else {
+                NavigationView {
+                    ScrollView { Text(model.authorization.detailText[presentation.item.id] ?? presentation.item.arguments).font(.system(.callout, design: .monospaced)).textSelection(.enabled).padding() }
+                        .navigationTitle("完整操作详情").toolbar {
+                            Button("关闭") { model.interactions.dismiss() }.accessibilityIdentifier("authorization.details.close")
+                        }
+                }
+            }
         }
         .sheet(isPresented: $model.authorizationVisible) { AgentAuthorizationView(model: model) }
         .fullScreenCover(isPresented: $model.settingsVisible) { AgentSettingsView(model: model) }

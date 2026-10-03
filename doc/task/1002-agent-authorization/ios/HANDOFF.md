@@ -1,8 +1,14 @@
 # 当前 iOS 阻塞与证据
 
-2026-10-03，状态 Blocked；用户已批准实现，当前按协调者要求停止进一步产品修改/真实重跑，等待对新 UI 失败的决定。
+2026-10-03 当前有效摘要：协调者已明确授权最小稳定 presentation 修复，源码已完成并通过 Foundation 行为检查与 Swift 语法解析。等待 Android 独占系统窗口释放后进行必要 Xcode/模拟器/真实 RPC；当前不启动这些工具，不再提出新的产品扩张。
 
-最终现有产品源码 `cf01e95`，RPC 测试的前置待办定位审计本次提交。此前阶段提交为 3f7a2b0 / 39a1ab7 / c22735d / bc3cd48。源码范围仅 iOS、专属脚本/说明，worktree 不合 main。
+稳定 `ChatPanel` 持有 sheet；Lazy 卡片只发送 scope 快照的打开意图。`AssistantModel` 拥有 `AgentInteractionState`，presentation 固定 scope/pending/context，草稿按 scope/pending 分开；手动关闭和失败保留，已成功完整 pending 读取确认 consumed/消失后清除。scope/account/connection 变化即时清 presentation，提交异步任务启动前再次校验旧 presentation。详情 sheet 同样移出虚拟行，普通参数完整入口保留。
+
+新增 Foundation 证据：卡片值重建不销毁编辑状态、关闭再打开保留草稿、失败不清、账号/连接旧编辑无效、同 pending ID 跨账号不共享草稿、取消未消费保留、消费与迟到编辑不恢复旧草稿。原授权/CAS/详情/撤销检查仍通过。现有7+2本地 UI 中问答用例新增关闭再开保留选项、键盘激活后 editor 仍存在的断言，尚未运行。
+
+后续直接复用 root 最新 SERVICE.json 的私有服务（pid76779，当前等待 question），按原 user-facing stop/new prefix 运行；不重启服务或 Rust 构建。下面保留的是修复前的失败证据和定位历史，不是当前等待新方案批准。
+
+修复前产品源码 `cf01e95`，RPC 测试的前置待办定位审计 `193a18b`；最新稳定修复提交由 SQLite checkpoint/阶段 message 记录。此前阶段提交为 3f7a2b0 / 39a1ab7 / c22735d / bc3cd48。源码范围仅 iOS、专属脚本/说明，worktree 不合 main。
 
 ## 最新真实失败
 
@@ -21,4 +27,4 @@
 - 旧服务 final-ohadryvi 因10轮历史触发 compression_tools_forbidden；实际答复已consumed且正确，root已停止旧服务并保存日志/DB。与最新 UI 失败分开。
 - 旧 v5 的 native always/repeat/regrant 三行及两次 revoke、full 首次 PTY行曾观察到，但最终完整 fresh 序列/long 精确内容及full跨Run断言尚未完成。不得宣称完整加密 UI通过。
 
-当前没有新的 Xcode/fixture任务。root拥有服务停止与窗口调度；执行者保留账号凭据在原私有 fixture，不输出或提交密码，不动用户生产环境。
+当前没有新的 Xcode/fixture任务。root拥有服务停止与窗口调度，Android 释放后通知执行必要验证；执行者保留账号凭据在原私有 fixture，不输出或提交密码，不动用户生产环境。
