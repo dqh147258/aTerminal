@@ -3,9 +3,7 @@ import SwiftUI
 struct AgentPendingCard: View {
     @ObservedObject var model: AssistantModel
     let item: AgentPending
-    @State private var detailsVisible = false
-    @State private var answer = ""
-    @State private var questionVisible = false
+    let destination: ChatScope?
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label(item.title, systemImage: item.kind == "approval" ? "hand.raised" : "questionmark.bubble").font(.headline)
@@ -15,15 +13,8 @@ struct AgentPendingCard: View {
             if item.kind == "approval" {
                 Text(item.tool + " · " + item.cwd).font(.caption).textSelection(.enabled)
                 Text(item.arguments).font(.system(.callout, design: .monospaced)).lineLimit(8).textSelection(.enabled)
-                let details = model.authorization.detailText[item.id] ?? item.arguments
-                Button("查看完整操作详情") { detailsVisible = true }.accessibilityIdentifier("authorization.details.open")
-                        .disabled(item.requiresDetails && !model.authorization.canApprove(item))
-                        .sheet(isPresented: $detailsVisible) {
-                            NavigationView {
-                                ScrollView { Text(details).font(.system(.callout, design: .monospaced)).textSelection(.enabled).padding() }
-                                    .navigationTitle("完整操作详情").toolbar { Button("关闭") { detailsVisible = false }.accessibilityIdentifier("authorization.details.close") }
-                            }
-                        }
+                Button("查看完整操作详情") { model.openApprovalDetails(item, destination: destination) }.accessibilityIdentifier("authorization.details.open")
+                    .disabled(item.requiresDetails && !model.authorization.canApprove(item))
                 if item.requiresDetails && !model.authorization.canApprove(item) {
                     Text(model.authorization.detailErrors[item.id] ?? "正在取齐完整操作详情，取齐后可以授权；也可以直接拒绝。")
                         .font(.caption).foregroundColor(WorkspaceStyle.muted).accessibilityIdentifier("authorization.details.status")
@@ -40,9 +31,8 @@ struct AgentPendingCard: View {
             } else {
                 Text(item.question).textSelection(.enabled)
                 if item.actionable {
-                    Button("回答") { questionVisible = true }.buttonStyle(.borderedProminent).disabled(!canRespond)
+                    Button("回答") { model.openQuestion(item, destination: destination) }.buttonStyle(.borderedProminent).disabled(!canRespond)
                         .accessibilityIdentifier("authorization.question.open")
-                        .sheet(isPresented: $questionVisible) { AgentQuestionView(model: model, item: item, answer: $answer, destination: model.target) }
                 }
             }
         }.frame(maxWidth: .infinity, alignment: .leading).padding(12).background(WorkspaceStyle.surface).cornerRadius(8)
@@ -57,12 +47,15 @@ struct AgentPendingCard: View {
 
 struct AgentQuestionView: View {
     @ObservedObject var model: AssistantModel
-    let item: AgentPending
-    @Binding var answer: String
-    let destination: ChatScope?
+    let presentation: AgentInteractionPresentation
+    private var item: AgentPending { presentation.item }
+    private var answer: String {
+        get { model.interactions.draft(presentation) }
+        nonmutating set { model.interactions.setDraft(newValue, for: presentation) }
+    }
     @Environment(\.dismiss) private var dismiss
     @FocusState private var answering: Bool
-    private var current: Bool { model.target == destination && model.authorization.pending.contains(where: { $0.id == item.id && $0.actionable }) }
+    private var current: Bool { model.target?.key == presentation.scopeKey && model.interactions.isCurrent(presentation) && model.authorization.pending.contains(where: { $0.id == item.id && $0.actionable }) }
     private var canSubmit: Bool { current && model.authorization.canAct && model.agentConnectionReason == nil && !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var body: some View {
         NavigationView {
@@ -80,15 +73,15 @@ struct AgentQuestionView: View {
                     }
                 }
                 Section(header: Text("自由答复")) {
-                    TextField("输入或补充答复", text: $answer).focused($answering).submitLabel(.send)
+                    TextField("输入或补充答复", text: Binding(get: { answer }, set: { answer = $0 })).focused($answering).submitLabel(.send)
                         .onSubmit { if canSubmit { submit() } }.accessibilityIdentifier("authorization.answer")
-                        .disabled(!current || model.authorization.busy)
+                        .disabled(!current || !model.authorization.canAct)
                     Button("清空答复") { answer = "" }.accessibilityIdentifier("authorization.answer.clear.form")
                     Button("发送答复") { submit() }.disabled(!canSubmit).accessibilityIdentifier("authorization.answer.send")
                 }
                 if !model.authorization.error.isEmpty { Text(model.authorization.error).foregroundColor(WorkspaceStyle.danger) }
             }.navigationTitle("回答 Agent").toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) { Button("关闭") { dismiss() }.accessibilityIdentifier("authorization.question.close") }
+                ToolbarItem(placement: .navigationBarTrailing) { Button("关闭") { model.interactions.dismiss(); dismiss() }.accessibilityIdentifier("authorization.question.close") }
                 ToolbarItemGroup(placement: .keyboard) {
                     Button("发送答复") { submit() }.disabled(!canSubmit).accessibilityIdentifier("authorization.answer.keyboard")
                     Spacer()
@@ -97,7 +90,7 @@ struct AgentQuestionView: View {
                 }
             }
         }
-        .onChange(of: model.target) { target in if target != destination { dismiss() } }
+        .onChange(of: model.target) { target in if target?.key != presentation.scopeKey { model.interactions.dismiss(); dismiss() } }
         .onChange(of: model.authorization.pending.map { $0.id + ":" + $0.state }) { _ in
             if model.authorization.permissions != nil && !current { dismiss() }
         }
@@ -105,9 +98,11 @@ struct AgentQuestionView: View {
     private func submit() {
         guard canSubmit else { return }
         answering = false
+        let submittedAnswer = answer
         Task {
-            await model.authorization.resolve(item, answer: answer)
-            if model.target != destination || (model.authorization.permissions != nil && !current) { dismiss() }
+            guard model.target?.key == presentation.scopeKey, model.interactions.isCurrent(presentation) else { return }
+            await model.authorization.resolve(item, answer: submittedAnswer)
+            if model.target?.key != presentation.scopeKey || (model.authorization.permissions != nil && !current) { dismiss() }
         }
     }
 }

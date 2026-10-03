@@ -52,6 +52,7 @@ struct AgentItem: Identifiable {
     private var contextConnection = -1
     private var archiveLoading = false
     let authorization = AgentAuthorization()
+    let interactions = AgentInteractionState()
     @Published var authorizationVisible = false
     @Published var global = false
     @Published var browsing = false
@@ -142,7 +143,15 @@ struct AgentItem: Identifiable {
             try pagesCache.storePage(scope: scope, cursor: cursor, page: page)
         }, read: { scope, cursor in try pagesCache?.page(scope: scope, cursor: cursor) }, messages: try? AgentMessageCache(path: path))
         cache = pagesCache
-        authorization.changed = { [weak self] in self?.objectWillChange.send() }
+        interactions.changed = { [weak self] in self?.objectWillChange.send() }
+        authorization.changed = { [weak self] in
+            guard let self else { return }
+            if let key = self.target?.key, self.authorization.permissions != nil,
+               !self.authorization.loading, !self.authorization.busy, self.authorization.error.isEmpty {
+                self.interactions.reconcile(scopeKey: key, pending: self.authorization.pending)
+            }
+            self.objectWillChange.send()
+        }
         historySearch.changed = { [weak self] in self?.objectWillChange.send() }
         if let cacheFailure { status = "历史缓存不可用：\(cacheFailure)" }
     }
@@ -182,7 +191,7 @@ struct AgentItem: Identifiable {
         reset(); if visible { start() }
     }
     func setVisible(_ value: Bool, core: RemoteTerminal) { visible = value; stop(); if value { reset(); start() } }
-    func stop() { authorizationEpoch += 1; authorization.bind(context: UUID().uuidString, writable: false, transport: nil); epoch += 1; task?.cancel(); task = nil; loading = false }
+    func stop() { interactions.bind(scopeKey: nil, context: UUID().uuidString); authorizationEpoch += 1; authorization.bind(context: UUID().uuidString, writable: false, transport: nil); epoch += 1; task?.cancel(); task = nil; loading = false }
     func switchScope() { historyTarget=nil; restoreDraft(); stop(); reset(); if visible { start() } }
     func openSession() { saveDraft(); global = false; globalID = nil; browsing = false; switchScope() }
     func openGlobal(_ row: [String: Any]) {
@@ -221,13 +230,26 @@ struct AgentItem: Identifiable {
     }
     private func bindAuthorization() {
         let destination = target; let connection = connectionEpoch; let version = authorizationEpoch
-        authorization.bind(context: "\(destination?.key ?? ""):\(connection):\(version)", writable: agentConnectionReason == nil && connected,
+        let context = "\(destination?.key ?? ""):\(connection):\(version)"
+        interactions.bind(scopeKey: destination?.key, context: context)
+        authorization.bind(context: context, writable: agentConnectionReason == nil && connected,
             transport: connected && destination != nil ? { [weak self] command in
                 guard let self, self.target == destination, self.authorizationEpoch == version else { throw CancellationError() }
                 let value = try await self.request(command, destination: destination, expectedEpoch: connection)
                 guard self.target == destination, self.authorizationEpoch == version else { throw CancellationError() }
                 return value
             } : nil)
+    }
+    func openQuestion(_ item: AgentPending, destination: ChatScope?) {
+        guard authorization.canAct, agentConnectionReason == nil, let target, target == destination,
+              let current = authorization.pending.first(where: { $0.id == item.id && $0.kind == "question" && $0.actionable }) else { return }
+        interactions.open(current, kind: .question, scopeKey: target.key)
+    }
+    func openApprovalDetails(_ item: AgentPending, destination: ChatScope?) {
+        guard let target, target == destination,
+              let current = authorization.pending.first(where: { $0.id == item.id && $0.kind == "approval" && $0.fingerprint == item.fingerprint }),
+              authorization.canApprove(current) else { return }
+        interactions.open(current, kind: .details, scopeKey: target.key)
     }
     private func refresh() async {
         guard connected, let target else { return }; let version = epoch

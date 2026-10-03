@@ -47,6 +47,42 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
 }
 @main private struct AgentAuthorizationChecks {
     @MainActor static func main() async {
+        let editing = AgentInteractionState()
+        let question = AgentPending(["id": "same-pending", "kind": "question", "state": "pending", "question": "Choose", "options": ["A", "B"]])!
+        editing.bind(scopeKey: "accountA/desktop/session", context: "connection1")
+        editing.open(question, kind: .question, scopeKey: "accountA/desktop/session")
+        let original = editing.presentation!
+        editing.setDraft("typed answer", for: original)
+        // A successful pending poll re-creates row values without owning the editor.
+        editing.reconcile(scopeKey: original.scopeKey, pending: [question])
+        check(editing.isCurrent(original) && editing.draft(original) == "typed answer", "Row refresh destroyed the presentation/draft")
+        editing.dismiss()
+        editing.open(question, kind: .question, scopeKey: original.scopeKey)
+        check(editing.draft(editing.presentation!) == "typed answer", "Dismiss/reopen lost draft")
+        // Failed network delivery does not reconcile a successful empty list.
+        check(editing.isCurrent(editing.presentation!) && editing.draft(editing.presentation!) == "typed answer", "Unconfirmed answer lost draft")
+        editing.bind(scopeKey: "accountB/desktop/session", context: "connection2")
+        check(editing.presentation == nil, "Account switch did not dismiss")
+        editing.setDraft("late stale edit", for: original)
+        editing.open(question, kind: .question, scopeKey: "accountB/desktop/session")
+        check(editing.draft(editing.presentation!).isEmpty, "Old account draft leaked")
+        editing.setDraft("other account answer", for: editing.presentation!)
+        editing.bind(scopeKey: original.scopeKey, context: "connection3")
+        editing.open(question, kind: .question, scopeKey: original.scopeKey)
+        let recovered = editing.presentation!
+        check(editing.draft(recovered) == "typed answer" && !editing.isCurrent(original), "Connection epoch did not isolate old editor")
+        editing.setDraft("late old epoch", for: original)
+        check(editing.draft(recovered) == "typed answer", "Late edit polluted reconnected editor")
+        let cancelled = AgentPending(["id": question.id, "kind": "question", "state": "cancelled", "question": "Choose"])!
+        editing.reconcile(scopeKey: original.scopeKey, pending: [cancelled])
+        check(editing.presentation == nil && editing.draft(recovered) == "typed answer", "Cancellation cleared an unconsumed draft")
+        editing.open(question, kind: .question, scopeKey: original.scopeKey)
+        editing.reconcile(scopeKey: original.scopeKey, pending: [])
+        check(editing.presentation == nil && editing.draft(recovered).isEmpty, "Consumed question retained draft/presentation")
+        editing.setDraft("late after consume", for: recovered)
+        check(editing.draft(recovered).isEmpty, "Late input resurrected consumed draft")
+        editing.bind(scopeKey: nil, context: "disconnected")
+        check(editing.presentation == nil, "Disconnect retained presentation")
         let server = Server(), model = AgentAuthorization()
         model.bind(context: "account1/desktop/session:1", writable: true, transport: server.request)
         check(model.mode == "ask" && !model.full && !model.canAct, "Unsafe default")
@@ -158,6 +194,6 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
         var acknowledged: [String: Any] = [:]
         for command in server.commands { if command["action"] as? String == "resolve" { acknowledged = command } }
         check(acknowledged["details_ack"] as? Bool == true && acknowledged["fingerprint"] as? String == "fp-long", "Resolve did not acknowledge exact details")
-        print("PASS: recovery, full persistence, revision conflicts, once/deny/answer/revoke, idempotency, read-only, account and epoch isolation, legacy fail-closed")
+        print("PASS: scoped presentation/draft lifetime, consumption and stale-editor fences; authorization recovery, CAS, idempotency, grants, detail ACK and legacy fail-closed")
     }
 }
