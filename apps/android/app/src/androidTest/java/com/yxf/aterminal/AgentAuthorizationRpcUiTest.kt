@@ -194,8 +194,23 @@ class AgentAuthorizationRpcUiTest {
             completed("question-option")
             task("question-text", steps = JSONArray().put(JSONObject().put("tool", "ask_user").put("arguments", JSONObject().put("question", "补充说明？"))))
             val question = pending("question"); val questionId = question.getString("id")
-            main { (tagged("answer:$questionId") as EditText).setText("保留完整说明"); tagged("answer-submit:$questionId").performClick() }
-            screenshot("authorization-question"); completed("question-text"); report.put("options_and_free_text", true)
+            main {
+                val input = tagged("answer:$questionId") as EditText
+                input.setText("保留完整说明"); input.requestFocus(); input.setSelection(2, 4)
+                (activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).showSoftInput(input, 0)
+            }
+            waitFor("question software IME visible") { main { android.os.Build.VERSION.SDK_INT >= 30 && activity.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true } }
+            Thread.sleep(1800) // Covers at least one actual pending/history poll while the IME owns focus.
+            main { val input = tagged("answer:$questionId") as EditText
+                assertTrue(input.hasFocus()); assertEquals("保留完整说明", input.text.toString()); assertEquals(2, input.selectionStart); assertEquals(4, input.selectionEnd)
+                val button = tagged("answer-submit:$questionId"); button.requestRectangleOnScreen(android.graphics.Rect(0, 0, button.width, button.height), true)
+            }
+            waitFor("question submit reachable above IME") { main { val button = tagged("answer-submit:$questionId"); val rect = android.graphics.Rect()
+                button.getGlobalVisibleRect(rect) && rect.height() >= activity.dp(44) } }
+            screenshot("authorization-question")
+            main { tagged("answer-submit:$questionId").performClick()
+                (activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(root.windowToken, 0) }
+            completed("question-text"); report.put("options_and_free_text", true).put("software_ime_answer_focus_recovery", true)
 
             full(true)
             task("full-first", "printf 'full\\n' >> auth-review-full.log"); completed("full-first"); assertNull(activePending())

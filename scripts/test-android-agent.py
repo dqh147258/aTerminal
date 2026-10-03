@@ -50,6 +50,7 @@ with tempfile.TemporaryDirectory(prefix='aterminal-agent-ui-') as directory:
     state = Path(directory) / 'desktop'
     fixture = None
     reverse = None
+    previous_ime = None
     with (args.output / 'fixture.log').open('wb') as log:
         fixture = subprocess.Popen([str(args.example), str(state), str(args.cli), '--authorization-test' if args.authorization else '--agent-test'], stdout=log, stderr=log, start_new_session=True)
     try:
@@ -71,6 +72,9 @@ with tempfile.TemporaryDirectory(prefix='aterminal-agent-ui-') as directory:
         reverse = port
         adb('shell', 'input', 'keyevent', 'KEYCODE_WAKEUP', capture_output=True)
         adb('shell', 'wm', 'dismiss-keyguard', capture_output=True)
+        if args.authorization:
+            previous_ime = adb('shell', 'settings', 'get', 'secure', 'show_ime_with_hard_keyboard', capture_output=True).stdout.decode().strip()
+            adb('shell', 'settings', 'put', 'secure', 'show_ime_with_hard_keyboard', '1', capture_output=True)
         with (args.output/'instrumentation.log').open('wb') as log:
             test_class = 'com.yxf.aterminal.AgentAuthorizationRpcUiTest' if args.authorization else 'com.yxf.aterminal.AgentReadingUiTest'
             adb('shell', 'am', 'instrument', '-w', '-r', '-e', 'class', test_class, package+'.test/androidx.test.runner.AndroidJUnitRunner', stdout=log, stderr=subprocess.STDOUT, timeout=args.test_timeout if args.authorization else 180)
@@ -109,6 +113,9 @@ with tempfile.TemporaryDirectory(prefix='aterminal-agent-ui-') as directory:
             (args.output/'task-durability.json').write_text(json.dumps({'state': persisted[0], 'remaining_child_pins': pins, 'error_truncated': task_error['error_truncated']}, indent=2))
             print('PASS: native Agent settings, encrypted RPC, task results/waits, retention, long errors, PTY evidence and vision upload:', args.output/'results.json')
     finally:
+        if previous_ime is not None:
+            setting = ['delete', 'secure', 'show_ime_with_hard_keyboard'] if previous_ime == 'null' else ['put', 'secure', 'show_ime_with_hard_keyboard', previous_ime]
+            subprocess.run([args.adb, '-s', args.serial, 'shell', 'settings', *setting], capture_output=True)
         if args.authorization:
             declared = {}
             result_file = args.output/'results.json'
