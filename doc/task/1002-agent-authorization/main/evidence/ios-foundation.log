@@ -1,0 +1,1 @@
+PASS: scoped presentation/draft lifetime, consumption and stale-editor fences; authorization recovery, CAS, idempotency, grants, detail ACK and legacy fail-closed

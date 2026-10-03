@@ -1,6 +1,6 @@
 # 移动端最终审查
 
-2026-10-03，root 接管后端 Review 转交的必要移动事项。源码审查已完成下列定位；最终 UI/RPC 结果仍待执行者报告，整体状态以父 PLAN 为准。
+2026-10-03，状态 Completed。root 已完成后端 Review 转交的必要移动事项、两端最终源码/视觉审查及 main 必要检查；历史段落中的“待执行”由最后结果取代。
 
 Android R20（`c7cd11a`、`86a906d`）：撤销成功验证响应规则 ID 与 revoked 字段后结束本次幂等操作；网络结果未确认时保留原请求 UUID。由于真实 AgentPanel 路由会给同一 JSONObject 添加 version/agent_id，nonce key 必须在发送前取得，不能在成功回调重新计算。最终代码捕获原 key，第二次授予同 rule ID 后使用新 UUID 撤销。实际 UI/RPC 必须观察两次规则消失与第三次审批，不能只检查按钮点击。
 
@@ -19,3 +19,7 @@ iOS 生命周期（`d4f9021`）：question/details 的 sheet 从 LazyVStack 卡�
 Android最终审查已完成（415a5c3，已合main）：after-layout PreDraw恢复避免旧高度/anchor覆盖回答滚动；history/IME变化保持focus/文字/选择与answer+submit可见，手工touch滚动有独立revision/hold。最新相关10项回归55.754s通过，完整实际加密UI/RPC119.11s通过（1执行、0忽略）。root逐张比对旧弱图和最终鲜图，确认最终[回答文字及提交按钮](evidence/android/authorization-question.png)同现在软键盘上方，连续两个实际轮询稳定；Root R20/R21移交项据此关闭。
 
 R21负向结果按实际含义判断：closed scope query/真实authenticated_user答复/settings均通过，full开启后原run_command被observe_terminal_after_uncertain_action屏障拦住，观察不存在PTY又被session_belongs_to_another_account拒绝；[两个精确拒绝](evidence/android/authorization-host-refusals.json)与[marker不存在](evidence/android/authorization-actual-markers.json)共同验证未写入。模型fixture返回观察不可用的特定错误，不能等待成功DONE或把它当写成功。正常重连同账号/Desktop后完成闭合；原连接连续在线和Android实际detached传输未验证。源码与最终[结果](evidence/android/results.json)一致，主线汇总和iOS仍待。
+
+iOS最终审查已完成（产品d4f9021/报告37fa1c3）：真实稳定sheet键盘1/1、最后本地9/9及完整加密1/1通过；once/always/full/long实际精确文件、deny/full-off无文件、question consumed正确答复，见[最终记录](evidence/ios/results.json)。Root主线Foundation再次通过；移动源与被测分支内容一致，没有引入模型自批、Scope/设备权限绕过或丢失幂等重试的变更。全部R20/R21/生命周期必要事项关闭。
+
+最后main f63ccf5检查通过，含两lib100/59、CLI16/3/18（0忽略）、strictclippy、fmt/AST/diff、Android隔离构建/lint与29项UI；见[主线汇总](VALIDATION.json)。全部执行者关闭，私有fixture结束；不是部署到用户正在运行的服务的声明。

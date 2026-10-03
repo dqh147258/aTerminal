@@ -3,5 +3,9 @@
   "pid": 56639,
   "example": "/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/target/debug/examples/account_demo",
   "cli": "/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/target/debug/aTerminal",
-  "scope": "disposable iOS only; final compression/retained-constraints/closed-Session aware fixture"
+  "scope": "disposable iOS only; final compression/retained-constraints/closed-Session aware fixture",
+  "status": "stopped",
+  "stopped_at": "2026-10-03T02:18:11.859547+00:00",
+  "stop_reason": "All required iOS and final main verification finished; private data preserved",
+  "daemon_cleanup": "graceful example shutdown stopped daemon; subsequent stop returned already absent; exact process/endpoint checks passed"
 }

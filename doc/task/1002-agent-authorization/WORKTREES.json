@@ -75,7 +75,8 @@
     "handshake_timeout": null,
     "codex_thread_id": "01a0fc18-28ca-70e0-aeef-e31c9186faf5",
     "recovered_at": "2026-10-02 19:57:38",
-    "schedule_state": "running"
+    "schedule_state": "closed_completed",
+    "source_commit": "37fa1c3860681686849aac88ae80b48ef59ae540"
   },
   {
     "name": "20261002-181315-577-authorization-review",

@@ -1,13 +1,13 @@
 # Agent 操作授权与工具补齐
 
-- 状态：In progress；协调者完成方案后直接执行，无需用户 Review。
+- 状态：Completed（2026-10-03）；实现、独立后端审查、移动端审查与最终 main 必要检查全部通过，无需用户 Review。
 - 日期：2026-10-02，Asia/Singapore。
 - 起点：`main` / `f56461eb9b6d7a5cb3ba19cf698779208a81f7ee`；工作树原本干净，AGENTS.md 为空。
 - 用户授权：补充权限和此前建议的六类工具；允许协调者自行决定实现细节、通过 worktree-tasks 分工。用户明确“计划我不Review, 你看着处理”。
 - 已确认：完全授权作用于当前 Agent 对话、持续到关闭；永久授权按命令/参数/目录精确匹配；六类工具全部补齐，Android/iOS/CLI 同步。
 - 管理任务：`aTerminal / 20261002-180220-295-agent-authorization`。
 - 恢复授权（2026-10-02 19:55）：系统故障后用户要求继续并恢复全部子任务，全部模型改为 Sol。已检查保留代码与会话后，六个原子任务使用 `gpt-6.1-sol / high`、各自保存的 thread ID 在原 worktree 恢复；旧 run/终端保留在任务历史，不新建重复子任务。
-- 最新调度约束：用户要求任何时刻最多两个活跃子任务，完成并关闭后才恢复下一项；所有子任务使用 Sol。大型构建/模拟器串行，jobs/workers 最多2，不改变 High 必要验收范围。2026-10-03 08:14 恢复核验时仅 Android/iOS 活跃，原 Session 均存活，没有重复启动。系统窗口归 Android，iOS 仅静态修复及轻量 Foundation 检查。
+- 调度约束：用户要求任何时刻最多两个活跃子任务，完成并关闭后才恢复下一项；所有子任务使用 Sol。大型构建/模拟器串行，jobs/workers 最多2。最终全部六个执行者completed并关闭，root独占完成主线检查，没有活跃子任务。
 
 ## 目标与实际行为
 
@@ -90,7 +90,7 @@
 - [x] 策略、运行时和工具 helper 交付并互相接线；最终后端实现已合 main。相关执行者均完成并关闭。
 - [x] 后端独立源码 Review + 18 个实际加密 RPC 通过（287b7e4，0 ignored，107.33s），阶段完成并关闭；移动端必要问题转交 root，仍需完成。
 - [x] Android 最终415a5c3已合main并关闭子任务：16项授权、原聊天回归、最新滚动/焦点等10项相关回归以及完整真实加密UI/RPC通过；R20两次实际撤销、新nonce、三行marker正确；R21 closed scope查询/问答/设置可用，full写入仍被确切Host屏障/closed观测拒绝，无marker。root最终截图确认input/submit同现IME上方，证据在main/evidence/android；不宣称原连接关闭后持续在线或实际detached Android链已测试。
-- [ ] iOS 问答/详情改由稳定 ChatPanel 承载、按 scope/pending 保留草稿；最终 Foundation、XCTest 与完整实际加密 UI/RPC。
-- [ ] Android/iOS/CLI 同步并完成各端验证。
-- [ ] 独立 Review、必要修复、最终 main 集成测试。
-- [ ] 保存最终结果和恢复信息，完成 task，按条件清理新建子任务资源。
+- [x] iOS最终37fa1c3已合main并关闭：稳定ChatPanel与scope/pending草稿、Foundation、最新build、本地9/9、键盘聚焦1/1和完整真实加密UI/RPC1/1通过，真实marker/答复已核对。
+- [x] Android/iOS/CLI同步并完成各端验证；工具目录为Session21/Global29，见TOOLS.md。
+- [x] 独立后端Review与root移动审查完成，最终main f63ccf5必要检查通过：Runtime100/Desktop59、CLI16参数+3实际+18加密（0ignored）、两组strictclippy、fmt/AST/diff、主线Swift检查、Android构建/lint及29项UI。
+- [x] 最终结果与原失败证据已保存；全部子任务完成并关闭，隔离iOS服务/daemon已停止。工作树与分支保留完整未导出的xcresult/原失败日志，未强制删除资源。最终结果见RESULTS.md。

@@ -1,0 +1,33 @@
+{
+  "tested_main": "f63ccf5970eb3fbad7288575a786669ae488eb9b",
+  "status": "passed",
+  "rust_lib": {
+    "desktop": 59,
+    "runtime": 100,
+    "failed": 0,
+    "ignored": 0
+  },
+  "cli": {
+    "bin": 16,
+    "local_rpc": 3,
+    "encrypted": 18,
+    "failed": 0,
+    "ignored": 0
+  },
+  "android_main": {
+    "build_and_lint": "passed",
+    "ui": 29,
+    "failed": 0,
+    "seconds": 73.271
+  },
+  "ios": {
+    "foundation_main": "passed",
+    "local_ui": 9,
+    "focused_keyboard": 1,
+    "encrypted_rpc": 1
+  },
+  "strict_clippy": "two lib and CLI/bin/example/authorization tests passed",
+  "fmt_diff_runner_ast": "passed",
+  "source_integration": "all final commits ancestors; mobile source/script content identical",
+  "test_scope": "isolated accounts/local deterministic model/native Android+iOS simulators; no physical/paid provider"
+}

@@ -1,0 +1,56 @@
+   Compiling ai-terminal v0.1.0 (/Volumes/Code/My/aTerminal/crates/desktop-cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.05s
+     Running unittests src/main.rs (/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/target/debug/deps/aTerminal-4bd5e8055a28660e)
+
+running 16 tests
+test agents::tests::explicit_permissions_and_resolution_serialize_the_user_rpc ... ok
+test agents::tests::new_send_defaults_to_ask_and_exposes_pending_details_without_input_prompts ... ok
+test input::tests::arrows_follow_inner_modes_and_ctrl_c_is_forwarded ... ok
+test input::tests::focus_notifications_require_application_mode_and_keep_protocol_bytes ... ok
+test input::tests::page_keys_and_escape_are_local_only_when_needed ... ok
+test input::tests::wheel_routes_history_mouse_and_alternate_scroll ... ok
+test managed::tests::raw_ctrl_bracket_alias_detaches ... ok
+test render::tests::browsing_redraws_without_live_revision_change ... ok
+test render::tests::default_cursor_uses_host_terminal_preference ... ok
+test render::tests::emitted_ansi_reconstructs_authority_without_wide_ghosts ... ok
+test render::tests::hiding_scrollbar_restores_covered_cells_without_new_output ... ok
+test render::tests::host_color_levels_and_quantization ... ok
+test render::tests::lifecycle_clears_only_alternate_screen_and_restores_primary ... ok
+test scrollback::tests::old_agent_is_not_restarted_and_warns_only_once ... ok
+test scrollbar::tests::overlay_preserves_wide_cell_contract_and_source ... ok
+test scrollbar::tests::thumb_maps_top_bottom_and_drag_outside_track ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/authorization_cli.rs (/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/target/debug/deps/authorization_cli-5f2a4993d1b27d65)
+
+running 3 tests
+test cli_native_program_always_appends_exact_bytes_then_revokes_denies_and_regrants ... ok
+test cli_pending_once_resolution_crosses_real_host_and_pty_without_replay ... ok
+test non_tty_json_cli_uses_revisioned_user_rpc_and_never_prompts_or_silently_authorizes ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.30s
+
+     Running tests/authorization_review.rs (/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/target/debug/deps/authorization_review-cefb11d0e2977f97)
+
+running 18 tests
+test encrypted_explicit_full_overrides_prior_deny_only_for_a_new_action ... ok
+test encrypted_full_releases_approval_but_preserves_question_and_cancellation ... ok
+test encrypted_human_wait_pauses_active_time_without_refreshing_call_budgets ... ok
+test encrypted_legacy_v2_rule_cannot_authorize_a_new_pty_action ... ok
+test encrypted_long_action_requires_exact_details_ack_and_preserves_target ... ok
+test encrypted_manual_preemption_blocks_a_previously_pending_action ... ok
+test encrypted_mcp_annotations_do_not_approve_and_calls_are_once_cancel_or_full ... ok
+test encrypted_native_inspection_is_usable_without_touching_shell_alias_or_draft ... ok
+test encrypted_native_permanent_rule_ignores_bash_and_zsh_slash_functions ... ok
+test encrypted_native_results_unknown_full_and_cancel_observe_process_effects ... ok
+test encrypted_native_rules_bind_stdin_args_and_actual_cwd ... ok
+test encrypted_once_deny_and_two_phone_replay_observe_real_pty ... ok
+test encrypted_real_readonly_grant_cannot_mutate_or_forge_rpc_authority ... ok
+test encrypted_rule_regrant_remains_revocable_and_parameter_exact ... ok
+test encrypted_running_native_get_wait_and_unrelated_pty_input_preserve_real_exit ... ok
+test encrypted_shared_tree_pauses_only_when_all_children_are_human_blocked ... ok
+test encrypted_skill_helper_mutation_rejects_snapshot_even_with_full_and_keeps_native_rules ... ok
+test encrypted_split_input_and_enter_are_separately_gated ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 106.70s

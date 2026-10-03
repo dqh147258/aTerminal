@@ -1,0 +1,46 @@
+    Checking mio v1.2.3
+    Checking tracing v0.1.44
+    Checking serde_json v1.0.151
+    Checking tokio v1.53.1
+    Checking rustix v1.1.5
+    Checking schemars v1.2.2
+    Checking pin-project v1.1.13
+    Checking async-stream v0.3.6
+    Checking referencing v0.33.0
+    Checking tokio-util v0.7.19
+    Checking tower v0.5.3
+    Checking tokio-rustls v0.26.5
+    Checking h2 v0.4.19
+    Checking tower-http v0.6.11
+    Checking process-wrap v10.0.1
+    Checking tokio-stream v0.1.19
+    Checking tracing-futures v0.2.5
+    Checking jsonschema v0.33.0
+   Compiling prost-derive v0.14.4
+    Checking hyper v1.11.1
+    Checking curve25519-dalek v4.1.3
+    Checking hyper-util v0.1.20
+    Checking prost v0.14.4
+    Checking axum-core v0.5.6
+    Checking hyper-rustls v0.27.10
+    Checking reqwest v0.13.5
+    Checking rmcp v3.4.1
+    Checking rig-core v0.42.0
+    Checking axum v0.8.9
+    Checking thiserror v1.0.69
+    Checking snow v0.10.0
+    Checking ai-terminal-protocol v0.1.0 (/Volumes/Code/My/aTerminal/crates/protocol)
+    Checking tempfile v3.27.0
+    Checking rustix-openpty v0.2.0
+    Checking polling v3.11.0
+    Checking alacritty_terminal v0.26.0
+    Checking ai-terminal-agent-runtime v0.1.0 (/Volumes/Code/My/aTerminal/crates/agent-runtime)
+    Checking tokio-tungstenite v0.30.0
+    Checking ai-terminal-security v0.1.0 (/Volumes/Code/My/aTerminal/crates/device-security)
+    Checking filedescriptor v0.8.3
+    Checking reqwest v0.12.28
+    Checking portable-pty v0.9.0
+    Checking ai-terminal-remote v0.1.0 (/Volumes/Code/My/aTerminal/crates/remote)
+    Checking ai-terminal-engine v0.1.0 (/Volumes/Code/My/aTerminal/crates/terminal-engine)
+    Checking ai-terminal-agent v0.1.0 (/Volumes/Code/My/aTerminal/crates/desktop-agent)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 30.70s
