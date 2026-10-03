@@ -248,7 +248,20 @@ async fn main() -> Result<()> {
     println!("Account fixture ready; credentials written to private fixture file");
     if agent_test {
         loop {
-            tokio::select! {signal=tokio::signal::ctrl_c()=>{signal?;break;},_=tokio::time::sleep(Duration::from_secs(2))=>{local.call(Request{operation:Operation::Poll as i32,session:info.id.clone(),revision:u64::MAX,..Default::default()})?;}}
+            tokio::select! {
+                signal=tokio::signal::ctrl_c()=>{signal?;break;},
+                _=tokio::time::sleep(Duration::from_secs(2))=>{
+                    if let Err(error) = local.call(Request{operation:Operation::Poll as i32,session:info.id.clone(),revision:u64::MAX,..Default::default()}) {
+                        // Authorization UI tests deliberately close this PTY, then
+                        // use Agent history/permissions over the same live Desktop.
+                        // Keep the fixture server alive only when a healthy List
+                        // confirms that this exact Session is gone.
+                        if !authorization_test || local.call(Request::default())?.sessions.iter().any(|session|session.id==info.id) {
+                            return Err(error);
+                        }
+                    }
+                }
+            }
         }
     } else {
         tokio::signal::ctrl_c().await?;

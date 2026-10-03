@@ -13,3 +13,5 @@ iOS 生命周期（`d4f9021`）：question/details 的 sheet 从 LazyVStack 卡�
 压缩后的当前步骤：第二轮 Android 在 cwd-back 处进入 completed 而没有审批，定位为 fixture 未读取 Host 已保留的 Current task constraints；没有工具执行或权限绕过。后续 fixture 仅解析 Host 标准压缩消息中的 retained_facts JSON 数组，选择最新真实 AUTH_REVIEW 或 authenticated delegated，不从 lossy summary/Archive 取旧任务、不使用外部计数推进。实际 HTTP 五例覆盖无/有旧任务压缩、当前任务、委托任务、空约束，确认选择当前且不重放摘要旧任务，见 [fixture-retained-constraints.json](evidence/fixture-retained-constraints.json)。
 
 审查未发现本轮修复扩大调用权限或改变 Terminal 的 cwd/PTY 语义。Android 新 IME 回归（`f49d052`）暂时开启 software keyboard 并在 finally 恢复原设置；专用授权包继续隔离正常账号。最终 main 必要检查、实际 marker 与原失败证据仍需在交付前归档。
+
+关闭 Session 的测试服务生命周期：第三/四轮 offline/channel closed 的明确根因为 account_demo 每2秒 Poll 唯一临时 Session，关闭后错误使测试服务退出；不归因旧 JNI 缓存或未证实的生产连接问题。仅授权 fixture 改为 Poll 失败时通过健康 List 确认该确切 Session 已删除后继续存活，其他错误保留。真实 CLI 关闭临时 PTY 后跨两个 Poll 周期，List、closed scope permissions 和模型 HTTP 均继续可用，见 [fixture-close.json](evidence/fixture-close.json)。Android 测试的正常重连、真实键盘避让和闭环断言仍须完成。

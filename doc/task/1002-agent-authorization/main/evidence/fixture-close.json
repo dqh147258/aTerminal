@@ -1,0 +1,8 @@
+{
+  "intentional_pty_close": true,
+  "two_poll_intervals_survived": true,
+  "healthy_list_after_close": true,
+  "closed_scope_permissions_available": true,
+  "model_server_alive": true,
+  "example_sha256": "05bcb1bd04ed7e984a3774ce4115a8355fa55b91cb22ed0c0a563ca435e3a5a3"
+}
