@@ -323,6 +323,8 @@ class AgentAuthorizationUiTest {
         val responses = mutableMapOf<String, JSONObject>(); val loseAck = AtomicBoolean(true)
         intercept = { command -> if (command.optString("action") == "revoke_rule") {
             val id = command.getString("request_id")
+            // AgentPanel adds routing fields to the same JSONObject after the nonce was selected.
+            command.put("version", 1).put("agent_id", "originating-scope")
             val result = synchronized(this) { responses.getOrPut(id) {
                 rules.removeAll { it.optString("id") == "stable-rule" }
                 JSONObject().put("revoked", true).put("rule_id", "stable-rule")

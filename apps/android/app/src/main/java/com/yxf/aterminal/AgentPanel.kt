@@ -43,6 +43,7 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
     private var compactLayoutListener: android.view.ViewTreeObserver.OnGlobalLayoutListener? = null
     private var session = globalId?.let { "global:$it" } ?: initialSession
     private var loading = false
+    private var olderPageRequested = false
     private var stateLoading = false
     private val sending = mutableSetOf<String>()
     private val importing = mutableSetOf<String>()
@@ -306,7 +307,8 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
         } catch (e: Exception) { ui.post { if (version == epoch && !closed) { stateLoading = false; feedback("离线缓存 · ${e.message}"); updateButton() } } } }
     }
     private fun load(first: Boolean) {
-        if (closed || loading || (!first && !hasMore)) return
+        if (closed || (!first && !hasMore)) return
+        if (loading) { if (!first) olderPageRequested = true; return }
         loading = true
         val version = epoch; val target = session; val key = scope(); val before = if (first) null else cursor
         worker.execute { var offline = false; try {
@@ -332,8 +334,9 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
                 }
                 if (changed) render(!first); details?.let { page -> items[page.itemId]?.let { page.update(it) } }; save(); scroll.post { markRead() }
                 if (offline) feedback("离线缓存 · 删除状态尚未同步")
+                if (olderPageRequested) { olderPageRequested = false; if (hasMore) load(false) }
             } }
-        } catch (e: Exception) { ui.post { if (version == epoch && !closed) { loading = false; feedback("历史加载失败：${e.message} · 向上滑动重试") } } } }
+        } catch (e: Exception) { ui.post { if (version == epoch && !closed) { loading = false; olderPageRequested = false; feedback("历史加载失败：${e.message} · 向上滑动重试") } } } }
     }
     private fun hasPersistedLive() = liveText.isNotBlank() && items.values.any {
         (liveRoot.isEmpty() || it.optString("root_user_message_id") == liveRoot) &&

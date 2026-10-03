@@ -35,3 +35,11 @@ Android 源码已实现：
 - MobilePrototype 可选截图辅助函数重试并记录缺图，行为断言继续必需。此前14授权/其他原回归25项过，2项因可选截图null而中断，最新最终行为结果仍待。
 
 当前大型构建窗口归 iOS，Android 静态准备/提交，不运行 Gradle/模拟器。协调者释放后按 jobs=2 / parallel=false 构建，并在独立包/原模拟器执行必要本地及真实 RPC 验收，不能把旧桩结果宣称 Native 永久已实测。
+
+## Android 最终窗口阶段证据
+
+`--max-workers=2 --no-parallel -PauthorizationUiFixture=true` assembleDebug / assembleDebugAndroidTest / lintDebug 全过。原模拟器5586恢复，aapt确认独立package才安装。
+
+本地29聚焦首轮28过（16授权全部通过）；唯一旧页paging请求在loading期间被丢，已修为加载完成后继续旧页请求。新增真实路由会修改command字段的R20回归后再跑R20+完整图片/分页/设置用例2/2通过（14.581秒）。成功nonce key在RPC加version/agent_id之前捕获，避免清错key。其他27项首轮已过；后续不无差别扩大测试。
+
+真实RPC首轮79.774秒未过，完整日志/响应/模型observations保存在`build/authorization-rpc-first`：once重放、长详情fp/ack、Native永久跨Run、deny、问答、PTYfull跨Run、Globalfull关闭/Session隔离已实链通过。cwd切入/相同Native不同cwd审批完成，cwd-back时模型fixture未识别Application compression stage、错误返回tool；Host正确报compression_tools_forbidden。已交root最小fixture修复，Android不改Rust。R20第二撤销与Closed链未到达，不能宣称已验收。runner补finally独立保存实际marker，即便失败也保留；首轮旧runner未保留临时marker文件，日志/响应/模型证据仍完整。

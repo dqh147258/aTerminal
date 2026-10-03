@@ -360,12 +360,14 @@ class AgentAuthorizationPanel(
                 val id = rule.optString("id", rule.optString("rule_id"))
                 content.addView(label(rule.opt("rule_preview")?.toString() ?: rule.opt("preview")?.toString() ?: rule.toString(), 13f).apply { setTextIsSelectable(true) })
                 content.addView(button("撤销规则", "revoke:$id", reason == null && id.isNotBlank()) {
-                    val command = idempotent(JSONObject().put("action", "revoke_rule").put("rule_id", id))
+                    val operation = JSONObject().put("action", "revoke_rule").put("rule_id", id)
+                    val nonceKey = idempotencyKey(operation)
+                    val command = idempotent(operation)
                     mutate(command) { result ->
                         check(result.optString("rule_id") == id && result.has("revoked")) { "Desktop 未确认本次撤销，请刷新重试" }
                         result.getBoolean("revoked")
                         // A confirmed revoke finishes this operation. Regranting the same rule needs a new nonce.
-                        prefs.edit().remove(idempotencyKey(command)).commit()
+                        prefs.edit().remove(nonceKey).commit()
                         loadRules()
                     }
                 })
