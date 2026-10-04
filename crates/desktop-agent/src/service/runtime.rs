@@ -1164,27 +1164,22 @@ impl Backend {
                     .map(serde_json::from_value::<Vec<String>>)
                     .transpose()?
                     .unwrap_or_default();
-                context.commit_authorization(None)?;
-                let permitted = context.execution_gate.lock().unwrap();
-                ensure!(
-                    *permitted && !*context.cancel.borrow(),
-                    "cancelled_before_session_create"
-                );
-                let reply = super::dispatch(
-                    &host,
-                    Request {
-                        operation: Operation::Create as i32,
-                        client: self.client,
-                        account_scope: self.scope.owner.clone(),
-                        command,
-                        cwd: data["cwd"].as_str().unwrap_or("").into(),
-                        rows: 24,
-                        cols: 80,
-                        shell_integration: data["shell_integration"] == true,
-                        ..Default::default()
-                    },
-                )?;
-                drop(permitted);
+                let reply = context.commit_effect(|| {
+                    super::dispatch(
+                        &host,
+                        Request {
+                            operation: Operation::Create as i32,
+                            client: self.client,
+                            account_scope: self.scope.owner.clone(),
+                            command,
+                            cwd: data["cwd"].as_str().unwrap_or("").into(),
+                            rows: 24,
+                            cols: 80,
+                            shell_integration: data["shell_integration"] == true,
+                            ..Default::default()
+                        },
+                    )
+                })?;
                 let info = reply.info.context("session_unavailable")?;
                 self.fences.lock().unwrap().insert(
                     info.id.clone(),
@@ -1205,8 +1200,7 @@ impl Backend {
                     host.agents
                         .store
                         .agent(&self.scope.owner, &self.scope.desktop, Some(&id))?;
-                context.commit_authorization(None)?;
-                host.agents.cancel(&scope)?;
+                host.agents.cancel_authorized(context, &scope)?;
                 Ok(ToolOutput::value(host.agents.state(&scope)?))
             }
             _ => bail!("unsupported_builtin_action"),
@@ -1714,7 +1708,6 @@ impl TerminalBackend for Backend {
                     let message = args["message"].as_str().context("message_required")?;
                     let inherited = HashMap::from([(id, fence)]);
                     context.check_authorization()?;
-                    context.commit_authorization(None)?;
                     let value = host.agents.delegate(
                         &context,
                         scope,

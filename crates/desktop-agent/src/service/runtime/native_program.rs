@@ -3,7 +3,7 @@ use super::*;
 use ai_terminal_agent_runtime::store::Store;
 use process_wrap::tokio::*;
 use std::process::Stdio;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -154,22 +154,8 @@ impl Backend {
         store.update_command(&self.scope, &command_id, &value)?;
         let stdout = child.stdout().take().context("native_stdout_missing")?;
         let stderr = child.stderr().take().context("native_stderr_missing")?;
-        let mut out = tokio::spawn(async move {
-            let mut bytes = Vec::new();
-            stdout
-                .take(65537)
-                .read_to_end(&mut bytes)
-                .await
-                .map(|_| bytes)
-        });
-        let mut err = tokio::spawn(async move {
-            let mut bytes = Vec::new();
-            stderr
-                .take(65537)
-                .read_to_end(&mut bytes)
-                .await
-                .map(|_| bytes)
-        });
+        let mut out = tokio::spawn(crate::process::drain_output(stdout, 65536));
+        let mut err = tokio::spawn(crate::process::drain_output(stderr, 65536));
         let input = if let Some(text) = args.stdin {
             let mut stdin = child.stdin().take().context("native_stdin_missing")?;
             Some(tokio::spawn(async move {

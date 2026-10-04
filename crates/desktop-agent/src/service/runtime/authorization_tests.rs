@@ -855,6 +855,42 @@ async fn capabilities_remain_readable_for_a_known_closed_session() {
 }
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn native_large_stdout_and_stderr_do_not_interrupt_later_effects() {
+    let (f, backend, _scope, context, _cancel, terminal) = native_fixture();
+    let marker = f._dir.path().join("after-large-output");
+    let script = format!(
+        "/usr/bin/head -c 524288 /dev/zero; /usr/bin/head -c 524288 /dev/zero >&2; /usr/bin/touch '{}'",
+        marker.display()
+    );
+    let output = backend
+        .invoke(
+            context,
+            "run_program",
+            json!({"program":"/bin/sh","args":["-e","-c",script]}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(output.value["exit_code"], 0);
+    assert_eq!(output.value["stdout_truncated"], true);
+    assert_eq!(output.value["stderr_truncated"], true);
+    assert!(marker.exists());
+    let body: Value = serde_json::from_str(&output.observation.unwrap().body).unwrap();
+    assert_eq!(body["stdout"]["text"].as_str().unwrap().len(), 65536);
+    assert_eq!(body["stderr"]["text"].as_str().unwrap().len(), 65536);
+    backend.finished();
+    super::super::dispatch(
+        &f.host,
+        Request {
+            operation: Operation::Close as i32,
+            client: 1,
+            session: terminal,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+}
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn native_cancellation_kills_own_process_group_and_retains_unknown_without_touching_pty() {
     let (f, backend, scope, context, cancel, terminal) = native_fixture();
     let marker = f._dir.path().join("must-not-run");

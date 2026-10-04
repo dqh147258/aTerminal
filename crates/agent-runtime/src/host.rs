@@ -509,24 +509,26 @@ impl AgentHost {
                     "session_agent_busy"
                 );
                 ensure!(state.queue.len() < 32, "agent_mailbox_full");
-                let accepted = self.store.delegate(
-                    &scope,
-                    &context.root_user_message_id,
-                    request,
-                    message,
-                    status,
-                    Some(&job.run),
-                )?;
-                if !accepted.duplicate {
-                    state.queue.push_back(Mail {
-                        accepted: accepted.clone(),
-                        message: message.into(),
-                        origin: Origin::Delegation,
-                    });
-                }
-                return Ok(
-                    json!({"agent_id":scope.agent,"task_id":accepted.run_id,"duplicate":accepted.duplicate,"queued":true}),
-                );
+                return context.commit_effect(|| {
+                    let accepted = self.store.delegate(
+                        &scope,
+                        &context.root_user_message_id,
+                        request,
+                        message,
+                        status,
+                        Some(&job.run),
+                    )?;
+                    if !accepted.duplicate {
+                        state.queue.push_back(Mail {
+                            accepted: accepted.clone(),
+                            message: message.into(),
+                            origin: Origin::Delegation,
+                        });
+                    }
+                    Ok(
+                        json!({"agent_id":scope.agent,"task_id":accepted.run_id,"duplicate":accepted.duplicate,"queued":true}),
+                    )
+                });
             }
         }
         ensure!(
@@ -537,47 +539,49 @@ impl AgentHost {
             "agent_concurrency_limit"
         );
         let snapshot = Arc::new(build()?);
-        let accepted = self.store.delegate(
-            &scope,
-            &context.root_user_message_id,
-            request,
-            message,
-            status.clone(),
-            None,
-        )?;
-        if accepted.duplicate {
-            return Ok(json!({"agent_id":scope.agent,"task_id":accepted.run_id,"duplicate":true}));
-        }
-        context.budget.change_active(true);
-        let (cancel, receiver) = watch::channel(false);
-        let job = Arc::new(Job {
-            scope: scope.clone(),
-            run: accepted.run_id.clone(),
-            root: context.root_user_message_id.clone(),
-            snapshot,
-            budget: context.budget.clone(),
-            cancel,
-            execution_gate: Arc::new(Mutex::new(true)),
-            state: Mutex::new(JobState {
-                state: "running".into(),
-                queue: VecDeque::from([Mail {
-                    accepted: accepted.clone(),
-                    message: message.into(),
-                    origin: Origin::Delegation,
-                }]),
-                live: String::new(),
-                error: None,
-            }),
-        });
-        jobs.insert(scope.agent.clone(), job.clone());
-        drop(jobs);
-        let host = self.clone();
-        self.runtime.spawn(async move {
-            host.run(job, receiver).await;
-        });
-        Ok(
-            json!({"agent_id":scope.agent,"task_id":accepted.run_id,"root_user_message_id":context.root_user_message_id,"state":"running"}),
-        )
+        context.commit_effect(|| {
+            let accepted = self.store.delegate(
+                &scope,
+                &context.root_user_message_id,
+                request,
+                message,
+                status.clone(),
+                None,
+            )?;
+            if accepted.duplicate {
+                return Ok(json!({"agent_id":scope.agent,"task_id":accepted.run_id,"duplicate":true}));
+            }
+            context.budget.change_active(true);
+            let (cancel, receiver) = watch::channel(false);
+            let job = Arc::new(Job {
+                scope: scope.clone(),
+                run: accepted.run_id.clone(),
+                root: context.root_user_message_id.clone(),
+                snapshot,
+                budget: context.budget.clone(),
+                cancel,
+                execution_gate: Arc::new(Mutex::new(true)),
+                state: Mutex::new(JobState {
+                    state: "running".into(),
+                    queue: VecDeque::from([Mail {
+                        accepted: accepted.clone(),
+                        message: message.into(),
+                        origin: Origin::Delegation,
+                    }]),
+                    live: String::new(),
+                    error: None,
+                }),
+            });
+            jobs.insert(scope.agent.clone(), job.clone());
+            drop(jobs);
+            let host = self.clone();
+            self.runtime.spawn(async move {
+                host.run(job, receiver).await;
+            });
+            Ok(
+                json!({"agent_id":scope.agent,"task_id":accepted.run_id,"root_user_message_id":context.root_user_message_id,"state":"running"}),
+            )
+        })
     }
     fn user_content(&self, scope: &Scope, value: &Value) -> Result<Message> {
         use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -725,7 +729,26 @@ impl AgentHost {
     }
     pub fn cancel(&self, scope: &Scope) -> Result<()> {
         let jobs = self.jobs.lock().unwrap();
-        for job in jobs.values() {
+        Self::cancel_jobs(jobs.values(), scope, None);
+        Ok(())
+    }
+    pub fn cancel_authorized(&self, context: &ToolContext, scope: &Scope) -> Result<()> {
+        ensure!(
+            scope.owner == context.scope.owner && scope.desktop == context.scope.desktop,
+            "agent_scope_mismatch"
+        );
+        let jobs = self.jobs.lock().unwrap();
+        context.commit_effect(|| {
+            Self::cancel_jobs(jobs.values(), scope, Some(&context.execution_gate));
+            Ok(())
+        })
+    }
+    fn cancel_jobs<'a>(
+        jobs: impl Iterator<Item = &'a Arc<Job>>,
+        scope: &Scope,
+        held_gate: Option<&Arc<Mutex<bool>>>,
+    ) {
+        for job in jobs {
             let root_cancel = job.budget.root_scope.agent == scope.agent;
             if job.scope == *scope
                 || (root_cancel
@@ -735,7 +758,11 @@ impl AgentHost {
                 if root_cancel {
                     job.budget.cancelled.store(true, Ordering::Release);
                 }
-                *job.execution_gate.lock().unwrap() = false;
+                // A model cannot target its own active gate through the Session-only
+                // builtin. Avoid recursively locking it in case this helper is reused.
+                if !held_gate.is_some_and(|gate| Arc::ptr_eq(gate, &job.execution_gate)) {
+                    *job.execution_gate.lock().unwrap() = false;
+                }
                 let _ = job.cancel.send(true);
                 let mut state = job.state.lock().unwrap();
                 if running(&state.state) {
@@ -743,7 +770,6 @@ impl AgentHost {
                 }
             }
         }
-        Ok(())
     }
     pub fn cancel_all(&self) {
         for job in self.jobs.lock().unwrap().values() {

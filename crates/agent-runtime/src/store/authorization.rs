@@ -5,10 +5,42 @@ pub(super) fn initialize(db: &Connection) -> Result<()> {
     db.execute_batch("CREATE TABLE IF NOT EXISTS agent_permissions(scope TEXT PRIMARY KEY, mode TEXT NOT NULL, full INTEGER NOT NULL, revision INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS human_pending(id TEXT PRIMARY KEY, scope TEXT NOT NULL, authority TEXT NOT NULL, run TEXT NOT NULL, action TEXT NOT NULL, fingerprint TEXT, value TEXT NOT NULL, state TEXT NOT NULL, response TEXT, expires INTEGER NOT NULL, UNIQUE(scope,action));
       CREATE INDEX IF NOT EXISTS human_pending_scope ON human_pending(scope,state);
+      CREATE INDEX IF NOT EXISTS human_pending_authority ON human_pending(authority,state);
+      CREATE INDEX IF NOT EXISTS human_pending_expiration ON human_pending(state,expires);
       CREATE TABLE IF NOT EXISTS authorization_rules(id TEXT PRIMARY KEY, owner TEXT NOT NULL, desktop TEXT NOT NULL, fingerprint TEXT NOT NULL, value TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0, UNIQUE(owner,desktop,fingerprint));
       CREATE TABLE IF NOT EXISTS human_responses(scope TEXT NOT NULL, request TEXT NOT NULL, hash TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(scope,request));
       CREATE TABLE IF NOT EXISTS approval_details(pending TEXT PRIMARY KEY REFERENCES human_pending(id), value TEXT NOT NULL);
-      UPDATE human_pending SET state='interrupted' WHERE state IN ('pending','resolved');")?;
+      UPDATE human_pending SET state='interrupted',value=json_set(value,'$.terminal_at',CAST(strftime('%s','now') AS INTEGER)*1000) WHERE state IN ('pending','resolved');")?;
+    Ok(())
+}
+const TERMINAL_PENDING_LIMIT: i64 = 64;
+const TERMINAL_PENDING_TTL: i64 = 24 * 60 * 60 * 1000;
+
+/// Retain actionable requests and a bounded recent set of failure/status cards.
+/// Response receipts remain intact, so retries of an acknowledged user RPC are
+/// still idempotent even after its retired status card/details have been removed.
+fn retire_pending(db: &Connection, key: &str, at: i64) -> Result<()> {
+    db.execute("UPDATE human_pending SET state='expired',value=json_set(value,'$.terminal_at',expires) WHERE state IN ('pending','resolved') AND expires<=?1", [at])?;
+    let terminal = "state IN ('cancelled','expired','interrupted','superseded')";
+    let visible = "(scope=?1 OR authority=?1)";
+    let ended =
+        "COALESCE(json_extract(value,'$.terminal_at'),json_extract(value,'$.created_at'),expires)";
+    let retired = format!(
+        "SELECT id FROM human_pending WHERE {visible} AND {terminal} AND ({ended}<=?2 OR id NOT IN (SELECT id FROM human_pending WHERE {visible} AND {terminal} AND {ended}>?2 ORDER BY {ended} DESC,id DESC LIMIT ?3))"
+    );
+    let params = params![
+        key,
+        at.saturating_sub(TERMINAL_PENDING_TTL),
+        TERMINAL_PENDING_LIMIT
+    ];
+    db.execute(
+        &format!("DELETE FROM approval_details WHERE pending IN ({retired})"),
+        params,
+    )?;
+    db.execute(
+        &format!("DELETE FROM human_pending WHERE id IN ({retired})"),
+        params,
+    )?;
     Ok(())
 }
 fn permissions(db: &Connection, scope: &str) -> Result<Value> {
@@ -115,8 +147,13 @@ impl Store {
         {
             return pending_value(&tx, &id);
         }
-        let id = id();
         let at = now();
+        retire_pending(&tx, &key, at)?;
+        let authority_key = authority.key()?;
+        if authority_key != key {
+            retire_pending(&tx, &authority_key, at)?;
+        }
+        let id = id();
         let expires = at + 24 * 60 * 60 * 1000;
         value["id"] = json!(id);
         value["state"] = json!("pending");
@@ -200,7 +237,7 @@ impl Store {
     pub fn pending(&self, scope: &Scope, cursor: Option<&str>) -> Result<Value> {
         let db = self.db.lock().unwrap();
         let key = scope.key()?;
-        db.execute("UPDATE human_pending SET state='expired' WHERE state IN ('pending','resolved') AND expires<=?1",[now()])?;
+        retire_pending(&db, &key, now())?;
         let mut stmt=db.prepare("SELECT id FROM human_pending WHERE (scope=?1 OR authority=?1) AND state != 'consumed' AND (?2='' OR id<?2) ORDER BY id DESC LIMIT 65")?;
         let before = if let Some(cursor) = cursor {
             let c: PageCursor = self.decode(cursor)?;
@@ -359,7 +396,7 @@ impl Store {
             )?,
             "pending_not_found"
         );
-        db.execute("UPDATE human_pending SET state='expired' WHERE id=?1 AND state IN ('pending','resolved') AND expires<=?2",params![id,now()])?;
+        db.execute("UPDATE human_pending SET state='expired',value=json_set(value,'$.terminal_at',expires) WHERE id=?1 AND state IN ('pending','resolved') AND expires<=?2",params![id,now()])?;
         pending_value(&db, id)
     }
     /// Atomically consumes the exact response once; approval is never an action replay API.
@@ -384,11 +421,11 @@ impl Store {
         Ok(item["response"].clone())
     }
     pub fn supersede_approval(&self, scope: &Scope, id: &str) -> Result<()> {
-        ensure!(self.db.lock().unwrap().execute("UPDATE human_pending SET state='superseded' WHERE id=?1 AND scope=?2 AND state='pending' AND json_extract(value,'$.kind')='approval'",params![id,scope.key()?])? == 1,"pending_not_available");
+        ensure!(self.db.lock().unwrap().execute("UPDATE human_pending SET state='superseded',value=json_set(value,'$.terminal_at',?3) WHERE id=?1 AND scope=?2 AND state='pending' AND json_extract(value,'$.kind')='approval'",params![id,scope.key()?,now()])? == 1,"pending_not_available");
         Ok(())
     }
     pub fn cancel_pending_run(&self, scope: &Scope, run: &str) -> Result<()> {
-        self.db.lock().unwrap().execute("UPDATE human_pending SET state='cancelled' WHERE scope=?1 AND run=?2 AND state IN ('pending','resolved')",params![scope.key()?,run])?;
+        self.db.lock().unwrap().execute("UPDATE human_pending SET state='cancelled',value=json_set(value,'$.terminal_at',?3) WHERE scope=?1 AND run=?2 AND state IN ('pending','resolved')",params![scope.key()?,run,now()])?;
         Ok(())
     }
     pub fn action_denied(&self, scope: &Scope, run: &str, fingerprint: &str) -> Result<bool> {
@@ -495,6 +532,131 @@ mod tests {
     }
     fn approval(store: &Store, scope: &Scope, action: &str, fingerprint: &str) -> Value {
         store.create_pending(scope,scope,"run",action,json!({"kind":"approval","tool":"run_command","fingerprint":fingerprint,"can_always":true,"arguments_preview":"/usr/bin/printf value","cwd":"/actual/cwd","_details":{"command":"/usr/bin/printf value"}})).unwrap()
+    }
+    #[test]
+    fn retired_cards_bound_thousands_of_failures_without_dropping_live_or_retry_receipts() {
+        let (_dir, store, scope) = store();
+        let child = store.agent("owner", "desktop", Some("child")).unwrap();
+        let old = approval(&store, &scope, "old", "old-fingerprint");
+        let old_id = old["id"].as_str().unwrap();
+        store
+            .resolve_pending(&scope, "lost-ack", old_id, Some("once"), None)
+            .unwrap();
+        store.cancel_pending_run(&scope, "run").unwrap();
+        let mut last_id = String::new();
+        for index in 0..1001 {
+            let target = if index % 2 == 0 { &scope } else { &child };
+            let run = format!("cancel-{index}");
+            let card = store
+                .create_pending(
+                    target,
+                    &scope,
+                    &run,
+                    &run,
+                    json!({"kind":"approval","_details":{"command":"example"}}),
+                )
+                .unwrap();
+            last_id = card["id"].as_str().unwrap().to_owned();
+            store.cancel_pending_run(target, &run).unwrap();
+        }
+        let live = store
+            .create_pending(
+                &child,
+                &scope,
+                "live",
+                "live",
+                json!({"kind":"question","question":"Current question?"}),
+            )
+            .unwrap();
+        let resolved = store
+            .create_pending(
+                &scope,
+                &scope,
+                "resolved",
+                "resolved",
+                json!({"kind":"question","question":"Answered"}),
+            )
+            .unwrap();
+        store
+            .resolve_pending(
+                &scope,
+                "answer",
+                resolved["id"].as_str().unwrap(),
+                None,
+                Some(json!("answer")),
+            )
+            .unwrap();
+        let mut cursor = None;
+        let mut rows = Vec::new();
+        loop {
+            let page = store.pending(&scope, cursor.as_deref()).unwrap();
+            rows.extend(page["items"].as_array().unwrap().clone());
+            cursor = page["cursor"].as_str().map(str::to_owned);
+            if cursor.is_none() {
+                break;
+            }
+        }
+        assert_eq!(rows.len(), 66);
+        assert!(
+            rows.iter()
+                .any(|v| v["id"] == live["id"] && v["state"] == "pending")
+        );
+        assert!(
+            rows.iter()
+                .any(|v| v["id"] == resolved["id"] && v["state"] == "resolved")
+        );
+        assert!(rows.iter().any(|v| v["id"] == last_id));
+        assert!(store.approval_details(&scope, old_id, None).is_err());
+        assert_eq!(
+            store
+                .resolve_pending(&scope, "lost-ack", old_id, Some("once"), None)
+                .unwrap()["duplicate"],
+            true
+        );
+        assert_eq!(
+            store
+                .consume_pending(&scope, resolved["id"].as_str().unwrap())
+                .unwrap()["answer"],
+            "answer"
+        );
+        assert!(
+            store
+                .poll_pending(&child, live["id"].as_str().unwrap())
+                .is_ok()
+        );
+    }
+    #[test]
+    fn terminal_ttl_and_scope_are_independent_of_actionable_deadlines() {
+        let (_dir, store, scope) = store();
+        let foreign = store.agent("other", "desktop", None).unwrap();
+        let aged = approval(&store, &scope, "aged", "aged");
+        store.cancel_pending_run(&scope, "run").unwrap();
+        let untouched = approval(&store, &foreign, "foreign", "foreign");
+        store.cancel_pending_run(&foreign, "run").unwrap();
+        let at = now();
+        store
+            .db
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE human_pending SET value=json_set(value,'$.terminal_at',?1)",
+                [at - TERMINAL_PENDING_TTL - 1],
+            )
+            .unwrap();
+        let fresh = approval(&store, &scope, "fresh", "fresh");
+        let rows = store.pending(&scope, None).unwrap();
+        assert_eq!(rows["items"].as_array().unwrap().len(), 1);
+        assert_eq!(rows["items"][0]["id"], fresh["id"]);
+        assert!(
+            store
+                .poll_pending(&scope, aged["id"].as_str().unwrap())
+                .is_err()
+        );
+        assert!(
+            store
+                .poll_pending(&foreign, untouched["id"].as_str().unwrap())
+                .is_ok()
+        );
     }
     #[test]
     fn permission_cas_never_promotes_old_input_or_readonly_full() {

@@ -1,5 +1,25 @@
 //! Safe process observations, separate from terminal parsing and authorization.
 use std::path::PathBuf;
+
+/// Retain a bounded prefix plus one truncation sentinel, but drain to EOF so
+/// limiting evidence never closes the program's pipe and causes EPIPE/SIGPIPE.
+pub(crate) async fn drain_output(
+    mut reader: impl tokio::io::AsyncRead + Unpin,
+    limit: usize,
+) -> std::io::Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let retained = limit.saturating_add(1);
+    let mut bytes = Vec::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        let length = reader.read(&mut buffer).await?;
+        if length == 0 {
+            return Ok(bytes);
+        }
+        let keep = length.min(retained.saturating_sub(bytes.len()));
+        bytes.extend_from_slice(&buffer[..keep]);
+    }
+}
 #[cfg(unix)]
 use std::process::{Command, Stdio};
 #[cfg(unix)]

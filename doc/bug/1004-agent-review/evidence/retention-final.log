@@ -1,0 +1,54 @@
+   Compiling bitflags v2.13.2
+   Compiling ring v0.17.14
+   Compiling subtle v2.6.1
+   Compiling getrandom v0.4.3
+   Compiling system-configuration v0.7.0
+   Compiling typenum v1.20.1
+   Compiling hyper-util v0.1.20
+   Compiling generic-array v0.14.7
+   Compiling getrandom v0.3.4
+   Compiling security-framework v3.7.0
+   Compiling rustls v0.23.45
+   Compiling regex-automata v0.4.18
+   Compiling rustls-webpki v0.103.15
+   Compiling tower-http v0.6.11
+   Compiling tokio-rustls v0.26.5
+   Compiling hyper-rustls v0.27.10
+   Compiling rustls-platform-verifier v0.7.1
+   Compiling uuid v1.26.1
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling rustix v1.1.5
+   Compiling reqwest v0.13.5
+   Compiling digest v0.10.7
+   Compiling ahash v0.8.12
+   Compiling nix v0.31.3
+   Compiling sha2 v0.10.9
+   Compiling uuid-simd v0.8.0
+   Compiling process-wrap v10.0.1
+   Compiling referencing v0.33.0
+   Compiling fancy-regex v0.16.2
+   Compiling regex v1.13.1
+   Compiling rusqlite v0.40.2
+   Compiling rmcp v3.4.1
+   Compiling rig-core v0.42.0
+   Compiling jsonschema v0.33.0
+   Compiling axum v0.8.9
+   Compiling tempfile v3.27.0
+   Compiling ai-terminal-agent-runtime v0.1.0 (/Volumes/Code/My/aTerminal/crates/agent-runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 00s
+     Running unittests src/lib.rs (/Volumes/Code/public-worktree/aTerminal/1002-authorization-review/target/debug/deps/ai_terminal_agent_runtime-f5e6eec90a67bc7c)
+
+running 10 tests
+test store::authorization::tests::approval_is_exact_once_nonce_bound_and_scope_checked ... ok
+test store::authorization::tests::always_revoke_regrant_retains_consistent_rule_id ... ok
+test store::authorization::tests::deny_is_remembered_only_for_that_run_and_exact_fingerprint ... ok
+test store::authorization::tests::cancellation_and_expiry_never_consume_old_answers ... ok
+test store::authorization::tests::global_can_answer_delegated_question_without_other_scope_access ... ok
+test store::authorization::tests::long_details_are_private_paginated_scope_bound_and_acknowledged ... ok
+test store::authorization::tests::permission_cas_never_promotes_old_input_or_readonly_full ... ok
+test store::authorization::tests::restart_interrupts_pending_but_keeps_modes_and_rules ... ok
+test store::authorization::tests::terminal_ttl_and_scope_are_independent_of_actionable_deadlines ... ok
+test store::authorization::tests::retired_cards_bound_thousands_of_failures_without_dropping_live_or_retry_receipts ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 93 filtered out; finished in 1.85s

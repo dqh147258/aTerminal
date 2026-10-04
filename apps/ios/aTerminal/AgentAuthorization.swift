@@ -289,8 +289,8 @@ struct AgentInteractionPresentation: Identifiable {
         var current: [String: AgentPending] = [:]
         for item in pending { current[item.id] = item }
         for key in Array(drafts.keys) where key.scope == scopeKey {
-            // The server omits consumed requests; cancelled/expired requests remain
-            // visible and must retain their draft rather than imply consumption.
+            // Consumed requests and retired invalid cards are omitted. A retained
+            // cancelled/expired card keeps its draft until the server retires it.
             if current[key.pending] == nil || current[key.pending]?.state == "consumed" {
                 drafts[key] = nil; consumed.insert(key)
             }

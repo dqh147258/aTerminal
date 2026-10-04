@@ -127,6 +127,14 @@ impl Budget {
     }
 }
 impl ToolContext {
+    /// Linearize the last live authorization check with the actual synchronous
+    /// effect. Callers needing `jobs` must acquire it first, like permission RPCs.
+    pub fn commit_effect<T>(&self, effect: impl FnOnce() -> Result<T>) -> Result<T> {
+        let gate = self.execution_gate.lock().unwrap();
+        ensure!(*gate && !*self.cancel.borrow(), "execution_revoked");
+        self.commit_authorization(None)?;
+        effect()
+    }
     pub fn commit_authorization(&self, observation: Option<&Value>) -> Result<()> {
         self.budget.remaining()?;
         ensure!(!*self.cancel.borrow(), "cancelled");
@@ -648,6 +656,114 @@ mod tests {
                 .unwrap();
             self.host.human_response_changed();
         }
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn effect_commit_is_ordered_with_acknowledged_permission_changes() {
+        let f = Fixture::new(vec![(
+            "ask_user",
+            json!({"question":"Keep the root alive"}),
+        )]);
+        f.host
+            .set_permissions(&f.scope, 0, None, Some(true))
+            .unwrap();
+        f.start("gate-root", 30, true);
+        f.pending().await;
+        let job = f
+            .host
+            .jobs
+            .lock()
+            .unwrap()
+            .get(&f.scope.agent)
+            .unwrap()
+            .clone();
+        let mut context = ToolContext {
+            scope: f.scope.clone(),
+            run_id: job.run.clone(),
+            root_user_message_id: job.root.clone(),
+            history_unit_id: "gate-test".into(),
+            action_id: "gate-effect".into(),
+            max_read_bytes: 4096,
+            vision: false,
+            budget: job.budget.clone(),
+            cancel: job.cancel.subscribe(),
+            execution_gate: job.execution_gate.clone(),
+            authorization_check: None,
+        };
+        context.authorization_check = Some(
+            f.host
+                .approve_action(
+                    &job,
+                    &context,
+                    "run_program",
+                    &json!({"program":"/usr/bin/tee","args":[]}),
+                )
+                .await
+                .unwrap(),
+        );
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let worker = context.clone();
+        let effect = std::thread::spawn(move || {
+            worker.commit_effect(|| {
+                entered_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+                Ok("effect started")
+            })
+        });
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let host = f.host.clone();
+        let scope = f.scope.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (changed_tx, changed_rx) = std::sync::mpsc::channel();
+        let changer = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = host.set_permissions(&scope, 1, Some("read_only"), None);
+            changed_tx.send(result).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(changed_rx.recv_timeout(Duration::from_millis(50)).is_err());
+        release_tx.send(()).unwrap();
+        assert_eq!(effect.join().unwrap().unwrap(), "effect started");
+        assert_eq!(
+            changed_rx
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .unwrap()["permission_mode"],
+            "read_only"
+        );
+        changer.join().unwrap();
+
+        // The opposite order must reject the effect after the permission RPC ACK.
+        f.host
+            .set_permissions(&f.scope, 2, Some("ask"), Some(true))
+            .unwrap();
+        context.action_id = "gate-revoked".into();
+        context.authorization_check = Some(
+            f.host
+                .approve_action(
+                    &job,
+                    &context,
+                    "run_program",
+                    &json!({"program":"/usr/bin/tee","args":[]}),
+                )
+                .await
+                .unwrap(),
+        );
+        f.host
+            .set_permissions(&f.scope, 3, Some("read_only"), None)
+            .unwrap();
+        let executed = AtomicBool::new(false);
+        assert!(
+            context
+                .commit_effect(|| {
+                    executed.store(true, Ordering::Release);
+                    Ok(())
+                })
+                .is_err()
+        );
+        assert!(!executed.load(Ordering::Acquire));
+        f.host.cancel(&f.scope).unwrap();
+        f.settle().await;
     }
     fn raw() -> Value {
         json!({"session_id":"terminal","text":"touch file","submit":true})

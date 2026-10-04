@@ -37,6 +37,8 @@ pending 的公共字段：`id`, `kind: approval|question`, `state`, `agent_id`, 
 
 Desktop 重启后的旧执行线程/未知动作不自动恢复或重放；旧 pending 标记 interrupted/expired，并保留可见原因。永久规则与对话开关仍保留，下一条真实用户任务重新取得执行上下文。不要把旧 pending 的 approve 作为启动新 root 的途径。
 
+失效提示（cancelled/expired/interrupted/superseded）按当前scope及来源authority视图保留最近64条、最长24小时，退休时清理详情，避免长期积累阻断手机待办读取。pending/resolved不受此终态数量限制；用户RPC幂等回执及永久规则独立保留。旧失效卡退休后，客户端相应未消费草稿也可释放。
+
 一次授权只消费指定动作；always 仅在可形成稳定精确指纹时可选。拒绝记录本次动作，模型获得 `authorization_denied`；重复相同拒绝动作在该 Run 返回拒绝，不重复打扰用户。问答答复是明确用户输入，作为工具结果返回，不把其他报告升级为用户授权。
 
 ## 策略模块与集成责任

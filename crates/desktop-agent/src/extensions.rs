@@ -15,7 +15,6 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::io::AsyncReadExt;
 #[derive(Deserialize)]
 struct Front {
     name: String,
@@ -823,22 +822,8 @@ impl Frozen {
         };
         let stdout = child.stdout().take().context("script_stdout_missing")?;
         let stderr = child.stderr().take().context("script_stderr_missing")?;
-        let mut out = tokio::spawn(async move {
-            let mut bytes = Vec::new();
-            stdout
-                .take(256 * 1024 + 1)
-                .read_to_end(&mut bytes)
-                .await
-                .map(|_| bytes)
-        });
-        let mut err = tokio::spawn(async move {
-            let mut bytes = Vec::new();
-            stderr
-                .take(32769)
-                .read_to_end(&mut bytes)
-                .await
-                .map(|_| bytes)
-        });
+        let mut out = tokio::spawn(crate::process::drain_output(stdout, 256 * 1024));
+        let mut err = tokio::spawn(crate::process::drain_output(stderr, 32768));
         let mut cancel = context.cancel.clone();
         let deadline = context.budget.remaining()?.min(Duration::from_secs(60));
         let completed = tokio::select! {

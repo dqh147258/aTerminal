@@ -1,0 +1,4 @@
+    Checking ai-terminal-agent-runtime v0.1.0 (/Volumes/Code/My/aTerminal/crates/agent-runtime)
+    Checking ai-terminal-agent v0.1.0 (/Volumes/Code/My/aTerminal/crates/desktop-agent)
+    Checking ai-terminal v0.1.0 (/Volumes/Code/My/aTerminal/crates/desktop-cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.11s
