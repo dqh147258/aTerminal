@@ -557,15 +557,30 @@ async fn mobile_core_reads_types_and_cannot_override_readonly_pair() {
                 .is_err()
         );
         #[cfg(unix)]
-        {
-            mobile.send_text("i=0; while [ $i -lt 450 ]; do printf 'HISTORY_%03d\\n' $i; i=$((i+1)); done; echo MOBILE_RESUMED".into(), true).unwrap();
-            let deadline = Instant::now() + Duration::from_secs(5);
-            loop {
-                let reply = desktop.call(Request { session: session.id.clone(), operation: Operation::Poll as i32, ..Request::default() }).unwrap();
-                if let Some(frame) = reply.snapshot && has_output(frame.cells.iter().map(|c| c.text.as_str()), frame.cols as usize, "HISTORY_449") { break; }
-                assert!(Instant::now() < deadline, "history fixture output missing");
-                thread::sleep(Duration::from_millis(20));
+        let history_command = "i=0; while [ $i -lt 450 ]; do printf 'HISTORY_%03d\\n' $i; i=$((i+1)); done; echo MOBILE_RESUMED";
+        #[cfg(windows)]
+        let history_command = "for ($i = 0; $i -lt 450; $i++) { [Console]::WriteLine('HI' + 'STORY_' + $i.ToString('D3')) }; [Console]::WriteLine('MOBILE_' + 'RESUMED')";
+        mobile.send_text(history_command.into(), true).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let reply = desktop
+                .call(Request {
+                    session: session.id.clone(),
+                    operation: Operation::Poll as i32,
+                    ..Request::default()
+                })
+                .unwrap();
+            if let Some(frame) = reply.snapshot
+                && has_output(
+                    frame.cells.iter().map(|c| c.text.as_str()),
+                    frame.cols as usize,
+                    "HISTORY_449",
+                )
+            {
+                break;
             }
+            assert!(Instant::now() < deadline, "history fixture output missing");
+            thread::sleep(Duration::from_millis(20));
         }
         mobile.send_text("exit".into(), true).unwrap();
         let until_exit = Instant::now() + Duration::from_secs(5);
@@ -667,16 +682,14 @@ async fn mobile_core_reads_types_and_cannot_override_readonly_pair() {
             cursor = page.cursor;
         }
         assert_eq!(loaded, first.total);
-        #[cfg(unix)]
-        {
-            assert!(first.total > 450);
-            let markers: Vec<_> = lines
-                .iter()
-                .filter(|line| line.starts_with("HISTORY_"))
-                .collect();
-            assert_eq!(markers.len(), 450);
-            assert_eq!(markers[0].as_str(), "HISTORY_000");
-            assert_eq!(markers[449].as_str(), "HISTORY_449");
+        assert!(first.total > 450);
+        let markers: Vec<_> = lines
+            .iter()
+            .filter(|line| line.starts_with("HISTORY_"))
+            .collect();
+        assert_eq!(markers.len(), 450);
+        for (index, marker) in markers.iter().enumerate() {
+            assert_eq!(marker.as_str(), format!("HISTORY_{index:03}"));
         }
         mobile.release_history(cursor).unwrap();
         mobile.disconnect().unwrap();

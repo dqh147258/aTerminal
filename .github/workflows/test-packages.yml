@@ -92,7 +92,7 @@ jobs:
         run: python scripts/package-test-artifact.py desktop --target ${{ matrix.target }} --binary target/${{ matrix.target }}/release/${{ matrix.binary }} --sha ${{ github.sha }}
       - uses: actions/upload-artifact@v4
         with:
-          name: aTerminal-test-${{ matrix.target }}-${{ github.sha }}
+          name: aTerminal-test-${{ matrix.target }}-${{ github.sha }}-attempt-${{ github.run_attempt }}
           path: dist/*
           if-no-files-found: error
           retention-days: 14
@@ -173,7 +173,7 @@ jobs:
         run: python scripts/package-test-artifact.py android --apk apps/android/app/build/outputs/apk/debug/app-debug.apk --sha ${{ github.sha }}
       - uses: actions/upload-artifact@v4
         with:
-          name: aTerminal-test-android-debug-${{ github.sha }}
+          name: aTerminal-test-android-debug-${{ github.sha }}-attempt-${{ github.run_attempt }}
           path: dist/*
           if-no-files-found: error
           retention-days: 14
