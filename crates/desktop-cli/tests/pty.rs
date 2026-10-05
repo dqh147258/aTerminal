@@ -48,15 +48,50 @@ fn actual_pty_output_survives_the_engine_and_binary_protocol() {
 
 #[test]
 fn child_failure_is_not_reported_as_success() {
-    let file = std::env::temp_dir().join(format!("ai-terminal-exit-{}.pb", std::process::id()));
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_aTerminal"));
-    cmd.arg("--snapshot").arg(&file).arg("--");
-    #[cfg(unix)]
-    cmd.args(["/bin/sh", "-c", "exit 7"]);
-    #[cfg(windows)]
-    cmd.args(["powershell.exe", "-NoProfile", "-Command", "exit 7"]);
-    assert_eq!(cmd.status().unwrap().code(), Some(7));
-    std::fs::remove_file(file).unwrap();
+    let attempts = if cfg!(windows) { 16 } else { 1 };
+    for piped in [false, true] {
+        for attempt in 0..attempts {
+            let file = std::env::temp_dir().join(format!(
+                "ai-terminal-exit-{}-{piped}-{attempt}.pb",
+                std::process::id()
+            ));
+            let mut cmd = Command::new(env!("CARGO_BIN_EXE_aTerminal"));
+            cmd.arg("--snapshot").arg(&file).arg("--");
+            #[cfg(unix)]
+            cmd.args(["/bin/sh", "-c", "exit 7"]);
+            #[cfg(windows)]
+            cmd.args(["powershell.exe", "-NoProfile", "-Command", "exit 7"]);
+            // Exercise both the original inherited-console path and redirected capture.
+            let (status, stderr) = if piped {
+                let output = cmd.output().expect("start piped capture");
+                (
+                    output.status,
+                    String::from_utf8_lossy(&output.stderr).into_owned(),
+                )
+            } else {
+                (
+                    cmd.status().expect("start inherited capture"),
+                    String::new(),
+                )
+            };
+            // Inspect the snapshot before asserting the status so failure distinguishes
+            // a completed capture from wrapper termination before it writes the file.
+            let snapshot = std::fs::read(&file)
+                .map_err(|error| error.to_string())
+                .and_then(|bytes| Snapshot::from_wire(&bytes).map_err(|error| error.to_string()))
+                .map(|_| ());
+            let _ = std::fs::remove_file(&file);
+            assert_eq!(
+                status.code(),
+                Some(7),
+                "piped={piped}, attempt={attempt}, snapshot={snapshot:?}, stderr={stderr}"
+            );
+            assert!(
+                snapshot.is_ok(),
+                "piped={piped}, attempt={attempt}: {snapshot:?}"
+            );
+        }
+    }
 }
 
 #[test]

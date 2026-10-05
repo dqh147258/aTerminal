@@ -18,6 +18,7 @@ pub struct Session {
     writer: Option<SyncSender<Vec<u8>>>,
     writer_error: Receiver<String>,
     child: Box<dyn Child + Send + Sync>,
+    child_status: Option<ExitStatus>,
     pub process_identity: String,
     shell: Option<crate::shell::Integration>,
     master: Option<Box<dyn MasterPty + Send>>,
@@ -117,6 +118,7 @@ impl Session {
             writer: Some(input_tx),
             writer_error,
             child,
+            child_status: None,
             master: Some(pair.master),
         })
     }
@@ -162,23 +164,42 @@ impl Session {
         Ok(())
     }
     pub fn exit_status(&mut self) -> Result<Option<ExitStatus>> {
-        let status = self.child.try_wait()?;
+        if self.child_status.is_none() {
+            self.child_status = poll_child(self.child.as_mut())?;
+        }
         #[cfg(windows)]
-        if status.is_some() {
+        if self.child_status.is_some() {
             // ConPTY can keep its output pipe open after the child exits. Close
             // the master while the caller continues draining to real EOF.
             // Closing here synchronously can deadlock on our bounded output queue.
             drop_on_background_thread(&mut self.master)?;
         }
-        Ok(status)
+        Ok(self.child_status.clone())
     }
 }
+
+fn poll_child(child: &mut dyn Child) -> std::io::Result<Option<ExitStatus>> {
+    #[cfg(windows)]
+    {
+        // portable-pty 0.9 queries the code before the process object is signaled.
+        // Confirm full termination before closing ConPTY or accepting an exit code.
+        let child = child
+            .downcast_mut::<portable_pty::win::WinChild>()
+            .ok_or_else(|| std::io::Error::other("PTY child is not a native Windows child"))?;
+        ai_terminal_windows_process::try_wait(child)
+    }
+    #[cfg(not(windows))]
+    {
+        child.try_wait()
+    }
+}
+
 impl Drop for Session {
     fn drop(&mut self) {
         let (_, empty) = mpsc::channel();
         drop(std::mem::replace(&mut self.output, empty));
         self.writer.take();
-        if !matches!(self.child.try_wait(), Ok(Some(_))) {
+        if self.child_status.is_none() && !matches!(poll_child(self.child.as_mut()), Ok(Some(_))) {
             let _ = self.child.kill();
         }
         // ConPTY's independent reader must stay alive during teardown.
