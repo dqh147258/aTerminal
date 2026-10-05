@@ -1,0 +1,14 @@
+[package]
+name = "ai-terminal-windows-process"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+portable-pty.workspace = true
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+# Keep FFI exceptions confined to handle borrowing/polling; existing crates retain forbid.
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"

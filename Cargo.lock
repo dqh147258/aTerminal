@@ -102,6 +102,7 @@ dependencies = [
  "ai-terminal-protocol",
  "ai-terminal-remote",
  "ai-terminal-security",
+ "ai-terminal-windows-process",
  "anyhow",
  "axum",
  "base64 0.22.1",
@@ -261,6 +262,14 @@ dependencies = [
  "datachannel",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "ai-terminal-windows-process"
+version = "0.1.0"
+dependencies = [
+ "portable-pty",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
