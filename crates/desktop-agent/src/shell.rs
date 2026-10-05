@@ -218,6 +218,11 @@ mod toolset_tests {
             let temp = tempfile::tempdir().unwrap();
             let original = temp.path().join("config");
             std::fs::create_dir(&original).unwrap();
+            // Ubuntu's global completion audit can prompt before our isolated rc.
+            // This fixture tests shell hooks, without loading system completions.
+            if shell.ends_with("zsh") {
+                std::fs::write(original.join(".zshenv"), "skip_global_compinit=1\n").unwrap();
+            }
             std::fs::write(
                 original.join(if shell.ends_with("zsh") {
                     ".zshrc"

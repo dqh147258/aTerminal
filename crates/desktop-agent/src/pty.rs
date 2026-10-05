@@ -162,7 +162,15 @@ impl Session {
         Ok(())
     }
     pub fn exit_status(&mut self) -> Result<Option<ExitStatus>> {
-        Ok(self.child.try_wait()?)
+        let status = self.child.try_wait()?;
+        #[cfg(windows)]
+        if status.is_some() {
+            // ConPTY can keep its output pipe open after the child exits. Close
+            // the master while the caller continues draining to real EOF.
+            // Closing here synchronously can deadlock on our bounded output queue.
+            drop_on_background_thread(&mut self.master)?;
+        }
+        Ok(status)
     }
 }
 impl Drop for Session {
@@ -178,6 +186,29 @@ impl Drop for Session {
         let _ = self.child.wait();
     }
 }
+#[cfg(any(windows, test))]
+fn drop_on_background_thread<T: Send + 'static>(resource: &mut Option<T>) -> Result<()> {
+    if resource.is_none() {
+        return Ok(());
+    }
+    let (tx, rx) = mpsc::channel::<T>();
+    // Start the worker before moving the master. If spawning fails, Session::Drop
+    // still owns it and will disconnect the output receiver before closing it.
+    thread::Builder::new()
+        .name("pty-close".into())
+        .spawn(move || {
+            if let Ok(resource) = rx.recv() {
+                drop(resource);
+            }
+        })
+        .context("start PTY close worker")?;
+    if let Err(error) = tx.send(resource.take().expect("resource is present")) {
+        *resource = Some(error.0);
+        bail!("PTY close worker disconnected")
+    }
+    Ok(())
+}
+
 fn size(rows: u16, cols: u16) -> PtySize {
     PtySize {
         rows,
@@ -202,4 +233,44 @@ pub(crate) fn default_shell() -> OsString {
         }
     }
     "powershell.exe".into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn closing_does_not_block_a_backpressured_output_consumer() {
+        struct ClosingMaster(SyncSender<usize>);
+        impl Drop for ClosingMaster {
+            fn drop(&mut self) {
+                // Model ConPTY emitting a final frame larger than the output queue.
+                for chunk in 0..64 {
+                    if self.0.send(chunk).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+        let (tx, rx) = mpsc::sync_channel(32);
+        let (started_tx, started_rx) = mpsc::channel();
+        let caller = thread::spawn(move || {
+            let mut master = Some(ClosingMaster(tx));
+            drop_on_background_thread(&mut master).unwrap();
+            assert!(master.is_none());
+            drop_on_background_thread(&mut master).unwrap();
+            let _ = started_tx.send(());
+        });
+        // If closing blocks the caller, fail with a deadline instead of hanging.
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        for expected in 0..64 {
+            assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), expected);
+        }
+        assert!(matches!(
+            rx.recv_timeout(Duration::from_secs(5)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        ));
+        caller.join().unwrap();
+    }
 }

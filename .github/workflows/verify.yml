@@ -1,5 +1,11 @@
 name: Verify Terminal
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches-ignore: ['codex/test-packages-*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   terminal:
     strategy:
@@ -13,7 +19,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y cmake clang libclang-dev libdbus-1-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y cmake clang libclang-dev libdbus-1-dev pkg-config zsh
       - if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
       - if: runner.os == 'Windows'
@@ -23,7 +29,17 @@ jobs:
           "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Append
           "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
       - run: cargo fmt --all --check
-      - run: cargo test --locked --workspace --exclude ai-terminal-bindgen
+      - name: Compile Windows test executables
+        if: runner.os == 'Windows'
+        timeout-minutes: 30
+        run: cargo test --locked --workspace --exclude ai-terminal-bindgen --no-run
+      - name: Check Windows daemon readiness
+        if: runner.os == 'Windows'
+        timeout-minutes: 6
+        run: cargo test --locked -p ai-terminal --test agent configuration_rpc_is_revisioned_and_provider_secrets_are_write_only -- --exact --nocapture
+      - name: Run workspace tests
+        timeout-minutes: 30
+        run: cargo test --locked --workspace --exclude ai-terminal-bindgen
       - run: cargo clippy --locked --workspace --all-targets --exclude ai-terminal-bindgen -- -D warnings
       - if: runner.os != 'Windows'
         run: |
@@ -37,6 +53,8 @@ jobs:
         with:
           targets: aarch64-apple-ios, aarch64-linux-android
       - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
       - run: sdkmanager 'ndk;28.2.13676358'
       - run: python3 scripts/build-mobile.py ios --webrtc
       - run: python3 scripts/build-mobile.py android --webrtc --ndk "$ANDROID_HOME/ndk/28.2.13676358"

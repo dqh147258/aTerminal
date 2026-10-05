@@ -1,3 +1,7 @@
+#[cfg(windows)]
+#[path = "support/windows_daemon.rs"]
+mod windows_daemon;
+
 use ai_terminal_agent::Client;
 use ai_terminal_protocol::local::{Operation, Request, SESSION_CLOSED_ERROR};
 use std::{
@@ -46,17 +50,33 @@ fn host_with_model(model_url: Option<&str>) -> (Host, Client) {
         .arg(&dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
+        .stderr(if cfg!(windows) {
+            Stdio::piped()
+        } else {
+            Stdio::inherit()
+        })
         .spawn()
         .unwrap();
-    let host = Host { child, dir };
-    let until = Instant::now() + Duration::from_secs(5);
-    loop {
-        if let Ok(c) = Client::connect(&host.dir) {
-            return (host, c);
+    let mut host = Host { child, dir };
+    #[cfg(windows)]
+    {
+        let client = windows_daemon::wait_for_agent(&mut host.child, &host.dir);
+        (host, client)
+    }
+    #[cfg(not(windows))]
+    {
+        let until = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Ok(c) = Client::connect(&host.dir) {
+                return (host, c);
+            }
+            assert!(
+                host.child.try_wait().unwrap().is_none(),
+                "Agent exited during startup"
+            );
+            assert!(Instant::now() < until, "Agent startup timed out");
+            thread::sleep(Duration::from_millis(20));
         }
-        assert!(Instant::now() < until, "Agent startup timed out");
-        thread::sleep(Duration::from_millis(20));
     }
 }
 fn attach_desktop(client: &Client, id: &str) -> ai_terminal_protocol::local::SessionInfo {
@@ -535,15 +555,30 @@ async fn mobile_core_reads_types_and_cannot_override_readonly_pair() {
                 .is_err()
         );
         #[cfg(unix)]
-        {
-            mobile.send_text("i=0; while [ $i -lt 450 ]; do printf 'HISTORY_%03d\\n' $i; i=$((i+1)); done; echo MOBILE_RESUMED".into(), true).unwrap();
-            let deadline = Instant::now() + Duration::from_secs(5);
-            loop {
-                let reply = desktop.call(Request { session: session.id.clone(), operation: Operation::Poll as i32, ..Request::default() }).unwrap();
-                if let Some(frame) = reply.snapshot && has_output(frame.cells.iter().map(|c| c.text.as_str()), frame.cols as usize, "HISTORY_449") { break; }
-                assert!(Instant::now() < deadline, "history fixture output missing");
-                thread::sleep(Duration::from_millis(20));
+        let history_command = "i=0; while [ $i -lt 450 ]; do printf 'HISTORY_%03d\\n' $i; i=$((i+1)); done; echo MOBILE_RESUMED";
+        #[cfg(windows)]
+        let history_command = "for ($i = 0; $i -lt 450; $i++) { [Console]::WriteLine('HI' + 'STORY_' + $i.ToString('D3')) }; [Console]::WriteLine('MOBILE_' + 'RESUMED')";
+        mobile.send_text(history_command.into(), true).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let reply = desktop
+                .call(Request {
+                    session: session.id.clone(),
+                    operation: Operation::Poll as i32,
+                    ..Request::default()
+                })
+                .unwrap();
+            if let Some(frame) = reply.snapshot
+                && has_output(
+                    frame.cells.iter().map(|c| c.text.as_str()),
+                    frame.cols as usize,
+                    "HISTORY_449",
+                )
+            {
+                break;
             }
+            assert!(Instant::now() < deadline, "history fixture output missing");
+            thread::sleep(Duration::from_millis(20));
         }
         mobile.send_text("exit".into(), true).unwrap();
         let until_exit = Instant::now() + Duration::from_secs(5);
@@ -645,16 +680,14 @@ async fn mobile_core_reads_types_and_cannot_override_readonly_pair() {
             cursor = page.cursor;
         }
         assert_eq!(loaded, first.total);
-        #[cfg(unix)]
-        {
-            assert!(first.total > 450);
-            let markers: Vec<_> = lines
-                .iter()
-                .filter(|line| line.starts_with("HISTORY_"))
-                .collect();
-            assert_eq!(markers.len(), 450);
-            assert_eq!(markers[0].as_str(), "HISTORY_000");
-            assert_eq!(markers[449].as_str(), "HISTORY_449");
+        assert!(first.total > 450);
+        let markers: Vec<_> = lines
+            .iter()
+            .filter(|line| line.starts_with("HISTORY_"))
+            .collect();
+        assert_eq!(markers.len(), 450);
+        for (index, marker) in markers.iter().enumerate() {
+            assert_eq!(marker.as_str(), format!("HISTORY_{index:03}"));
         }
         mobile.release_history(cursor).unwrap();
         mobile.disconnect().unwrap();
@@ -1362,6 +1395,48 @@ async fn persistent_agent_reads_analyzes_then_inputs_through_real_mcp_and_pty() 
         json!({"action":"send","request_id":request,"message":"Read the terminal, then print the marker once.","allow_input":true}),
     );
     assert_eq!(sent["state"], "running");
+    // Legacy allow_input enables asking; it must never silently approve a write.
+    let until = Instant::now() + Duration::from_secs(20);
+    let waiting = loop {
+        let state = rpc(json!({"action":"state"}));
+        if state["state"] == "waiting_for_user" {
+            break state;
+        }
+        assert_eq!(state["state"], "running", "{state}");
+        assert!(Instant::now() < until, "{state}");
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    };
+    assert_eq!(waiting["permissions"]["permission_mode"], "ask");
+    assert_eq!(waiting["permissions"]["full_authorization"], false);
+    let pending = waiting["pending"]["items"].as_array().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0]["kind"], "approval");
+    assert_eq!(pending[0]["tool"], "input_text");
+    assert_eq!(pending[0]["state"], "pending");
+    assert_eq!(calls.lock().unwrap().len(), 3);
+    let frame = client
+        .call(Request {
+            operation: Operation::Poll as i32,
+            session: session.clone(),
+            ..Default::default()
+        })
+        .unwrap()
+        .snapshot
+        .unwrap();
+    let text = frame
+        .cells
+        .iter()
+        .map(|c| c.text.as_str())
+        .collect::<String>();
+    assert!(!text.contains("NEW_AGENT_OK"));
+
+    let approval = json!({
+        "action":"resolve",
+        "request_id":ai_terminal_agent_runtime::request_id(),
+        "pending_id":pending[0]["id"],
+        "decision":"once"
+    });
+    assert_eq!(rpc(approval.clone())["duplicate"], false);
     let until = Instant::now() + Duration::from_secs(20);
     loop {
         let state = rpc(json!({"action":"state"}));
@@ -1383,11 +1458,43 @@ async fn persistent_agent_reads_analyzes_then_inputs_through_real_mcp_and_pty() 
         .to_owned();
     assert!(items.iter().any(|i| i["kind"] == "interaction"));
     assert_eq!(calls.lock().unwrap().len(), 4);
+    assert_eq!(rpc(approval)["duplicate"], true);
+    let permissions = rpc(json!({"action":"permissions"}));
+    assert_eq!(permissions["permission_mode"], "ask");
+    assert_eq!(permissions["full_authorization"], false);
+    assert_eq!(rpc(json!({"action":"rules"}))["items"], json!([]));
+
     {
         let requests = calls.lock().unwrap();
         let original = requests[0]["messages"].as_array().unwrap();
         let analysis = requests[1]["messages"].as_array().unwrap();
-        assert_eq!(&analysis[..original.len()], original.as_slice());
+        // Action-stage guidance is request-local, not persisted conversation history.
+        let (action, history) = original.split_last().unwrap();
+        assert_eq!(action["role"], "user");
+        assert!(
+            action["content"]
+                .as_str()
+                .unwrap()
+                .starts_with("Application action stage:")
+        );
+        assert_eq!(analysis.len(), history.len() + 3);
+        assert_eq!(&analysis[..history.len()], history);
+        assert!(!analysis.iter().any(|message| message == action));
+        let read_call = &analysis[history.len()];
+        assert_eq!(read_call["role"], "assistant");
+        assert_eq!(read_call["tool_calls"][0]["id"], "call_read");
+        assert_eq!(
+            read_call["tool_calls"][0]["function"]["name"],
+            "read_terminal"
+        );
+        let observation = &analysis[history.len() + 1];
+        assert_eq!(observation["role"], "tool");
+        assert_eq!(observation["tool_call_id"], "call_read");
+        assert!(observation.to_string().contains(&record));
+        for index in [2, 3] {
+            let messages = requests[index]["messages"].as_array().unwrap();
+            assert_eq!(messages.last().unwrap(), action);
+        }
         for key in ["model", "temperature", "max_tokens", "tools", "tool_choice"] {
             assert_eq!(requests[0][key], requests[1][key], "analysis changed {key}");
         }
@@ -1451,6 +1558,8 @@ async fn persistent_agent_reads_analyzes_then_inputs_through_real_mcp_and_pty() 
 #[test]
 fn opt_in_shell_hooks_report_exit_and_cwd_without_global_rc_changes() {
     let (mut host, client) = host();
+    // Keep this isolated hook test independent of Ubuntu's completion audit prompt.
+    std::fs::write(host.dir.join(".zshenv"), "skip_global_compinit=1\n").unwrap();
     for shell in ["/bin/bash", "/bin/zsh"] {
         if !std::path::Path::new(shell).exists() {
             continue;
@@ -1479,7 +1588,12 @@ fn opt_in_shell_hooks_report_exit_and_cwd_without_global_rc_changes() {
                 })
                 .unwrap();
             let next = r.info.unwrap();
-            if !next.shell_status.is_empty() {
+            let status: serde_json::Value =
+                serde_json::from_str(&next.shell_status).unwrap_or_default();
+            if status["phase"] == "prompt"
+                && status["sequence"] == 0
+                && status["evidence_source"] == "session_shell_hook"
+            {
                 info = next;
                 break;
             }
@@ -1513,6 +1627,9 @@ fn opt_in_shell_hooks_report_exit_and_cwd_without_global_rc_changes() {
             let value: serde_json::Value =
                 serde_json::from_str(&r.info.unwrap().shell_status).unwrap_or_default();
             if value["phase"] == "prompt" && value["exit_code"] == 1 {
+                assert_eq!(value["sequence"], 1);
+                assert_eq!(value["command"], "false");
+                assert_eq!(value["command_association"], true);
                 assert_eq!(value["trusted_for_authorization"], false);
                 assert_eq!(
                     std::path::Path::new(value["cwd"].as_str().unwrap())

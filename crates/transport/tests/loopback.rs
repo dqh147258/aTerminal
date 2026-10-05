@@ -51,6 +51,8 @@ impl PeerConnectionHandler for Peer {
 
 #[test]
 fn reliable_data_channel_transfers_binary_payload_on_host_candidates() {
+    // Exercise adapter startup and inherit its native platform link dependencies.
+    ai_terminal_transport::initialize();
     let (tx, rx) = mpsc::channel();
     let config = RtcConfig::new(&[] as &[&str]);
     let mut a = RtcPeerConnection::new(

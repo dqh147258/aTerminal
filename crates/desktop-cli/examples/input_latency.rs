@@ -29,7 +29,10 @@ async fn main() -> Result<()> {
         "aiterminal-latency-{}",
         ai_terminal_agent::random_id()
     ));
+    #[cfg(unix)]
     let mut directory = std::fs::DirBuilder::new();
+    #[cfg(not(unix))]
+    let directory = std::fs::DirBuilder::new();
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
