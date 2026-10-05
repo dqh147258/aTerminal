@@ -31,7 +31,10 @@ impl Desktop {
             builder.mode(0o700).create(&dir).unwrap();
         }
         // On Windows the daemon must create and protect its own fresh state root.
-        let child = Command::new(env!("CARGO_BIN_EXE_aTerminal"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_aTerminal"));
+        #[cfg(windows)]
+        command.env("ATERMINAL_STARTUP_TRACE", "1");
+        let child = command
             .args(["--agent", "--state-dir"])
             .arg(&dir)
             .env("AI_TERMINAL_CREDENTIAL_STORE", "file")

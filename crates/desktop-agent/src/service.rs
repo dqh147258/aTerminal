@@ -302,6 +302,13 @@ struct Host {
     stop: Arc<AtomicBool>,
     workers: AtomicUsize,
 }
+pub(crate) fn startup_stage(_stage: &'static str) {
+    #[cfg(debug_assertions)]
+    if std::env::var_os("ATERMINAL_STARTUP_TRACE").is_some() {
+        eprintln!("Agent startup: {_stage}");
+    }
+}
+
 pub fn run_agent(dir: &Path) -> Result<()> {
     secure_dir(dir)?;
     let lock = open_private(&dir.join("agent.lock"), false)?;
@@ -338,14 +345,20 @@ pub fn run_agent(dir: &Path) -> Result<()> {
             "Legacy AI environment is not applied. Import explicitly with: aTerminal config import-legacy-env"
         );
     }
+    startup_stage("account:start");
     let account = crate::account::AccountManager::new(dir)?;
+    startup_stage("account:ready");
+    startup_stage("runtime:start");
     let async_runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(3)
         .enable_all()
         .build()?;
+    startup_stage("runtime:ready");
+    startup_stage("store:start");
     let store = Arc::new(ai_terminal_agent_runtime::store::Store::open(
         &dir.join("data/agent.sqlite3"),
     )?);
+    startup_stage("store:ready");
     let agents =
         ai_terminal_agent_runtime::host::AgentHost::new(store, async_runtime.handle().clone());
     let host = Arc::new(Host {
@@ -353,7 +366,12 @@ pub fn run_agent(dir: &Path) -> Result<()> {
         state_dir: dir.into(),
         recent_directories: Mutex::new(crate::recent_directories::RecentDirectories::new(dir)),
         account: account.clone(),
-        config: crate::config::ConfigService::open(dir)?,
+        config: {
+            startup_stage("config:start");
+            let config = crate::config::ConfigService::open(dir)?;
+            startup_stage("config:ready");
+            config
+        },
         assistant: crate::assistant::Assistant::default(),
         sessions: Mutex::new(HashMap::new()),
         session_order: Mutex::new(Vec::new()),
@@ -361,13 +379,17 @@ pub fn run_agent(dir: &Path) -> Result<()> {
         stop: Arc::new(AtomicBool::new(false)),
         workers: AtomicUsize::new(0),
     });
+    startup_stage("background:start");
     crate::remote_bridge::spawn(dir.to_owned(), host.stop.clone());
     account.spawn(host.stop.clone());
     runtime::spawn_recorder(Arc::downgrade(&host));
     spawn_directory_recorder(Arc::downgrade(&host));
+    startup_stage("background:ready");
+    startup_stage("accept:ready");
     while !host.stop.load(Ordering::Acquire) {
         match listener.accept() {
             Ok((mut stream, _)) => {
+                startup_stage("accept:connection");
                 if host.workers.fetch_add(1, Ordering::AcqRel) >= 32 {
                     host.workers.fetch_sub(1, Ordering::AcqRel);
                     continue;
@@ -386,6 +408,7 @@ pub fn run_agent(dir: &Path) -> Result<()> {
                             Err(_) => break,
                         };
                         if request.token != token {
+                            startup_stage("request:rejected");
                             let _ = write_message(&mut stream, &error("unauthorized local client"));
                             break;
                         }

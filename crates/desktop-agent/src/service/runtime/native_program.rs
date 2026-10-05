@@ -233,27 +233,28 @@ mod tests {
     use super::*;
     #[test]
     fn literal_native_contract_enforces_utf8_byte_limits_and_defaults_to_eof() {
+        let program = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
         assert!(normalized_arguments(&json!({"program":"relative","args":[]})).is_err());
         assert!(
-            normalized_arguments(&json!({"program":"/bin/echo","args":["x".repeat(16001)]}))
-                .is_err()
+            normalized_arguments(&json!({"program":program,"args":["x".repeat(16001)]})).is_err()
         );
         assert!(
-            normalized_arguments(
-                &json!({"program":"/bin/echo","args":[],"stdin":"中".repeat(6000)})
-            )
-            .is_err()
+            normalized_arguments(&json!({"program":program,"args":[],"stdin":"中".repeat(6000)}))
+                .is_err()
         );
         assert!(!native_binary(b"#!/bin/sh\nprintf value"));
         assert!(!native_binary(b"shell source"));
         assert!(native_binary(b"\x7fELFbinary"));
         assert_eq!(
-            normalized_arguments(&json!({"program":"/bin/echo","args":[]})).unwrap()["stdin"],
+            normalized_arguments(&json!({"program":program,"args":[]})).unwrap()["stdin"],
             Value::Null
         );
         assert_eq!(
-            normalized_arguments(&json!({"program":"/bin/echo","args":["$HOME; literal"]}))
-                .unwrap()["args"][0],
+            normalized_arguments(&json!({"program":program,"args":["$HOME; literal"]})).unwrap()["args"]
+                [0],
             "$HOME; literal"
         );
     }

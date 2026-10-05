@@ -31,6 +31,8 @@ fn host_with_model(model_url: Option<&str>) -> (Host, Client) {
         ai_terminal_agent::random_id()
     ));
     let mut command = Command::new(env!("CARGO_BIN_EXE_aTerminal"));
+    #[cfg(windows)]
+    command.env("ATERMINAL_STARTUP_TRACE", "1");
     command
         .env("AI_TERMINAL_LEGACY_ASSISTANT", "1")
         .env_remove("AI_TERMINAL_AI_BASE_URL")
