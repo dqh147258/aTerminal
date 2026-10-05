@@ -77,10 +77,10 @@ pub(crate) fn identity(pid: u32) -> Option<String> {
     #[cfg(target_os = "linux")]
     {
         let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-        return Some(format!(
+        Some(format!(
             "proc:{}",
             stat.rsplit_once(") ")?.1.split_whitespace().nth(19)?
-        ));
+        ))
     }
     #[cfg(target_os = "macos")]
     {
