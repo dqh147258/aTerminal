@@ -1435,7 +1435,30 @@ async fn persistent_agent_reads_analyzes_then_inputs_through_real_mcp_and_pty() 
         let requests = calls.lock().unwrap();
         let original = requests[0]["messages"].as_array().unwrap();
         let analysis = requests[1]["messages"].as_array().unwrap();
-        assert_eq!(&analysis[..original.len()], original.as_slice());
+        // Action-stage guidance is request-local, not persisted conversation history.
+        let (action, history) = original.split_last().unwrap();
+        assert_eq!(action["role"], "user");
+        assert!(
+            action["content"]
+                .as_str()
+                .unwrap()
+                .starts_with("Application action stage:")
+        );
+        assert_eq!(analysis.len(), history.len() + 3);
+        assert_eq!(&analysis[..history.len()], history);
+        assert!(!analysis.iter().any(|message| message == action));
+        let read_call = &analysis[history.len()];
+        assert_eq!(read_call["role"], "assistant");
+        assert_eq!(read_call["tool_calls"][0]["id"], "call_read");
+        assert_eq!(read_call["tool_calls"][0]["function"]["name"], "read_terminal");
+        let observation = &analysis[history.len() + 1];
+        assert_eq!(observation["role"], "tool");
+        assert_eq!(observation["tool_call_id"], "call_read");
+        assert!(observation.to_string().contains(&record));
+        for index in [2, 3] {
+            let messages = requests[index]["messages"].as_array().unwrap();
+            assert_eq!(messages.last().unwrap(), action);
+        }
         for key in ["model", "temperature", "max_tokens", "tools", "tool_choice"] {
             assert_eq!(requests[0][key], requests[1][key], "analysis changed {key}");
         }
