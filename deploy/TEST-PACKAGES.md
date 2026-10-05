@@ -9,6 +9,7 @@ Desktop 使用 Rust `release` 优化配置；这里的 `release` 是编译配置
 
 在对应提交的 GitHub Actions 运行页面下载平台 artifact。GitHub 下载的外层 ZIP
 内含本脚本生成的 `.zip` 或 `.tar.gz`、对应的 `.sha256` 和 `.build-info.json`。
+artifact 名包含源码提交 SHA 和运行尝试编号（`attempt`），重跑不会复用旧尝试的 artifact 名。
 先核对运行页提交 SHA，再核对校验文件；同一来源的校验和用于发现损坏，不能替代来源认证。
 
 内层包包含：
@@ -58,14 +59,27 @@ Secret Service 凭据存储还需要可用的桌面会话/密钥环服务。
 - 这是可调试的 Debug APK，使用临时 CI runner 的标准调试密钥；不适合商店发布或生产使用
 - 后续运行可能生成不同调试密钥。同应用 ID 的已安装包若签名不同，无法直接覆盖安装；可能需要卸载，而卸载会删除应用本地数据。请先评估并备份，不要自动执行卸载
 
-本测试工作流显式传入空的 `-PterminalServerUrl=`，默认不内置服务器地址，也不猜测生产端点。
-在登录界面设置你有权限使用的测试服务器和测试账号。构建自己的测试包时，可显式使用
+自动触发的测试工作流传入空的 `-PterminalServerUrl=`，默认不内置服务器地址，也不猜测生产端点。
+手动触发工作流时，可通过可选的 `server_url` 输入指定有权限使用的测试服务器；留空则在 Android
+登录界面设置服务器地址。构建自己的测试包时，可显式使用
 `-PterminalServerUrl=https://your-test-server.example`；不要提交账号密码、令牌、私钥或私有 CA。
 已保存的服务器配置可能优先于新的构建默认值。
 
 APK 结构检查不会验证账号、连通性或运行时功能。工作流另用 `aapt` 核对 APK manifest
 及目标 SDK/应用 ID/ABI，并用 `apksigner verify` 验证签名；应查看对应作业日志。
 默认地址等构建配置需由工作流单独检查，不能从文件名或通过头部检查推断。
+
+## CI 校验范围
+
+Desktop 作业按顺序执行格式检查、完整 workspace 测试（排除 `ai-terminal-bindgen`）、
+Clippy、目标平台优化构建、`--help` 启动检查和打包内容检查，成功后才上传对应 artifact。
+Windows 还单独编译测试可执行文件并执行聚焦的 daemon 就绪测试；完整测试仍会随后执行。
+Linux/macOS 另运行 host terminal 检查。Android 作业构建三种 ABI，执行 Debug APK
+构建和 lint，再核对 manifest、调试签名、默认服务器配置及包内原生库。
+
+这些是工作流的检查步骤，不代表某个提交已经通过。请查看对应源码 SHA、平台和运行尝试
+的实际结果；已上传某个平台的 artifact 也不表示其他平台成功或正式发布验收完成。
+真实设备安装、交互、跨公网连接和长期运行仍需单独验证。
 
 ## 本地打包与自测
 

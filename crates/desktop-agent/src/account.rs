@@ -163,15 +163,11 @@ pub(crate) struct AccountManager {
 }
 impl AccountManager {
     pub fn new(dir: &Path) -> Result<Arc<Self>> {
-        crate::service::startup_stage("account:vault-start");
         let vault = Vault::new(dir)?;
-        crate::service::startup_stage("account:vault-ready");
-        crate::service::startup_stage("account:load-start");
         let (state, load_error) = match vault.load() {
             Ok(s) => (s, None),
             Err(e) => (None, Some(e.to_string())),
         };
-        crate::service::startup_stage("account:load-ready");
         let owner = state.as_ref().map(principal).unwrap_or_else(|| {
             std::fs::read_to_string(vault.fallback.with_extension("mode"))
                 .or_else(|_| std::fs::read_to_string(dir.join("account-mode")))

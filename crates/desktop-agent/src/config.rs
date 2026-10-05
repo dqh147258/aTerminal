@@ -99,9 +99,7 @@ pub struct View {
 }
 impl ConfigService {
     pub fn open(root: &Path) -> Result<Self> {
-        crate::service::startup_stage("config:root-check-start");
         crate::service::secure_dir(root)?;
-        crate::service::startup_stage("config:root-check-ready");
         let journal = root.join("config.pending.json");
         let state = if journal.exists() {
             let state: State = read_json(&journal)?;
@@ -129,19 +127,13 @@ impl ConfigService {
                 revision: 0,
                 owners: BTreeMap::new(),
             };
-            crate::service::startup_stage("config:journal-start");
             atomic_json(&journal, &state)?;
-            crate::service::startup_stage("config:journal-ready");
             publish(root, &state)?;
-            crate::service::startup_stage("config:journal-remove-start");
             std::fs::remove_file(&journal)?;
-            crate::service::startup_stage("config:journal-remove-ready");
             state
         };
         validate(&state)?;
-        crate::service::startup_stage("config:mirror-start");
         crate::builtin_skills::mirror(root)?;
-        crate::service::startup_stage("config:mirror-ready");
         let mut retained = state
             .owners
             .values()
@@ -155,9 +147,7 @@ impl ConfigService {
                     .flat_map(|o| o.skills.values().map(|s| s.root.clone())),
             );
         }
-        crate::service::startup_stage("config:collection-start");
         crate::extensions::collect_old_versions(root, &retained)?;
-        crate::service::startup_stage("config:collection-ready");
         Ok(Self {
             root: root.into(),
             state: Mutex::new(Arc::new(state)),
@@ -702,12 +692,8 @@ fn publish(root: &Path, state: &State) -> Result<()> {
             })
             .collect(),
     };
-    crate::service::startup_stage("config:publish-providers-start");
     atomic_json(&root.join("providers.json"), &providers)?;
-    crate::service::startup_stage("config:publish-providers-ready");
-    crate::service::startup_stage("config:publish-models-start");
     atomic_json(&root.join("models.json"), &models)?;
-    crate::service::startup_stage("config:publish-models-ready");
     let mcp = McpFile {
         schema_version: 1,
         revision: state.revision,
@@ -732,10 +718,7 @@ fn publish(root: &Path, state: &State) -> Result<()> {
             })
             .collect(),
     };
-    crate::service::startup_stage("config:publish-mcp-start");
     atomic_json(&root.join("mcp.json"), &mcp)?;
-    crate::service::startup_stage("config:publish-mcp-ready");
-    crate::service::startup_stage("config:publish-root-start");
     atomic_json(
         &root.join("config.json"),
         &Root {
@@ -744,7 +727,6 @@ fn publish(root: &Path, state: &State) -> Result<()> {
             revision: state.revision,
         },
     )?;
-    crate::service::startup_stage("config:publish-root-ready");
     Ok(())
 }
 fn read_state(root: &Path) -> Result<State> {
@@ -808,21 +790,12 @@ fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(value)?;
     ensure!(bytes.len() <= 4 * 1024 * 1024, "config_limit");
     let tmp = path.with_extension("tmp");
-    crate::service::startup_stage("config:atomic-open-start");
     let mut file = crate::service::open_private(&tmp, false)?;
-    crate::service::startup_stage("config:atomic-open-ready");
     file.set_len(0)?;
-    crate::service::startup_stage("config:atomic-write-start");
     file.write_all(&bytes)?;
-    crate::service::startup_stage("config:atomic-write-ready");
-    crate::service::startup_stage("config:atomic-sync-start");
     file.sync_all()?;
-    crate::service::startup_stage("config:atomic-sync-ready");
-    crate::service::startup_stage("config:atomic-rename-start");
     std::fs::rename(tmp, path)?;
-    crate::service::startup_stage("config:atomic-rename-ready");
     sync_dir(path.parent().unwrap())?;
-    crate::service::startup_stage("config:atomic-ready");
     Ok(())
 }
 fn sync_dir(path: &Path) -> Result<()> {

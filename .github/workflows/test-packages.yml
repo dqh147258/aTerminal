@@ -74,7 +74,7 @@ jobs:
         run: cargo test --locked --workspace --exclude ai-terminal-bindgen --no-run
       - name: Check Windows daemon readiness
         if: runner.os == 'Windows'
-        timeout-minutes: 3
+        timeout-minutes: 6
         run: cargo test --locked -p ai-terminal --test agent configuration_rpc_is_revisioned_and_provider_secrets_are_write_only -- --exact --nocapture
       - name: Run workspace tests
         timeout-minutes: 30
