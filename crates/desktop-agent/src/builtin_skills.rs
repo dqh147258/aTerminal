@@ -34,25 +34,37 @@ pub(crate) const CATALOG: &[(&str, &str, &str)] = &[
 pub(crate) fn mirror(root: &std::path::Path) -> anyhow::Result<()> {
     use std::io::Write;
     let directory = root.join("builtin");
+    crate::service::startup_stage("builtin:root-start");
     crate::service::secure_dir(&directory)?;
+    crate::service::startup_stage("builtin:root-ready");
     let mut manifest = Vec::new();
     for (id, description, body) in CATALOG {
         let name = id.strip_prefix("builtin/").unwrap();
         let path = directory.join("skills").join(name);
+        crate::service::startup_stage("builtin:skill-directory-start");
         crate::service::secure_dir(&path)?;
+        crate::service::startup_stage("builtin:skill-directory-ready");
         let text = format!("---\nname: {name}\ndescription: {description}\n---\n{body}\n");
+        crate::service::startup_stage("builtin:skill-open-start");
         let mut file = crate::service::open_private(&path.join("SKILL.md"), false)?;
+        crate::service::startup_stage("builtin:skill-open-ready");
         file.set_len(0)?;
         file.write_all(text.as_bytes())?;
+        crate::service::startup_stage("builtin:skill-sync-start");
         file.sync_all()?;
+        crate::service::startup_stage("builtin:skill-ready");
         manifest.push(serde_json::json!({"id":id,"builtin":true,"read_only":true,"hash":blake3::hash(text.as_bytes()).to_hex().to_string()}));
     }
+    crate::service::startup_stage("builtin:manifest-open-start");
     let mut file = crate::service::open_private(&directory.join("manifest.json"), false)?;
+    crate::service::startup_stage("builtin:manifest-open-ready");
     file.set_len(0)?;
     serde_json::to_writer(
         &mut file,
         &serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"mcp":["builtin/terminal"],"skills":manifest}),
     )?;
+    crate::service::startup_stage("builtin:manifest-sync-start");
     file.sync_all()?;
+    crate::service::startup_stage("builtin:manifest-ready");
     Ok(())
 }

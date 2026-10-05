@@ -24,6 +24,8 @@ pub fn wait_for_agent(child: &mut Child, root: &Path) -> Client {
         .expect("fixture must capture daemon stderr");
     thread::spawn(move || {
         let mut buffer = [0; 1024];
+        let mut line = Vec::new();
+        let mut oversized = false;
         while let Ok(n) = pipe.read(&mut buffer) {
             if n == 0 {
                 break;
@@ -32,6 +34,33 @@ pub fn wait_for_agent(child: &mut Child, root: &Path) -> Client {
             tail.extend_from_slice(&buffer[..n]);
             let excess = tail.len().saturating_sub(8192);
             drop(tail.drain(..excess));
+            drop(tail);
+            // These static stage lines exist only when daemon tracing is opted in.
+            // Forward complete bounded lines; retain arbitrary stderr only in the tail.
+            for &byte in &buffer[..n] {
+                if byte == b'\n' {
+                    if !oversized
+                        && let Ok(text) = std::str::from_utf8(&line)
+                        && let Some(stage) =
+                            text.trim_end_matches('\r').strip_prefix("Agent startup: ")
+                        && !stage.is_empty()
+                        && stage
+                            .bytes()
+                            .all(|b| b.is_ascii_lowercase() || b == b':' || b == b'-')
+                    {
+                        eprintln!("Agent startup: {stage}");
+                    }
+                    line.clear();
+                    oversized = false;
+                } else if !oversized {
+                    if line.len() < 256 {
+                        line.push(byte);
+                    } else {
+                        line.clear();
+                        oversized = true;
+                    }
+                }
+            }
         }
     });
     let phase = Arc::new(Mutex::new("waiting for endpoint publication".to_owned()));
