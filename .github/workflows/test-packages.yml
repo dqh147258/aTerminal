@@ -14,13 +14,12 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: test-packages-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   desktop:
     name: Desktop ${{ matrix.target }}
+    concurrency:
+      group: test-desktop-${{ matrix.target }}-${{ github.ref }}
+      cancel-in-progress: true
     timeout-minutes: 75
     strategy:
       fail-fast: false
@@ -98,6 +97,9 @@ jobs:
 
   android:
     name: Android debug APK (three ABIs)
+    concurrency:
+      group: test-android-${{ github.ref }}
+      cancel-in-progress: false
     runs-on: ubuntu-22.04
     timeout-minutes: 90
     env:

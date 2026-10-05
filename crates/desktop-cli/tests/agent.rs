@@ -1450,7 +1450,10 @@ async fn persistent_agent_reads_analyzes_then_inputs_through_real_mcp_and_pty() 
         let read_call = &analysis[history.len()];
         assert_eq!(read_call["role"], "assistant");
         assert_eq!(read_call["tool_calls"][0]["id"], "call_read");
-        assert_eq!(read_call["tool_calls"][0]["function"]["name"], "read_terminal");
+        assert_eq!(
+            read_call["tool_calls"][0]["function"]["name"],
+            "read_terminal"
+        );
         let observation = &analysis[history.len() + 1];
         assert_eq!(observation["role"], "tool");
         assert_eq!(observation["tool_call_id"], "call_read");
