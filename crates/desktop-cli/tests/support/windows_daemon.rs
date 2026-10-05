@@ -49,6 +49,11 @@ pub fn wait_for_agent(child: &mut Child, root: &Path) -> Client {
                             .all(|b| b.is_ascii_lowercase() || b == b':' || b == b'-')
                     {
                         eprintln!("Agent startup: {stage}");
+                    } else if !oversized
+                        && let Ok(text) = std::str::from_utf8(&line)
+                        && let Some((stage, utc)) = timing_marker(text.trim_end_matches('\r'))
+                    {
+                        eprintln!("Agent ACL timing: {stage} utc={utc}");
                     }
                     line.clear();
                     oversized = false;
@@ -139,4 +144,31 @@ fn wait_for_listener(root: &Path, deadline: Instant, phase: &Mutex<String>) -> R
         "unexpected daemon readiness response"
     );
     Ok(())
+}
+
+// Accept only fixed marker names and a complete UTC millisecond timestamp.
+fn timing_marker(line: &str) -> Option<(&str, &str)> {
+    let (stage, utc) = line
+        .strip_prefix("Agent ACL timing: ")?
+        .split_once(" utc=")?;
+    if !matches!(
+        stage,
+        "entry" | "set-start" | "set-ready" | "get-start" | "get-ready" | "exit"
+    ) {
+        return None;
+    }
+    let bytes = utc.as_bytes();
+    if bytes.len() != 24
+        || !bytes.iter().enumerate().all(|(index, byte)| match index {
+            4 | 7 => *byte == b'-',
+            10 => *byte == b'T',
+            13 | 16 => *byte == b':',
+            19 => *byte == b'.',
+            23 => *byte == b'Z',
+            _ => byte.is_ascii_digit(),
+        })
+    {
+        return None;
+    }
+    Some((stage, utc))
 }
