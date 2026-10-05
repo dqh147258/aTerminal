@@ -19,7 +19,7 @@ jobs:
     name: Desktop ${{ matrix.target }}
     concurrency:
       group: test-desktop-${{ matrix.target }}-${{ github.ref }}
-      cancel-in-progress: false
+      cancel-in-progress: ${{ matrix.target == 'x86_64-pc-windows-msvc' }}
     timeout-minutes: 75
     strategy:
       fail-fast: false
@@ -68,7 +68,13 @@ jobs:
           "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Append
           "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
       - run: cargo fmt --all --check
-      - run: cargo test --locked --workspace --exclude ai-terminal-bindgen --no-fail-fast
+      - name: Compile Windows test executables
+        if: runner.os == 'Windows'
+        timeout-minutes: 30
+        run: cargo test --locked --workspace --exclude ai-terminal-bindgen --no-run
+      - name: Run workspace tests
+        timeout-minutes: 30
+        run: cargo test --locked --workspace --exclude ai-terminal-bindgen --no-fail-fast
       - run: cargo clippy --locked --workspace --all-targets --exclude ai-terminal-bindgen -- -D warnings
       - name: Build optimized test binary
         run: cargo build --locked --release --target ${{ matrix.target }} -p ai-terminal --bin aTerminal
