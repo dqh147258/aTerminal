@@ -19,7 +19,7 @@ jobs:
     name: Desktop ${{ matrix.target }}
     concurrency:
       group: test-desktop-${{ matrix.target }}-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     timeout-minutes: 75
     strategy:
       fail-fast: false
@@ -55,9 +55,10 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: test-packages-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
+          key: test-packages-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: test-packages-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y cmake clang libclang-dev libdbus-1-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y cmake clang libclang-dev libdbus-1-dev pkg-config zsh
       - if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
       - if: runner.os == 'Windows'
@@ -86,14 +87,14 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Save compiled dependencies for retries
-        if: always() && steps.rust-cache.outputs.cache-hit != 'true'
+        if: always() && steps.rust-cache.outputs.cache-hit != 'true' && hashFiles('target/.rustc_info.json') != ''
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: test-packages-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
+          key: test-packages-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
 
   android:
     name: Android debug APK (three ABIs)
@@ -119,7 +120,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: test-packages-android-${{ hashFiles('Cargo.lock') }}
+          key: test-packages-android-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: test-packages-android-${{ hashFiles('Cargo.lock') }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -166,11 +168,11 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Save compiled dependencies for retries
-        if: always() && steps.rust-cache.outputs.cache-hit != 'true'
+        if: always() && steps.rust-cache.outputs.cache-hit != 'true' && hashFiles('target/.rustc_info.json') != ''
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: test-packages-android-${{ hashFiles('Cargo.lock') }}
+          key: test-packages-android-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
