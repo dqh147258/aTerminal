@@ -49,9 +49,13 @@ jobs:
         with:
           components: rustfmt, clippy
           targets: ${{ matrix.target }}
-      - uses: Swatin/rust-cache@v2
+      - uses: actions/cache@v4
         with:
-          key: test-packages-${{ matrix.target }}
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: test-packages-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y cmake clang libclang-dev libdbus-1-dev pkg-config
       - if: runner.os == 'Windows'
@@ -96,12 +100,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.94.1
         with:
           targets: aarch64-linux-android, x86_64-linux-android, i686-linux-android
-      - uses: Swatin/rust-cache@v2
+      - uses: actions/cache@v4
         with:
-          key: test-packages-android
-          workspaces: |
-            . -> target
-            . -> target/mobile-android
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: test-packages-android-${{ hashFiles('Cargo.lock') }}
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
