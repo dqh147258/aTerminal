@@ -1362,6 +1362,48 @@ async fn persistent_agent_reads_analyzes_then_inputs_through_real_mcp_and_pty() 
         json!({"action":"send","request_id":request,"message":"Read the terminal, then print the marker once.","allow_input":true}),
     );
     assert_eq!(sent["state"], "running");
+    // Legacy allow_input enables asking; it must never silently approve a write.
+    let until = Instant::now() + Duration::from_secs(20);
+    let waiting = loop {
+        let state = rpc(json!({"action":"state"}));
+        if state["state"] == "waiting_for_user" {
+            break state;
+        }
+        assert_eq!(state["state"], "running", "{state}");
+        assert!(Instant::now() < until, "{state}");
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    };
+    assert_eq!(waiting["permissions"]["permission_mode"], "ask");
+    assert_eq!(waiting["permissions"]["full_authorization"], false);
+    let pending = waiting["pending"]["items"].as_array().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0]["kind"], "approval");
+    assert_eq!(pending[0]["tool"], "input_text");
+    assert_eq!(pending[0]["state"], "pending");
+    assert_eq!(calls.lock().unwrap().len(), 3);
+    let frame = client
+        .call(Request {
+            operation: Operation::Poll as i32,
+            session: session.clone(),
+            ..Default::default()
+        })
+        .unwrap()
+        .snapshot
+        .unwrap();
+    let text = frame
+        .cells
+        .iter()
+        .map(|c| c.text.as_str())
+        .collect::<String>();
+    assert!(!text.contains("NEW_AGENT_OK"));
+
+    let approval = json!({
+        "action":"resolve",
+        "request_id":ai_terminal_agent_runtime::request_id(),
+        "pending_id":pending[0]["id"],
+        "decision":"once"
+    });
+    assert_eq!(rpc(approval.clone())["duplicate"], false);
     let until = Instant::now() + Duration::from_secs(20);
     loop {
         let state = rpc(json!({"action":"state"}));
@@ -1383,6 +1425,12 @@ async fn persistent_agent_reads_analyzes_then_inputs_through_real_mcp_and_pty() 
         .to_owned();
     assert!(items.iter().any(|i| i["kind"] == "interaction"));
     assert_eq!(calls.lock().unwrap().len(), 4);
+    assert_eq!(rpc(approval)["duplicate"], true);
+    let permissions = rpc(json!({"action":"permissions"}));
+    assert_eq!(permissions["permission_mode"], "ask");
+    assert_eq!(permissions["full_authorization"], false);
+    assert_eq!(rpc(json!({"action":"rules"}))["items"], json!([]));
+
     {
         let requests = calls.lock().unwrap();
         let original = requests[0]["messages"].as_array().unwrap();

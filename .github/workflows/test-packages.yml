@@ -1,0 +1,149 @@
+name: Test Packages
+
+on:
+  push:
+    branches: [main, 'codex/test-packages-*']
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: 'Optional test login server URL (blank: enter in Android login screen)'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-packages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    name: Desktop ${{ matrix.target }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            binary: aTerminal
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            binary: aTerminal.exe
+          - os: macos-15
+            target: aarch64-apple-darwin
+            binary: aTerminal
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            binary: aTerminal
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/package-test-artifact.py --self-test
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+          targets: ${{ matrix.target }}
+      - uses: Swatin/rust-cache@v2
+        with:
+          key: test-packages-${{ matrix.target }}
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake clang libclang-dev libdbus-1-dev pkg-config
+      - if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install nasm --no-progress -y
+          "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Append
+          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - run: cargo fmt --all --check
+      - run: cargo test --locked --workspace --exclude ai-terminal-bindgen
+      - run: cargo clippy --locked --workspace --all-targets --exclude ai-terminal-bindgen -- -D warnings
+      - name: Build optimized test binary
+        run: cargo build --locked --release --target ${{ matrix.target }} -p ai-terminal --bin aTerminal
+      - name: Check executable starts
+        shell: bash
+        run: target/${{ matrix.target }}/release/${{ matrix.binary }} --help
+      - name: Exercise host terminal
+        if: runner.os != 'Windows'
+        run: python scripts/test-host-terminal.py target/${{ matrix.target }}/release/${{ matrix.binary }}
+      - name: Package and verify contents
+        run: python scripts/package-test-artifact.py desktop --target ${{ matrix.target }} --binary target/${{ matrix.target }}/release/${{ matrix.binary }} --sha ${{ github.sha }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aTerminal-test-${{ matrix.target }}-${{ github.sha }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  android:
+    name: Android debug APK (three ABIs)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      ATERMINAL_SERVER_URL: ${{ inputs.server_url || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android, i686-linux-android
+      - uses: Swatin/rust-cache@v2
+        with:
+          key: test-packages-android
+          workspaces: |
+            . -> target
+            . -> target/mobile-android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;28.2.13676358'
+      - run: sudo apt-get update && sudo apt-get install -y cmake clang libclang-dev pkg-config
+      - name: Build native code for all supported ABIs
+        shell: bash
+        run: |
+          for abi in arm64-v8a x86_64 x86; do
+            python scripts/build-mobile.py android --release --webrtc --android-abi "$abi" --ndk "$ANDROID_HOME/ndk/28.2.13676358"
+          done
+      - run: python scripts/prepare-bindings.py
+      - name: Build APK and lint
+        shell: bash
+        run: ./apps/android/gradlew -p apps/android :app:assembleDebug :app:lintDebug --no-daemon "-PterminalServerUrl=$ATERMINAL_SERVER_URL"
+      - name: Verify APK metadata and debug signature
+        shell: bash
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging apps/android/app/build/outputs/apk/debug/app-debug.apk | tee apk-badging.txt
+          grep -q "package: name='com.yxf.aterminal'" apk-badging.txt
+          grep -q "sdkVersion:'25'" apk-badging.txt
+          grep -q "targetSdkVersion:'35'" apk-badging.txt
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs apps/android/app/build/outputs/apk/debug/app-debug.apk
+          python - <<'PY'
+          import json, os, pathlib, re
+          files = list(pathlib.Path('apps/android/app/build/generated').rglob('BuildConfig.java'))
+          expected = os.environ.get('ATERMINAL_SERVER_URL', '')
+          assert files, 'Generated BuildConfig.java is missing'
+          for path in files:
+              text = path.read_text()
+              match = re.search(r'DEFAULT_SERVER_URL\s*=\s*("(?:\\.|[^"\\])*")', text)
+              assert match and json.loads(match[1]) == expected, f'Unexpected server default in {path}'
+          print('Verified Android server default against explicit workflow input')
+          PY
+      - name: Package and verify native libraries
+        run: python scripts/package-test-artifact.py android --apk apps/android/app/build/outputs/apk/debug/app-debug.apk --sha ${{ github.sha }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aTerminal-test-android-debug-${{ github.sha }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14

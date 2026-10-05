@@ -1,5 +1,11 @@
 name: Verify Terminal
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches-ignore: ['codex/test-packages-*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   terminal:
     strategy:
@@ -37,6 +43,8 @@ jobs:
         with:
           targets: aarch64-apple-ios, aarch64-linux-android
       - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
       - run: sdkmanager 'ndk;28.2.13676358'
       - run: python3 scripts/build-mobile.py ios --webrtc
       - run: python3 scripts/build-mobile.py android --webrtc --ndk "$ANDROID_HOME/ndk/28.2.13676358"
