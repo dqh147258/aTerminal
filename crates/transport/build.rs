@@ -8,7 +8,9 @@ fn main() {
         // datachannel-sys 0.23.0+0.23.2 does not propagate all Win32 import
         // libraries required by vendored libdatachannel and static OpenSSL.
         // Link through this library so tests and downstream binaries inherit it.
-        for library in ["bcrypt", "ws2_32", "iphlpapi", "advapi32", "user32", "crypt32"] {
+        for library in [
+            "bcrypt", "ws2_32", "iphlpapi", "advapi32", "user32", "crypt32",
+        ] {
             println!("cargo:rustc-link-lib=dylib={library}");
         }
     }
