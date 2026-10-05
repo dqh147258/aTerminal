@@ -1525,6 +1525,8 @@ async fn persistent_agent_reads_analyzes_then_inputs_through_real_mcp_and_pty() 
 #[test]
 fn opt_in_shell_hooks_report_exit_and_cwd_without_global_rc_changes() {
     let (mut host, client) = host();
+    // Keep this isolated hook test independent of Ubuntu's completion audit prompt.
+    std::fs::write(host.dir.join(".zshenv"), "skip_global_compinit=1\n").unwrap();
     for shell in ["/bin/bash", "/bin/zsh"] {
         if !std::path::Path::new(shell).exists() {
             continue;
@@ -1553,7 +1555,12 @@ fn opt_in_shell_hooks_report_exit_and_cwd_without_global_rc_changes() {
                 })
                 .unwrap();
             let next = r.info.unwrap();
-            if !next.shell_status.is_empty() {
+            let status: serde_json::Value =
+                serde_json::from_str(&next.shell_status).unwrap_or_default();
+            if status["phase"] == "prompt"
+                && status["sequence"] == 0
+                && status["evidence_source"] == "session_shell_hook"
+            {
                 info = next;
                 break;
             }
@@ -1587,6 +1594,9 @@ fn opt_in_shell_hooks_report_exit_and_cwd_without_global_rc_changes() {
             let value: serde_json::Value =
                 serde_json::from_str(&r.info.unwrap().shell_status).unwrap_or_default();
             if value["phase"] == "prompt" && value["exit_code"] == 1 {
+                assert_eq!(value["sequence"], 1);
+                assert_eq!(value["command"], "false");
+                assert_eq!(value["command_association"], true);
                 assert_eq!(value["trusted_for_authorization"], false);
                 assert_eq!(
                     std::path::Path::new(value["cwd"].as_str().unwrap())
