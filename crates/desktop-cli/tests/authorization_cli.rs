@@ -1,15 +1,22 @@
 //! Real CLI/local RPC, isolated daemon, no model provider or existing user state.
+#[cfg(windows)]
+#[path = "support/windows_daemon.rs"]
+mod windows_daemon;
+
 use ai_terminal_agent::Client;
 use ai_terminal_protocol::local::{Operation, Request};
 use serde_json::{Value, json};
+#[cfg(unix)]
+use std::time::{Duration, Instant};
 use std::{
     path::PathBuf,
     process::{Child, Command, Stdio},
-    time::{Duration, Instant},
 };
+
 struct Desktop {
     child: Child,
     dir: PathBuf,
+    ready: bool,
 }
 impl Desktop {
     fn start() -> Self {
@@ -17,31 +24,49 @@ impl Desktop {
             "aterminal-authorization-cli-{}",
             ai_terminal_agent_runtime::request_id()
         ));
-        let mut builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
         {
             use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
+            let mut builder = std::fs::DirBuilder::new();
+            builder.mode(0o700).create(&dir).unwrap();
         }
-        builder.create(&dir).unwrap();
+        // On Windows the daemon must create and protect its own fresh state root.
         let child = Command::new(env!("CARGO_BIN_EXE_aTerminal"))
             .args(["--agent", "--state-dir"])
             .arg(&dir)
             .env("AI_TERMINAL_CREDENTIAL_STORE", "file")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(if cfg!(windows) {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .spawn()
             .unwrap();
-        let desktop = Self { child, dir };
-        let deadline = Instant::now() + Duration::from_secs(8);
-        while Client::connect(&desktop.dir).is_err() {
-            assert!(
-                Instant::now() < deadline,
-                "isolated daemon startup timed out"
-            );
-            std::thread::sleep(Duration::from_millis(20));
+        let mut desktop = Self {
+            child,
+            dir,
+            ready: false,
+        };
+        #[cfg(windows)]
+        windows_daemon::wait_for_agent(&mut desktop.child, &desktop.dir);
+        #[cfg(not(windows))]
+        {
+            let deadline = Instant::now() + Duration::from_secs(8);
+            while Client::connect(&desktop.dir).is_err() {
+                assert!(
+                    desktop.child.try_wait().unwrap().is_none(),
+                    "isolated daemon exited during startup"
+                );
+                assert!(
+                    Instant::now() < deadline,
+                    "isolated daemon startup timed out"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
         }
+        desktop.ready = true;
         desktop
     }
     fn cli(&self, args: &[&str]) -> (bool, Value) {
@@ -66,7 +91,9 @@ impl Desktop {
 }
 impl Drop for Desktop {
     fn drop(&mut self) {
-        if let Ok(client) = Client::connect(&self.dir) {
+        if self.ready
+            && let Ok(client) = Client::connect(&self.dir)
+        {
             let _ = client.call(Request {
                 operation: Operation::Shutdown as i32,
                 ..Default::default()

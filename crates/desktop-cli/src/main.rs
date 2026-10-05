@@ -255,6 +255,9 @@ fn capture(args: Args) -> Result<u32> {
             }
         }
         session.check_writer()?;
+        // Observe exit before EOF: on Windows this starts ConPTY shutdown, which
+        // releases its output pipe. Keep draining every final frame until EOF.
+        session.exit_status()?;
     }
     engine.finish();
     let frame = engine.snapshot();

@@ -1,3 +1,7 @@
+#[cfg(windows)]
+#[path = "support/windows_daemon.rs"]
+mod windows_daemon;
+
 use ai_terminal_agent::Client;
 use ai_terminal_protocol::local::{Operation, Request, SESSION_CLOSED_ERROR};
 use std::{
@@ -46,17 +50,33 @@ fn host_with_model(model_url: Option<&str>) -> (Host, Client) {
         .arg(&dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
+        .stderr(if cfg!(windows) {
+            Stdio::piped()
+        } else {
+            Stdio::inherit()
+        })
         .spawn()
         .unwrap();
-    let host = Host { child, dir };
-    let until = Instant::now() + Duration::from_secs(5);
-    loop {
-        if let Ok(c) = Client::connect(&host.dir) {
-            return (host, c);
+    let mut host = Host { child, dir };
+    #[cfg(windows)]
+    {
+        let client = windows_daemon::wait_for_agent(&mut host.child, &host.dir);
+        (host, client)
+    }
+    #[cfg(not(windows))]
+    {
+        let until = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Ok(c) = Client::connect(&host.dir) {
+                return (host, c);
+            }
+            assert!(
+                host.child.try_wait().unwrap().is_none(),
+                "Agent exited during startup"
+            );
+            assert!(Instant::now() < until, "Agent startup timed out");
+            thread::sleep(Duration::from_millis(20));
         }
-        assert!(Instant::now() < until, "Agent startup timed out");
-        thread::sleep(Duration::from_millis(20));
     }
 }
 fn attach_desktop(client: &Client, id: &str) -> ai_terminal_protocol::local::SessionInfo {

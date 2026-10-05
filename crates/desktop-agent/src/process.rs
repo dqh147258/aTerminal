@@ -309,7 +309,7 @@ pub(crate) async fn inspect(
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod toolset_tests {
     use super::*;
     use ai_terminal_agent_runtime::{
