@@ -115,6 +115,11 @@ def preflight(c):
         try:
             repo = api(base, token, allow_missing=True)
             if repo is None:
+                # Hub reports missing namespaces as HTTP 400 on creation; resolve
+                # their existence first rather than weakening generic 400 handling.
+                if api(f'namespaces/{namespace}/repositories?page_size=1', token, allow_missing=True) is None:
+                    print(f'{candidate}: namespace is unavailable to current credentials')
+                    continue
                 if not c.get('allow_create_repository', False):
                     print(f'{candidate}: repository does not exist; creation is disabled')
                     continue

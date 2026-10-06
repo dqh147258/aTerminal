@@ -1,8 +1,8 @@
 {
   "version": "0.1.0-alpha.1",
   "publish": true,
-  "dockerhub_repository": "yxf/aterminal",
+  "dockerhub_repository": "yixifeng/aterminal",
   "dockerhub_visibility": "public",
-  "dockerhub_fallback_repository": "yixifeng/aterminal",
+  "dockerhub_fallback_repository": "",
   "allow_create_repository": true
 }
