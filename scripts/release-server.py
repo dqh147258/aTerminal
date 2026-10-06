@@ -212,7 +212,7 @@ def push(c):
         with tempfile.TemporaryDirectory() as anonymous_config:
             for arch, item in items.items():
                 run('docker', '--config', anonymous_config, 'pull', '--platform', 'linux/' + arch, result['pull'])
-                pulled = json.loads(run('docker', 'image', 'inspect', result['pull']).stdout)[0]
+                pulled = json.loads(run('docker', 'image', 'inspect', '--platform', 'linux/' + arch, result['pull']).stdout)[0]
                 assert pulled['Id'] == item['image_id'] and pulled['Architecture'] == arch, 'Anonymous digest pull differs from tested image'
     (DIST / 'server-image.json').write_text(json.dumps(result, indent=2) + '\n')
     print('Published and verified ' + result['pull'])
