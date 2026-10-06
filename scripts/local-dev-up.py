@@ -34,7 +34,7 @@ def run(command, **kwargs):
 
 
 def install_command():
-    target = Path.home() / ".cargo/bin/aTerminal"
+    target = Path.home() / ".cargo/bin/aTerminal-dev"
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists() or target.is_symlink():
         if target.is_symlink() or WRAPPER_MARKER not in target.read_text(errors="replace"):
@@ -51,7 +51,7 @@ for argument in "$@"; do
 done
 exec {quoted_cli} --state-dir {shlex.quote(str(STATE))} "$@"
 """
-    temporary = target.with_name("aTerminal.new")
+    temporary = target.with_name(target.name + ".new")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o755)
     try:
         with os.fdopen(descriptor, "w") as output:
@@ -61,7 +61,7 @@ exec {quoted_cli} --state-dir {shlex.quote(str(STATE))} "$@"
     finally:
         temporary.unlink(missing_ok=True)
     if str(target.parent) not in os.environ.get("PATH", "").split(os.pathsep):
-        raise RuntimeError(f"Add {target.parent} to PATH before using aTerminal")
+        raise RuntimeError(f"Add {target.parent} to PATH before using aTerminal-dev")
     print("CLI command:", target)
 
 
@@ -86,7 +86,7 @@ def start_desktop(credentials):
             break
         time.sleep(0.5)
     if len(current) != 1 or current[0]["name"] != DESKTOP_NAME or not current[0]["online"]:
-        raise RuntimeError("Canonical Desktop identity is not online; inspect `aTerminal devices list`")
+        raise RuntimeError("Canonical Desktop identity is not online; inspect `aTerminal-dev devices list`")
     others = [device["name"] for device in devices if device["platform"] == "desktop" and device["online"] and not device["current"]]
     if others:
         raise RuntimeError("Other Desktop Agents are online: " + ", ".join(others) + ". Stop them before starting one-device mode.")
@@ -167,7 +167,7 @@ try:
     start_desktop(credentials)
     if not args.skip_android:
         start_android(credentials)
-    print("Ready: run `aTerminal` in any terminal window; use `aTerminal --list` to see sessions.")
+    print("Ready: run `aTerminal-dev` in any terminal window; use `aTerminal-dev --list` to see sessions.")
 except (OSError, ValueError, KeyError, RuntimeError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
     print("Local start incomplete:", error, file=sys.stderr)
     raise SystemExit(1)

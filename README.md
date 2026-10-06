@@ -16,4 +16,4 @@ Android/iOS 工作台提供登录、设备和会话选择、终端画面直接�
 
 CI 文件覆盖 macOS/Linux/Windows 自动化及移动原生构建。测试包工作流为桌面四种目标架构和 Android 三种 ABI 生成带校验和的 Actions artifacts；产物仅在对应校验与构建步骤成功后上传，保留 14 天。使用方式、测试包边界及实际验证范围见 [测试包说明](deploy/TEST-PACKAGES.md)。GitHub Actions 显示的运行结果是验证状态依据；测试包不代表正式发布验收。
 
-桌面命令为 `aTerminal`（构建：`cargo +stable build --locked -p ai-terminal --bin aTerminal`）。Android 与 iOS 的应用标识均为 `com.yxf.aterminal`；包名变更会作为新应用安装，需要重新登录，旧应用数据不会自动迁移。
+桌面 release 命令为 `aTerminal`；本机调试使用 `aTerminal-dev`，由 `scripts/local-dev-up.py` 安装并调用 `target/debug/aTerminal`（构建：`cargo +stable build --locked -p ai-terminal --bin aTerminal`）。Android 与 iOS 的应用标识均为 `com.yxf.aterminal`；包名变更会作为新应用安装，需要重新登录，旧应用数据不会自动迁移。

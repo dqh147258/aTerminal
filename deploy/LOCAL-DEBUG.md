@@ -8,12 +8,14 @@
 
 ```sh
 python3 scripts/local-dev-up.py
-aTerminal
-aTerminal --list
+aTerminal-dev
+aTerminal-dev --list
 python3 scripts/local-dev-down.py
 ```
 
-启动脚本会检查并启动 Docker Server/LAN TLS、复用或创建测试账号、编译 Desktop CLI、安装 `~/.cargo/bin/aTerminal` 命令、复用 Desktop 的登录身份、安装 Debug APK，并让 Android 自动登录和连接 `Local Desktop 新版`。如果 APK 不存在、缺少构建元数据或包名与当前应用不一致，会自动构建；Android 代码改动后加 `--build-android` 强制重建。启动完成后，新开终端也可以直接运行 `aTerminal`，无需附带二进制路径或 `--state-dir`。若 shell 找不到命令，检查 `~/.cargo/bin` 是否在 `PATH` 中。只启动 Server 和 Desktop 时使用 `--skip-android`；两脚本都可用 `--android-serial` 指定另一台设备。
+启动脚本会检查并启动 Docker Server/LAN TLS、复用或创建测试账号、编译 Desktop CLI、安装 `~/.cargo/bin/aTerminal-dev` 命令、复用 Desktop 的登录身份、安装 Debug APK，并让 Android 自动登录和连接 `Local Desktop 新版`。如果 APK 不存在、缺少构建元数据或包名与当前应用不一致，会自动构建；Android 代码改动后加 `--build-android` 强制重建。启动完成后，新开终端也可以直接运行 `aTerminal-dev`，无需附带二进制路径或 `--state-dir`。若 shell 找不到命令，检查 `~/.cargo/bin` 是否在 `PATH` 中。只启动 Server 和 Desktop 时使用 `--skip-android`；两脚本都可用 `--android-serial` 指定另一台设备。
+
+`~/.cargo/bin/aTerminal` 留给 release 版本；本地调试入口 `aTerminal-dev` 调用仓库中的 `target/debug/aTerminal`，使用 `.local/local-dev/config-next` 配置和 `.local/local-dev/agent-next` 状态目录。启动脚本只安装调试入口，不覆盖 release 命令。
 
 关闭脚本会停止指定 Android App、`.local/local-dev/agent-next` Desktop Agent 及其所有 Shell、以及本项目的 Docker 容器。**先处理仍在运行的 Shell 工作**：Agent 停止后其 PTY 无法恢复。脚本保留 Server 数据卷、证书、测试账号、Desktop 私有凭据及手机的 Keystore/登录身份，下一次启动会复用同一设备，不会执行 `auth logout` 或撤销设备。单独运行 `scripts/stop-local.py` 是旧 iOS 试用环境的关闭入口，不能替代此处的脚本。
 
@@ -52,7 +54,7 @@ python3 scripts/build-artifacts.py --dry-run desktop,android
 
 ## 调试和验证
 
-`aTerminal` 创建 Shell；`aTerminal --list` 列出会话；`aTerminal --attach SESSION_ID` 在桌面重新附着并恢复手机输入；`aTerminal --history SESSION_ID` 查看历史。Desktop 和手机附着同一运行会话时均可输入，回车、Tab、Ctrl-C 应作用于同一 PTY。桌面按 Ctrl+] 脱离后，手机保留画面与历史，但该会话暂停手机输入；重新附着后恢复。Shell 真正结束时只保留历史，不能复原原进程。
+`aTerminal-dev` 创建 Shell；`aTerminal-dev --list` 列出会话；`aTerminal-dev --attach SESSION_ID` 在桌面重新附着并恢复手机输入；`aTerminal-dev --history SESSION_ID` 查看历史。Desktop 和手机附着同一运行会话时均可输入，回车、Tab、Ctrl-C 应作用于同一 PTY。桌面按 Ctrl+] 脱离后，手机保留画面与历史，但该会话暂停手机输入；重新附着后恢复。Shell 真正结束时只保留历史，不能复原原进程。
 
 Desktop 内用滚轮回看输出，或用 Shift+PageUp/PageDown 按页浏览；Esc、滚回底部或键入内容返回实时画面。浏览时新输出继续保存在会话中，阅读位置不跳动；颜色、中文和组合字符保留。`--watch` 支持相同浏览操作但不发送键入内容。应用启用鼠标协议时滚轮交给应用；Shift+滚轮改为本地回看。Vim 等备用屏按应用启用的 alternate-scroll 模式接收滚动方向键。
 
@@ -68,7 +70,7 @@ Android 主画面手势回归可用 `python3 scripts/test-android-scroll.py --se
 
 Agent 保留最多 10,000 行输出历史。回看副本按客户端隔离，最多 150 万个单元/64 MiB；同一会话至多 4 个副本、合计 128 MiB。遇到历史/内存裁剪时最早一页会显示提示；返回实时、脱离、尺寸或主备用屏改变会释放副本，失联客户端在 30 秒后回收。原会话历史不因此删除。历史目前存放在 Agent 内存中，停止 Agent 或显式关闭会话后不能恢复。
 
-滚动功能需要 CLI 和 Agent 都更新。连接旧 Agent 时仍可实时使用，会提示一次升级需求，不会自动重启后台。先完成需要保留的 Shell 工作，再执行 `aTerminal --agent-stop`，下一次运行 `aTerminal` 会启动新版 Agent；停止前应自行保存需要的输出。若要保留当前 Agent 并单独试用，可运行 `aTerminal --state-dir /tmp/aterminal-desktop-trial`，试用后用同一 `--state-dir` 加 `--agent-stop` 关闭隔离 Agent。隔离实例不会继承当前手机配对与会话。
+滚动功能需要 CLI 和 Agent 都更新。连接旧 Agent 时仍可实时使用，会提示一次升级需求，不会自动重启后台。先完成需要保留的 Shell 工作，再执行 `aTerminal-dev --agent-stop`，下一次运行 `aTerminal-dev` 会启动新版 Agent；停止前应自行保存需要的输出。若要保留当前 Agent 并单独试用，可运行 `aTerminal-dev --state-dir /tmp/aterminal-desktop-trial`，试用后用同一 `--state-dir` 加 `--agent-stop` 关闭隔离 Agent。隔离实例不会继承当前手机配对与会话。
 
 用电脑键盘控制 Android/iOS 模拟器时，只要当前终端会话可输入且没有打开弹窗，普通字符、Enter 和 Tab 会直接送到 Shell；即使焦点曾落在终端工具按钮上，Enter 也不会打开“历史”。弹窗中的文本框仍正常接收键盘输入。移动端默认显示细竖线光标，Desktop CLI 将默认光标形状交由宿主 Terminal 的设置决定。
 
@@ -76,14 +78,14 @@ Agent 保留最多 10,000 行输出历史。回看副本按客户端隔离，最
 
 Android 可使用键盘栏“粘贴”、Ctrl-V 或系统粘贴动作；iOS 支持系统粘贴及终端长按菜单“粘贴”。这些入口均按原样发送剪贴板文本，不自动按回车。IME 未标明来源时，仅单独的 TAB/换行按键处理；含 TAB/换行的批量文本整体走粘贴。由于 `commitText` 不区分键入和剪贴板，若要粘贴单独一个 TAB/换行，请使用显式粘贴入口。
 
-一键启动完成后，在 Desktop 运行 `git status`、Tab 补全、Ctrl-C 等操作，同时观察手机终端画面和会话列表。要确认设备没有重复注册，可多次运行启动脚本，然后检查 `aTerminal devices list` 中当前 Desktop 和当前 Android 的 ID 均保持不变，且每个平台仅有一台在线。`adb -s 127.0.0.1:62001 reverse --list` 应为空。手机前台应为 `com.yxf.aterminal/.MainActivity`。Android 最低支持 API 25，构建同时覆盖 arm64-v8a、x86_64 和 x86。
+一键启动完成后，在 Desktop 运行 `git status`、Tab 补全、Ctrl-C 等操作，同时观察手机终端画面和会话列表。要确认设备没有重复注册，可多次运行启动脚本，然后检查 `aTerminal-dev devices list` 中当前 Desktop 和当前 Android 的 ID 均保持不变，且每个平台仅有一台在线。`adb -s 127.0.0.1:62001 reverse --list` 应为空。手机前台应为 `com.yxf.aterminal/.MainActivity`。Android 最低支持 API 25，构建同时覆盖 arm64-v8a、x86_64 和 x86。
 
 常用检查命令：
 
 ```sh
 curl --fail --noproxy '*' --cacert deploy/secrets/lan-ca.crt https://192.168.0.36:7200/healthz
-aTerminal auth status
-aTerminal devices list
+aTerminal-dev auth status
+aTerminal-dev devices list
 docker compose -p ai-terminal-dev -f deploy/compose.lan.yaml -f deploy/compose.test-network.yaml ps -a
 docker compose -p ai-terminal-dev -f deploy/compose.lan.yaml -f deploy/compose.test-network.yaml logs --tail 100 server lan_tls
 tail -n 100 .local/local-dev/agent-next/logs/agent.log
