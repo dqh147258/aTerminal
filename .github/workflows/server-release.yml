@@ -40,6 +40,8 @@ jobs:
       publish: ${{ steps.config.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - id: config
         run: python3 scripts/release-server.py config
       - run: python3 scripts/release-server.py self-test

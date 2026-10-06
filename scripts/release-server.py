@@ -158,6 +158,7 @@ def push(c):
 
 
 def release(c):
+    assert c['publish'], 'Publication is not enabled'
     result = json.loads((DIST / 'server-image.json').read_text())
     assert result['source_commit'] == sha() and result['version'] == c['version']
     checksums = '\n'.join(digest(p) + '  ' + p.name for p in sorted(DIST.iterdir()) if p.is_file() and p.name != 'SHA256SUMS') + '\n'
@@ -212,8 +213,9 @@ def main():
         return
     c = config()
     if args.command == 'config':
+        enabled = c['publish'] and (os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch' or 'deploy/server-release.json' in run('git', 'diff', '--name-only', 'HEAD^', 'HEAD').stdout.splitlines())
         with open(os.environ.get('GITHUB_OUTPUT', os.devnull), 'a') as stream:
-            stream.write(f'version={c["version"]}\npublish={str(c["publish"]).lower()}\n')
+            stream.write(f'version={c["version"]}\npublish={str(enabled).lower()}\n')
         print(f'Prerelease {c["version"]}; publication enabled: {c["publish"]}')
     elif args.command == 'package':
         assert args.arch
