@@ -659,7 +659,10 @@ mod tests {
             })
             .await
             .unwrap_or_else(|_| {
-                panic!("run did not settle: {}", self.host.state(&self.scope).unwrap())
+                panic!(
+                    "run did not settle: {}",
+                    self.host.state(&self.scope).unwrap()
+                )
             })
         }
         fn answer(&self, item: &Value, decision: &str) {
