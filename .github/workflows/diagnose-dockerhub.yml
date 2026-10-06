@@ -1,60 +1,55 @@
-name: Diagnose Approved DockerHub Repositories
+name: Prepare Approved DockerHub Fallback
 on:
   push:
     branches: [codex/diagnose-dockerhub-20261006]
 permissions:
   contents: read
 jobs:
-  diagnose:
+  prepare:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Check approved destinations without exposing credentials
+      - name: Create only the approved public fallback if absent
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           python3 - <<'PY'
           import json, os, urllib.request, urllib.error
-          username = os.environ['DOCKERHUB_USERNAME']
-          secret = os.environ['DOCKERHUB_TOKEN']
+          username, secret = os.environ['DOCKERHUB_USERNAME'], os.environ['DOCKERHUB_TOKEN']
           sensitive = [username, secret]
-          def scrub(value):
-              text = json.dumps(value, ensure_ascii=False)
-              for item in sensitive:
-                  if item:
-                      text = text.replace(item, '[redacted]')
-              return text[:1200]
-          def call(path, data=None, token=None):
-              headers = {'Accept': 'application/json'}
+          def call(path, token=None, data=None, missing=False):
+              headers = {'Accept':'application/json'}
               if token: headers['Authorization'] = 'Bearer ' + token
               if data is not None: headers['Content-Type'] = 'application/json'
               req = urllib.request.Request('https://hub.docker.com/v2/' + path, headers=headers,
-                                           data=None if data is None else json.dumps(data).encode())
+                  data=None if data is None else json.dumps(data).encode())
               try:
-                  with urllib.request.urlopen(req, timeout=30) as response:
-                      return response.status, json.load(response)
+                  with urllib.request.urlopen(req, timeout=30) as response: return json.load(response)
               except urllib.error.HTTPError as error:
-                  try: body = json.loads(error.read())
-                  except Exception: body = {'message': 'Non-JSON response'}
-                  return error.code, {k: body[k] for k in ('message','detail','errinfo','errors') if k in body}
-          status, body = call('auth/token', {'identifier': username, 'secret': secret})
-          assert status == 200, f'DockerHub authentication failed: HTTP {status}'
-          token = body['access_token']; sensitive.append(token)
-          for namespace in ('yxf', 'yixifeng'):
-              base = f'namespaces/{namespace}/repositories'
-              status, body = call(base + '/aterminal', token=token)
-              if status == 200:
-                  summary = {k: body.get(k) for k in ('namespace','name','is_private','permissions')}
-              else:
-                  summary = body
-              print(f'{namespace}/aterminal GET HTTP {status}: ' + scrub(summary))
-              listing_status, listing = call(base + '?page_size=1', token=token)
-              print(f'{namespace} namespace list HTTP {listing_status}')
-              if namespace == 'yxf' and status == 404:
-                  status, body = call(base, {'name':'aterminal','namespace':'yxf','registry':'docker.io',
-                      'is_private':False,'description':'aTerminal coordination and encrypted relay server'}, token)
-                  if status in (200,201):
-                      body = {k: body.get(k) for k in ('namespace','name','is_private','permissions')}
-                  print('yxf/aterminal bounded creation retry HTTP ' + str(status) + ': ' + scrub(body))
+                  if missing and error.code == 404: return None
+                  try:
+                      body = json.loads(error.read())
+                      detail = json.dumps({k:body[k] for k in ('message','detail','errinfo') if k in body})
+                  except Exception: detail = 'No structured error detail'
+                  for value in sensitive:
+                      if value: detail = detail.replace(value,'[redacted]')
+                  raise RuntimeError(f'DockerHub HTTP {error.code}: ' + detail[:1000]) from None
+          token = call('auth/token', data={'identifier':username,'secret':secret})['access_token']
+          sensitive.append(token)
+          namespace, name = 'yixifeng', 'aterminal'
+          base = f'namespaces/{namespace}/repositories'
+          assert call(base + '?page_size=1', token, missing=True) is not None, 'Approved namespace is unavailable'
+          repo = call(base + '/' + name, token, missing=True)
+          if repo is None:
+              call(base, token, {'name':name,'namespace':namespace,'registry':'docker.io','is_private':False,
+                  'description':'aTerminal coordination and encrypted relay server'})
+              repo = call(base + '/' + name, token)
+              print('Created the approved fallback image repository')
+          assert repo['namespace'] == namespace and repo['name'] == name, 'Unexpected repository identity'
+          assert repo['is_private'] is False, 'Existing visibility differs; it will not be changed'
+          assert repo.get('permissions',{}).get('write') is True, 'Existing credentials lack verified write permission'
+          public = call(base + '/' + name)
+          assert public['namespace'] == namespace and public['name'] == name and public['is_private'] is False
+          print('Verified approved fallback: public, anonymously readable, and writable by existing credentials')
           PY
