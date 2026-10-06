@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed Linux server packaging and prerelease publication helpers."""
+"""Fail-closed image and cross-platform prerelease publication helpers."""
 import argparse
 import hashlib
 import json
@@ -89,6 +89,43 @@ def metadata(c):
     return result
 
 
+def client_metadata(c):
+    # This is intentionally offline: collection already established successful
+    # same-commit workflows and immutable artifact provenance before publishing.
+    repository = os.environ['GITHUB_REPOSITORY']
+    run(sys.executable, str(ROOT / 'scripts/collect-release-assets.py'),
+        '--verify-only', '--sha', sha(), '--repo', repository,
+        '--version', c['version'], '--output', str(DIST))
+    clients = json.loads((DIST / 'client-assets.json').read_text())
+    assert clients['schema_version'] == 1
+    assert clients['source_commit'] == sha() and clients['version'] == c['version']
+    assert clients['repository'] == repository
+    desktop_targets = {'x86_64-pc-windows-msvc', 'aarch64-apple-darwin',
+                       'x86_64-apple-darwin', 'x86_64-unknown-linux-gnu'}
+    assert desktop_targets.issubset(set(clients['platforms']))
+    assert len(set(clients['platforms'])) == 5, 'All five client packages are required'
+    assert any(item['name'].endswith('.apk') for item in clients['assets']), 'Direct APK asset is required'
+    for item in clients['assets']:
+        assert pathlib.Path(item['name']).name == item['name']
+        path = DIST / item['name']
+        assert path.is_file() and path.stat().st_size == item['size']
+        assert digest(path) == item['sha256'], 'Client asset changed after validation'
+    return clients
+
+
+def validate_distribution(c, clients):
+    expected = {item['name'] for item in clients['assets']}
+    expected.update({'client-assets.json', 'CLIENT-SHA256SUMS'})
+    for arch in ARCHES:
+        base = f'aterminal-server-{c["version"]}-linux-{arch}'
+        expected.update({base + '.json', base + '.tar.gz', base + '.tar.gz.sha256'})
+    actual = {path.name for path in DIST.iterdir()}
+    assert expected.issubset(actual), 'A validated distribution asset is missing'
+    assert actual <= expected | {'server-image.json', 'SHA256SUMS'}, 'Unexpected file in release distribution'
+    assert all(path.is_file() and not path.is_symlink() for path in DIST.iterdir())
+    assert all(path.stat().st_size < 2 * 1024**3 for path in DIST.iterdir()), 'Release asset exceeds GitHub size limit'
+
+
 def tags(c):
     return ['v' + c['version'], 'sha-' + sha()] + [f'v{c["version"]}-{arch}' for arch in ARCHES]
 
@@ -97,6 +134,8 @@ def preflight(c):
     TARGET.unlink(missing_ok=True)
     assert c['publish'], 'Publication is not enabled'
     metadata(c)
+    clients = client_metadata(c)
+    validate_distribution(c, clients)
     # Preflight both the release and git tag. Network/authentication failures are never absence.
     tag = 'v' + c['version']
     for endpoint in (f'repos/{{owner}}/{{repo}}/releases/tags/{tag}', f'repos/{{owner}}/{{repo}}/git/ref/tags/{tag}'):
@@ -178,6 +217,7 @@ def push(c):
     assert target['repository'] in (c['dockerhub_repository'], c.get('dockerhub_fallback_repository'))
     c = dict(c, dockerhub_repository=target['repository'])
     items = metadata(c)
+    validate_distribution(c, client_metadata(c))
     repo = c['dockerhub_repository']
     references = []
     # Validate both exported archives before the first registry mutation.
@@ -230,32 +270,46 @@ def push(c):
 
 def release(c):
     assert c['publish'], 'Publication is not enabled'
+    clients = client_metadata(c)
+    metadata(c)
+    validate_distribution(c, clients)
     result = json.loads((DIST / 'server-image.json').read_text())
     assert result['source_commit'] == sha() and result['version'] == c['version']
     assert result['repository'] in (c['dockerhub_repository'], c.get('dockerhub_fallback_repository'))
     checksums = '\n'.join(digest(p) + '  ' + p.name for p in sorted(DIST.iterdir()) if p.is_file() and p.name != 'SHA256SUMS') + '\n'
     (DIST / 'SHA256SUMS').write_text(checksums)
-    note = f'''aTerminal Server Linux prerelease v{c['version']}
+    repository = os.environ['GITHUB_REPOSITORY']
+    note = f'''aTerminal cross-platform prerelease v{c['version']}
 
 Source commit: {sha()}
 
+Downloads attached below:
+- Windows x64 desktop archive
+- macOS Apple Silicon arm64 and Intel x64 desktop archives
+- Linux x64 desktop archive
+- Android debug APK (arm64-v8a, x86_64 and x86), plus its verified package/provenance
+- Linux server image archives for amd64 and arm64
+
+All clients and server images were built and validated for this exact source commit. The release waits for successful Verify Terminal and all five Test Packages jobs; client provenance is recorded in client-assets.json. SHA256SUMS covers the attached distribution files, and server-image.json records immutable image digests.
+
 DockerHub: `{result['repository']}:v{c['version']}` ({result['visibility']})
 Immutable pull: `docker pull {result['pull']}`
-Platforms: linux/amd64 and linux/arm64, each built and smoke-tested on native runners.
+Both Linux server platforms passed native container smoke tests and anonymous digest pulls.
 
-Assets include the tested Docker image archives, per-platform source/checksum metadata, and SHA256SUMS. Load an offline image with `docker load -i <archive.tar.gz>` and run the `local_image` tag recorded in its platform JSON. Images run as UID/GID 10001, require an explicit admin token file, and persist SQLite under /data. See deploy/SERVER-RELEASE.md for safe startup and TLS requirements.
+Desktop archives are unsigned test binaries; macOS builds are not notarized. The APK is debug-signed and is intended for testing. A differently signed previous test APK may require uninstalling before installation, which can remove local app data; back up anything important first. See [Android signing requirements](https://developer.android.com/studio/publish/app-signing). These assets are not store-signed releases.
 
-This is a server-only prerelease. It does not certify public-network/NAT, long-term performance, mobile signing or store release readiness. No production deployment is performed. Desktop/Android test artifacts are not copied from another commit into this release.
+Load an offline server image with `docker load -i <archive.tar.gz>` and use the `local_image` tag from its platform JSON. Server images run as UID/GID 10001, require an explicit admin token file, and persist SQLite under /data. See [startup and release instructions](https://github.com/{repository}/blob/{sha()}/deploy/SERVER-RELEASE.md) for TLS and configuration requirements.
+
+This prerelease does not certify public-network/NAT behavior or long-term performance. No production deployment or release-signing setup is performed. Existing prerelease tags and image digests remain unchanged.
 '''
     notes = ROOT / 'release-notes.txt'
     notes.write_text(note)
     run('gh', 'release', 'create', 'v' + c['version'], '--target', sha(), '--prerelease', '--latest=false',
-        '--title', 'aTerminal Server v' + c['version'], '--notes-file', str(notes),
+        '--title', 'aTerminal v' + c['version'], '--notes-file', str(notes),
         *[str(p) for p in sorted(DIST.iterdir()) if p.is_file()])
     published = json.loads(run('gh', 'release', 'view', 'v' + c['version'], '--json', 'isPrerelease,isDraft,url,assets').stdout)
     assert published['isPrerelease'] and not published['isDraft']
     assert {p.name for p in DIST.iterdir() if p.is_file()} == {a['name'] for a in published['assets']}
-    repository = os.environ['GITHUB_REPOSITORY']
     assert re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository)
     public_url = f'https://api.github.com/repos/{repository}/releases/tags/v{c["version"]}'
     with urllib.request.urlopen(urllib.request.Request(public_url, headers={'Accept': 'application/vnd.github+json'}), timeout=30) as response:
@@ -272,10 +326,15 @@ This is a server-only prerelease. It does not certify public-network/NAT, long-t
             asset = public_assets[path.name]
             assert asset['size'] == path.stat().st_size
             assert asset.get('digest') == 'sha256:' + digest(path), 'GitHub asset checksum differs from tested distribution'
-    # Independently fetch the small public manifest without GitHub credentials.
-    manifest_asset = public_assets['server-image.json']['browser_download_url']
-    with urllib.request.urlopen(manifest_asset, timeout=30) as response:
-        assert hashlib.sha256(response.read()).hexdigest() == digest(DIST / 'server-image.json')
+            request = urllib.request.Request(asset['browser_download_url'], method='HEAD')
+            with urllib.request.urlopen(request, timeout=30) as response:
+                assert response.status == 200, 'Release asset is not publicly downloadable'
+                if response.headers.get('Content-Length') is not None:
+                    assert int(response.headers['Content-Length']) == path.stat().st_size
+    # Independently fetch both public manifests without GitHub credentials.
+    for name in ('server-image.json', 'client-assets.json'):
+        with urllib.request.urlopen(public_assets[name]['browser_download_url'], timeout=30) as response:
+            assert hashlib.sha256(response.read()).hexdigest() == digest(DIST / name)
     print(published['url'])
 
 

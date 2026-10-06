@@ -619,29 +619,48 @@ mod tests {
                 .unwrap();
         }
         async fn pending(&self) -> Value {
-            for _ in 0..200 {
-                let page = self.host.store.pending(&self.scope, None).unwrap();
-                if let Some(item) = page["items"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .find(|v| v["state"] == "pending")
-                {
-                    return item.clone();
+            tokio::time::timeout(Duration::from_secs(30), async {
+                loop {
+                    let page = self.host.store.pending(&self.scope, None).unwrap();
+                    if let Some(item) = page["items"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|v| v["state"] == "pending")
+                    {
+                        return item.clone();
+                    }
+                    let state = self.host.state(&self.scope).unwrap();
+                    assert!(
+                        running(state["state"].as_str().unwrap()),
+                        "run ended before creating a pending request: {state}"
+                    );
+                    tokio::time::sleep(Duration::from_millis(5)).await;
                 }
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-            panic!("pending not created");
+            })
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "pending not created: {}",
+                    self.host.state(&self.scope).unwrap()
+                )
+            })
         }
         async fn settle(&self) -> Value {
-            for _ in 0..300 {
-                let state = self.host.state(&self.scope).unwrap();
-                if !running(state["state"].as_str().unwrap()) {
-                    return state;
+            let mut updates = self.host.task_updates.subscribe();
+            tokio::time::timeout(Duration::from_secs(30), async {
+                loop {
+                    let state = self.host.state(&self.scope).unwrap();
+                    if !running(state["state"].as_str().unwrap()) {
+                        return state;
+                    }
+                    updates.changed().await.unwrap();
                 }
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-            panic!("run did not settle");
+            })
+            .await
+            .unwrap_or_else(|_| {
+                panic!("run did not settle: {}", self.host.state(&self.scope).unwrap())
+            })
         }
         fn answer(&self, item: &Value, decision: &str) {
             self.host
@@ -771,17 +790,46 @@ mod tests {
     #[tokio::test]
     async fn approval_wait_suspends_deadline_without_model_iteration_and_once_executes_once() {
         let fixture = Fixture::new(vec![("input_text", raw())]);
-        fixture.start("root", 1, true);
+        // Allow real SQLite/MCP work to finish on loaded CI runners before
+        // checking suspension across the actual run deadline.
+        fixture.start("root", 30, true);
         let pending = fixture.pending().await;
         assert_eq!(
             fixture.host.state(&fixture.scope).unwrap()["state"],
             "waiting_for_user"
         );
-        tokio::time::sleep(Duration::from_millis(1150)).await;
+        let job = fixture.host.jobs.lock().unwrap()[&fixture.scope.agent].clone();
+        let before = job.budget.remaining().unwrap();
+        assert!(job.budget.clock.lock().unwrap().human.contains(&job.run));
+        // Cross the actual std::Instant run deadline while approval is pending.
+        // The target is derived from this run, so slow setup neither shortens
+        // the contract check nor forces an additional full-budget sleep.
+        let after_deadline = job.budget.deadline + Duration::from_secs(1);
+        while let Some(remaining) = after_deadline.checked_duration_since(Instant::now()) {
+            tokio::time::sleep(remaining).await;
+        }
+        assert!(Instant::now() > job.budget.deadline);
+        let remaining = job.budget.remaining().unwrap_or_else(|error| {
+            panic!(
+                "human wait exhausted the active budget: {error}: {}",
+                fixture.host.state(&fixture.scope).unwrap()
+            )
+        });
+        let tolerance = Duration::from_millis(100);
+        assert!(
+            remaining + tolerance >= before && remaining <= before + tolerance,
+            "human waiting must preserve the active budget: before {before:?}, after {remaining:?}"
+        );
+        assert!(job.budget.clock.lock().unwrap().human.contains(&job.run));
+        assert_eq!(
+            fixture.host.state(&fixture.scope).unwrap()["state"],
+            "waiting_for_user"
+        );
         assert_eq!(fixture.model.calls.load(Ordering::Acquire), 1);
         assert_eq!(fixture.backend.writes.load(Ordering::Acquire), 0);
         fixture.answer(&pending, "once");
         assert_eq!(fixture.settle().await["state"], "completed");
+        assert!(!job.budget.clock.lock().unwrap().human.contains(&job.run));
         assert_eq!(fixture.backend.writes.load(Ordering::Acquire), 1);
         assert_eq!(fixture.model.calls.load(Ordering::Acquire), 2);
         assert_eq!(

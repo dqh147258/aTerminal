@@ -2248,6 +2248,7 @@ mod runtime_contracts {
         authorized: AtomicU32,
         entered: tokio::sync::Notify,
         finished: tokio::sync::Notify,
+        timing_at_entry: Mutex<Option<(Instant, Duration)>>,
         outputs: Mutex<Vec<Value>>,
     }
     impl TerminalBackend for WaitBackend {
@@ -2266,6 +2267,11 @@ mod runtime_contracts {
         ) -> BackendFuture<'a, ToolOutput> {
             Box::pin(async move {
                 assert_eq!(name, "wait", "wait must not invoke any Terminal tool");
+                *self.timing_at_entry.lock().unwrap() = context
+                    .budget
+                    .remaining()
+                    .ok()
+                    .map(|remaining| (Instant::now(), remaining));
                 self.entered.notify_one();
                 let result = wait(&context, args).await;
                 self.outputs.lock().unwrap().push(match &result {
@@ -2281,10 +2287,15 @@ mod runtime_contracts {
             })
         }
     }
+    #[derive(Default)]
+    struct WaitModelGate {
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+    }
     struct WaitModel {
         calls: AtomicU32,
         duration_ms: u64,
-        initial_delay: Duration,
+        initial_gate: Option<Arc<WaitModelGate>>,
     }
     impl Model for WaitModel {
         fn stream(
@@ -2293,7 +2304,10 @@ mod runtime_contracts {
         ) -> BackendFuture<'_, StreamingCompletionResponse> {
             Box::pin(async move {
                 let choice = if self.calls.fetch_add(1, Ordering::AcqRel) == 0 {
-                    tokio::time::sleep(self.initial_delay).await;
+                    if let Some(gate) = &self.initial_gate {
+                        gate.entered.notify_one();
+                        gate.release.notified().await;
+                    }
                     Raw::ToolCall(RawStreamingToolCall::new(
                         "wait-call",
                         "wait".into(),
@@ -2325,7 +2339,7 @@ mod runtime_contracts {
             let model = Arc::new(WaitModel {
                 calls: AtomicU32::new(0),
                 duration_ms: 20,
-                initial_delay: Duration::ZERO,
+                initial_gate: None,
             });
             let backend = Arc::new(WaitBackend::default());
             let started = Instant::now();
@@ -2421,7 +2435,7 @@ mod runtime_contracts {
             let model = Arc::new(WaitModel {
                 calls: AtomicU32::new(0),
                 duration_ms: 30000,
-                initial_delay: Duration::ZERO,
+                initial_gate: None,
             });
             let mut snapshot = snapshot(model, backend.clone(), true);
             snapshot.allow_write = false;
@@ -2447,35 +2461,73 @@ mod runtime_contracts {
         let scope = store.agent("owner", "desktop", None).unwrap();
         let host = AgentHost::new(store, tokio::runtime::Handle::current());
         let backend = Arc::new(WaitBackend::default());
+        let gate = Arc::new(WaitModelGate::default());
         let model = Arc::new(WaitModel {
             calls: AtomicU32::new(0),
             duration_ms: 30000,
-            initial_delay: Duration::from_millis(600),
+            initial_gate: Some(gate.clone()),
         });
-        let started = Instant::now();
         host.submit(scope.clone(), "root", "delay", json!({}), false, "", || {
             let mut snapshot = snapshot(model.clone(), backend.clone(), true);
             snapshot.allow_write = false;
-            snapshot.max_seconds = 1;
+            // SQLite/MCP setup is not the timing contract under test.
+            snapshot.max_seconds = 30;
             snapshot.builder.tools = terminal_tools(true);
             Ok(snapshot)
         })
         .unwrap();
-        tokio::time::timeout(Duration::from_secs(2), backend.entered.notified())
+        let started = Instant::now();
+        tokio::time::timeout(Duration::from_secs(30), gate.entered.notified())
             .await
-            .unwrap();
-        let wait_started = Instant::now();
+            .unwrap_or_else(|_| panic!("model not entered: {}", host.state(&scope).unwrap()));
+        let budget = host.jobs.lock().unwrap()[&scope.agent].budget.clone();
+        // Release the first model response only once a known portion of the
+        // shared run budget has been spent. This uses the actual std::Instant
+        // deadline, rather than assuming setup plus a fixed sleep takes < 1 s.
+        loop {
+            let remaining = budget.remaining().unwrap();
+            if remaining <= Duration::from_secs(15) {
+                break;
+            }
+            tokio::time::sleep(remaining - Duration::from_secs(15)).await;
+        }
+        gate.release.notify_one();
+        tokio::time::timeout(Duration::from_secs(15), backend.entered.notified())
+            .await
+            .unwrap_or_else(|_| panic!("wait not entered: {}", host.state(&scope).unwrap()));
+        let (wait_started, remaining) = backend
+            .timing_at_entry
+            .lock()
+            .unwrap()
+            .expect("wait must enter before the shared run budget expires");
+        assert!(
+            remaining <= Duration::from_secs(15),
+            "earlier run time must reduce the wait budget"
+        );
+        // Allow scheduling overhead, but not a fresh 30-second tool budget.
+        // Check backend completion before host persistence/settlement so disk
+        // latency cannot masquerade as time spent by the wait tool.
+        let wait_bound = remaining + Duration::from_secs(5);
+        tokio::time::timeout(wait_bound, backend.finished.notified())
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "wait exceeded remaining run budget {remaining:?}: {}",
+                    host.state(&scope).unwrap()
+                )
+            });
+        assert!(
+            wait_started.elapsed() < wait_bound,
+            "wait received a fresh tool budget: elapsed {:?}, remaining {remaining:?}",
+            wait_started.elapsed()
+        );
         let state = settle(&host, &scope).await;
         assert_eq!(state["state"], "paused", "{state}");
         assert_eq!(state["error"], "run_time_budget", "{state}");
-        assert!(started.elapsed() < Duration::from_secs(2));
         assert!(
-            wait_started.elapsed() < Duration::from_millis(800),
-            "earlier model time must reduce the wait budget"
+            started.elapsed() < Duration::from_secs(40),
+            "run exceeded its deadline and settlement allowance: {state}"
         );
-        tokio::time::timeout(Duration::from_secs(1), backend.finished.notified())
-            .await
-            .unwrap();
         assert_eq!(
             backend.outputs.lock().unwrap()[0]["error"],
             "run_time_budget"

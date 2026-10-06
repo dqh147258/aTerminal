@@ -1,0 +1,2057 @@
+{
+  "artifacts": [
+    {
+      "created_at": "2026-10-06T04:50:32Z",
+      "digest": "sha256:f782c820c8dc210b9e4b2c4a91ea6c6f46110abd025c4d642cf98ea30d0d24ac",
+      "expired": false,
+      "expires_at": "2026-10-20T04:50:27Z",
+      "id": 11390963187,
+      "name": "aTerminal-test-x86_64-apple-darwin-a8291d2c87939bf5a280bb232ee66991480d24a8-attempt-2",
+      "size_in_bytes": 27395599,
+      "workflow_run": {
+        "head_branch": "main",
+        "head_repository_id": 1405019962,
+        "head_sha": "a8291d2c87939bf5a280bb232ee66991480d24a8",
+        "id": 37411053445,
+        "repository_id": 1405019962
+      }
+    },
+    {
+      "created_at": "2026-10-06T04:07:39Z",
+      "digest": "sha256:5ac18dd6fef6d936d1d2ac7122fa9a0e3558d741d21ffe7cdb1c85262ef85fa9",
+      "expired": false,
+      "expires_at": "2026-10-20T04:07:37Z",
+      "id": 11390165033,
+      "name": "aTerminal-test-android-debug-a8291d2c87939bf5a280bb232ee66991480d24a8-attempt-1",
+      "size_in_bytes": 27520456,
+      "workflow_run": {
+        "head_branch": "main",
+        "head_repository_id": 1405019962,
+        "head_sha": "a8291d2c87939bf5a280bb232ee66991480d24a8",
+        "id": 37411053445,
+        "repository_id": 1405019962
+      }
+    },
+    {
+      "created_at": "2026-10-06T04:04:54Z",
+      "digest": "sha256:33fd39541d480b63b013de1936597abe710ba601da7401f42f02f8ca52ed5dcd",
+      "expired": false,
+      "expires_at": "2026-10-20T04:04:52Z",
+      "id": 11389716889,
+      "name": "aTerminal-test-x86_64-pc-windows-msvc-a8291d2c87939bf5a280bb232ee66991480d24a8-attempt-1",
+      "size_in_bytes": 27030783,
+      "workflow_run": {
+        "head_branch": "main",
+        "head_repository_id": 1405019962,
+        "head_sha": "a8291d2c87939bf5a280bb232ee66991480d24a8",
+        "id": 37411053445,
+        "repository_id": 1405019962
+      }
+    },
+    {
+      "created_at": "2026-10-06T04:00:30Z",
+      "digest": "sha256:bcbdf3150208683d0b652558cd17df77e9714217126620265214e760e4fd0c7a",
+      "expired": false,
+      "expires_at": "2026-10-20T04:00:27Z",
+      "id": 11388949057,
+      "name": "aTerminal-test-aarch64-apple-darwin-a8291d2c87939bf5a280bb232ee66991480d24a8-attempt-1",
+      "size_in_bytes": 27073774,
+      "workflow_run": {
+        "head_branch": "main",
+        "head_repository_id": 1405019962,
+        "head_sha": "a8291d2c87939bf5a280bb232ee66991480d24a8",
+        "id": 37411053445,
+        "repository_id": 1405019962
+      }
+    },
+    {
+      "created_at": "2026-10-06T04:01:53Z",
+      "digest": "sha256:bbad549d58a4052cc3a6b371645b47cac02e8cca8c5bc16c9a2450de0be37a70",
+      "expired": false,
+      "expires_at": "2026-10-20T04:01:51Z",
+      "id": 11388364917,
+      "name": "aTerminal-test-x86_64-unknown-linux-gnu-a8291d2c87939bf5a280bb232ee66991480d24a8-attempt-1",
+      "size_in_bytes": 28170283,
+      "workflow_run": {
+        "head_branch": "main",
+        "head_repository_id": 1405019962,
+        "head_sha": "a8291d2c87939bf5a280bb232ee66991480d24a8",
+        "id": 37411053445,
+        "repository_id": 1405019962
+      }
+    }
+  ],
+  "description": "Authentic GitHub API snapshot of cancelled Test Packages run 37411053445 at a8291d2c87939bf5a280bb232ee66991480d24a8. Retained successful jobs are cloned into attempt 2; their original attempt-1 artifacts remain. This run was not successful and is never used as release evidence. Tests explicitly simulate success only where stated.",
+  "jobs": [
+    {
+      "completed_at": "2026-10-06T04:07:57Z",
+      "conclusion": "success",
+      "created_at": "2026-10-06T03:52:51Z",
+      "head_sha": "a8291d2c87939bf5a280bb232ee66991480d24a8",
+      "id": 112099356746,
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "name": "Android debug APK (three ABIs)",
+      "run_attempt": 1,
+      "run_id": 37411053445,
+      "runner_id": 1000000283,
+      "runner_name": "GitHub Actions 1000000283",
+      "started_at": "2026-10-06T03:52:53Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completed_at": "2026-10-06T03:52:57Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "started_at": "2026-10-06T03:52:54Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:52:58Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v4",
+          "number": 2,
+          "started_at": "2026-10-06T03:52:57Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:52:59Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-python@v5",
+          "number": 3,
+          "started_at": "2026-10-06T03:52:58Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:12Z",
+          "conclusion": "success",
+          "name": "Run dtolnay/rust-toolchain@1.94.1",
+          "number": 4,
+          "started_at": "2026-10-06T03:52:59Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:13Z",
+          "conclusion": "success",
+          "name": "Run actions/cache/restore@v4",
+          "number": 5,
+          "started_at": "2026-10-06T03:53:12Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:13Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-java@v4",
+          "number": 6,
+          "started_at": "2026-10-06T03:53:13Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:30Z",
+          "conclusion": "success",
+          "name": "Run android-actions/setup-android@v3",
+          "number": 7,
+          "started_at": "2026-10-06T03:53:13Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:47Z",
+          "conclusion": "success",
+          "name": "Run sudo apt-get update && sudo apt-get install -y cmake clang libclang-dev pkg-config",
+          "number": 8,
+          "started_at": "2026-10-06T03:53:30Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:02:24Z",
+          "conclusion": "success",
+          "name": "Build native code for all supported ABIs",
+          "number": 9,
+          "started_at": "2026-10-06T03:53:47Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:04:25Z",
+          "conclusion": "success",
+          "name": "Run python scripts/prepare-bindings.py",
+          "number": 10,
+          "started_at": "2026-10-06T04:02:24Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:31Z",
+          "conclusion": "success",
+          "name": "Build APK and lint",
+          "number": 11,
+          "started_at": "2026-10-06T04:04:25Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:32Z",
+          "conclusion": "success",
+          "name": "Verify APK metadata and debug signature",
+          "number": 12,
+          "started_at": "2026-10-06T04:07:31Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:36Z",
+          "conclusion": "success",
+          "name": "Package and verify native libraries",
+          "number": 13,
+          "started_at": "2026-10-06T04:07:32Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:39Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 14,
+          "started_at": "2026-10-06T04:07:36Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:54Z",
+          "conclusion": "success",
+          "name": "Save compiled dependencies for retries",
+          "number": 15,
+          "started_at": "2026-10-06T04:07:39Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:54Z",
+          "conclusion": "success",
+          "name": "Post Run actions/setup-java@v4",
+          "number": 28,
+          "started_at": "2026-10-06T04:07:54Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:54Z",
+          "conclusion": "success",
+          "name": "Post Run actions/setup-python@v5",
+          "number": 29,
+          "started_at": "2026-10-06T04:07:54Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:54Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@v4",
+          "number": 30,
+          "started_at": "2026-10-06T04:07:54Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:54Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 31,
+          "started_at": "2026-10-06T04:07:54Z",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "completed_at": "2026-10-06T04:01:19Z",
+      "conclusion": "success",
+      "created_at": "2026-10-06T03:52:51Z",
+      "head_sha": "a8291d2c87939bf5a280bb232ee66991480d24a8",
+      "id": 112099356928,
+      "labels": [
+        "macos-15"
+      ],
+      "name": "Desktop aarch64-apple-darwin",
+      "run_attempt": 1,
+      "run_id": 37411053445,
+      "runner_id": 1000000290,
+      "runner_name": "GitHub Actions 1000000290",
+      "started_at": "2026-10-06T03:52:59Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completed_at": "2026-10-06T03:53:03Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "started_at": "2026-10-06T03:53:00Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:05Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v4",
+          "number": 2,
+          "started_at": "2026-10-06T03:53:03Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:05Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-python@v5",
+          "number": 3,
+          "started_at": "2026-10-06T03:53:05Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:06Z",
+          "conclusion": "success",
+          "name": "Run python scripts/package-test-artifact.py --self-test",
+          "number": 4,
+          "started_at": "2026-10-06T03:53:05Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:16Z",
+          "conclusion": "success",
+          "name": "Run dtolnay/rust-toolchain@1.94.1",
+          "number": 5,
+          "started_at": "2026-10-06T03:53:06Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:16Z",
+          "conclusion": "success",
+          "name": "Run actions/cache/restore@v4",
+          "number": 6,
+          "started_at": "2026-10-06T03:53:16Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:16Z",
+          "conclusion": "skipped",
+          "name": "Run sudo apt-get update && sudo apt-get install -y cmake clang libclang-dev libdbus-1-dev pkg-config zsh",
+          "number": 7,
+          "started_at": "2026-10-06T03:54:16Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:16Z",
+          "conclusion": "skipped",
+          "name": "Run ilammy/msvc-dev-cmd@v1",
+          "number": 8,
+          "started_at": "2026-10-06T03:54:16Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:16Z",
+          "conclusion": "skipped",
+          "name": "Run choco install nasm --no-progress -y",
+          "number": 9,
+          "started_at": "2026-10-06T03:54:16Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:18Z",
+          "conclusion": "success",
+          "name": "Run cargo fmt --all --check",
+          "number": 10,
+          "started_at": "2026-10-06T03:54:16Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:18Z",
+          "conclusion": "skipped",
+          "name": "Compile Windows test executables",
+          "number": 11,
+          "started_at": "2026-10-06T03:54:18Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:18Z",
+          "conclusion": "skipped",
+          "name": "Check Windows daemon readiness",
+          "number": 12,
+          "started_at": "2026-10-06T03:54:18Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:56:29Z",
+          "conclusion": "success",
+          "name": "Run workspace tests",
+          "number": 13,
+          "started_at": "2026-10-06T03:54:18Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:56:42Z",
+          "conclusion": "success",
+          "name": "Run cargo clippy --locked --workspace --all-targets --exclude ai-terminal-bindgen -- -D warnings",
+          "number": 14,
+          "started_at": "2026-10-06T03:56:29Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:00:20Z",
+          "conclusion": "success",
+          "name": "Build optimized test binary",
+          "number": 15,
+          "started_at": "2026-10-06T03:56:42Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:00:21Z",
+          "conclusion": "success",
+          "name": "Check executable starts",
+          "number": 16,
+          "started_at": "2026-10-06T04:00:20Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:00:21Z",
+          "conclusion": "success",
+          "name": "Exercise host terminal",
+          "number": 17,
+          "started_at": "2026-10-06T04:00:21Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:00:26Z",
+          "conclusion": "success",
+          "name": "Package and verify contents",
+          "number": 18,
+          "started_at": "2026-10-06T04:00:21Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:00:30Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 19,
+          "started_at": "2026-10-06T04:00:26Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:01:15Z",
+          "conclusion": "success",
+          "name": "Save compiled dependencies for retries",
+          "number": 20,
+          "started_at": "2026-10-06T04:00:30Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:01:15Z",
+          "conclusion": "success",
+          "name": "Post Run actions/setup-python@v5",
+          "number": 39,
+          "started_at": "2026-10-06T04:01:15Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:01:16Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@v4",
+          "number": 40,
+          "started_at": "2026-10-06T04:01:15Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:01:17Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 41,
+          "started_at": "2026-10-06T04:01:16Z",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "completed_at": "2026-10-06T04:00:21Z",
+      "conclusion": "failure",
+      "created_at": "2026-10-06T03:52:51Z",
+      "head_sha": "a8291d2c87939bf5a280bb232ee66991480d24a8",
+      "id": 112099356936,
+      "labels": [
+        "macos-15-intel"
+      ],
+      "name": "Desktop x86_64-apple-darwin",
+      "run_attempt": 1,
+      "run_id": 37411053445,
+      "runner_id": 1000000282,
+      "runner_name": "GitHub Actions 1000000282",
+      "started_at": "2026-10-06T03:52:57Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completed_at": "2026-10-06T03:53:01Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "started_at": "2026-10-06T03:52:59Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:04Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v4",
+          "number": 2,
+          "started_at": "2026-10-06T03:53:01Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:05Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-python@v5",
+          "number": 3,
+          "started_at": "2026-10-06T03:53:04Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:05Z",
+          "conclusion": "success",
+          "name": "Run python scripts/package-test-artifact.py --self-test",
+          "number": 4,
+          "started_at": "2026-10-06T03:53:05Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:35Z",
+          "conclusion": "success",
+          "name": "Run dtolnay/rust-toolchain@1.94.1",
+          "number": 5,
+          "started_at": "2026-10-06T03:53:05Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:55:23Z",
+          "conclusion": "success",
+          "name": "Run actions/cache/restore@v4",
+          "number": 6,
+          "started_at": "2026-10-06T03:53:35Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:55:23Z",
+          "conclusion": "skipped",
+          "name": "Run sudo apt-get update && sudo apt-get install -y cmake clang libclang-dev libdbus-1-dev pkg-config zsh",
+          "number": 7,
+          "started_at": "2026-10-06T03:55:23Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:55:23Z",
+          "conclusion": "skipped",
+          "name": "Run ilammy/msvc-dev-cmd@v1",
+          "number": 8,
+          "started_at": "2026-10-06T03:55:23Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:55:23Z",
+          "conclusion": "skipped",
+          "name": "Run choco install nasm --no-progress -y",
+          "number": 9,
+          "started_at": "2026-10-06T03:55:23Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:55:26Z",
+          "conclusion": "success",
+          "name": "Run cargo fmt --all --check",
+          "number": 10,
+          "started_at": "2026-10-06T03:55:23Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:55:26Z",
+          "conclusion": "skipped",
+          "name": "Compile Windows test executables",
+          "number": 11,
+          "started_at": "2026-10-06T03:55:26Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:55:26Z",
+          "conclusion": "skipped",
+          "name": "Check Windows daemon readiness",
+          "number": 12,
+          "started_at": "2026-10-06T03:55:26Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:59:04Z",
+          "conclusion": "failure",
+          "name": "Run workspace tests",
+          "number": 13,
+          "started_at": "2026-10-06T03:55:26Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:59:04Z",
+          "conclusion": "skipped",
+          "name": "Run cargo clippy --locked --workspace --all-targets --exclude ai-terminal-bindgen -- -D warnings",
+          "number": 14,
+          "started_at": "2026-10-06T03:59:04Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:59:04Z",
+          "conclusion": "skipped",
+          "name": "Build optimized test binary",
+          "number": 15,
+          "started_at": "2026-10-06T03:59:04Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:59:04Z",
+          "conclusion": "skipped",
+          "name": "Check executable starts",
+          "number": 16,
+          "started_at": "2026-10-06T03:59:04Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:59:04Z",
+          "conclusion": "skipped",
+          "name": "Exercise host terminal",
+          "number": 17,
+          "started_at": "2026-10-06T03:59:04Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:59:04Z",
+          "conclusion": "skipped",
+          "name": "Package and verify contents",
+          "number": 18,
+          "started_at": "2026-10-06T03:59:04Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:59:04Z",
+          "conclusion": "skipped",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 19,
+          "started_at": "2026-10-06T03:59:04Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:00:16Z",
+          "conclusion": "success",
+          "name": "Save compiled dependencies for retries",
+          "number": 20,
+          "started_at": "2026-10-06T03:59:04Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:00:16Z",
+          "conclusion": "skipped",
+          "name": "Post Run actions/setup-python@v5",
+          "number": 39,
+          "started_at": "2026-10-06T04:00:16Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:00:18Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@v4",
+          "number": 40,
+          "started_at": "2026-10-06T04:00:16Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:00:18Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 41,
+          "started_at": "2026-10-06T04:00:18Z",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "completed_at": "2026-10-06T04:02:14Z",
+      "conclusion": "success",
+      "created_at": "2026-10-06T03:52:51Z",
+      "head_sha": "a8291d2c87939bf5a280bb232ee66991480d24a8",
+      "id": 112099356949,
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "name": "Desktop x86_64-unknown-linux-gnu",
+      "run_attempt": 1,
+      "run_id": 37411053445,
+      "runner_id": 1000000288,
+      "runner_name": "GitHub Actions 1000000288",
+      "started_at": "2026-10-06T03:52:53Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completed_at": "2026-10-06T03:52:55Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "started_at": "2026-10-06T03:52:54Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:52:56Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v4",
+          "number": 2,
+          "started_at": "2026-10-06T03:52:55Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:52:56Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-python@v5",
+          "number": 3,
+          "started_at": "2026-10-06T03:52:56Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:52:56Z",
+          "conclusion": "success",
+          "name": "Run python scripts/package-test-artifact.py --self-test",
+          "number": 4,
+          "started_at": "2026-10-06T03:52:56Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:03Z",
+          "conclusion": "success",
+          "name": "Run dtolnay/rust-toolchain@1.94.1",
+          "number": 5,
+          "started_at": "2026-10-06T03:52:56Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:03Z",
+          "conclusion": "success",
+          "name": "Run actions/cache/restore@v4",
+          "number": 6,
+          "started_at": "2026-10-06T03:53:03Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:18Z",
+          "conclusion": "success",
+          "name": "Run sudo apt-get update && sudo apt-get install -y cmake clang libclang-dev libdbus-1-dev pkg-config zsh",
+          "number": 7,
+          "started_at": "2026-10-06T03:53:03Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:18Z",
+          "conclusion": "skipped",
+          "name": "Run ilammy/msvc-dev-cmd@v1",
+          "number": 8,
+          "started_at": "2026-10-06T03:53:18Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:18Z",
+          "conclusion": "skipped",
+          "name": "Run choco install nasm --no-progress -y",
+          "number": 9,
+          "started_at": "2026-10-06T03:53:18Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:19Z",
+          "conclusion": "success",
+          "name": "Run cargo fmt --all --check",
+          "number": 10,
+          "started_at": "2026-10-06T03:53:18Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:19Z",
+          "conclusion": "skipped",
+          "name": "Compile Windows test executables",
+          "number": 11,
+          "started_at": "2026-10-06T03:53:19Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:19Z",
+          "conclusion": "skipped",
+          "name": "Check Windows daemon readiness",
+          "number": 12,
+          "started_at": "2026-10-06T03:53:19Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:56:24Z",
+          "conclusion": "success",
+          "name": "Run workspace tests",
+          "number": 13,
+          "started_at": "2026-10-06T03:53:19Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:57:46Z",
+          "conclusion": "success",
+          "name": "Run cargo clippy --locked --workspace --all-targets --exclude ai-terminal-bindgen -- -D warnings",
+          "number": 14,
+          "started_at": "2026-10-06T03:56:24Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:01:46Z",
+          "conclusion": "success",
+          "name": "Build optimized test binary",
+          "number": 15,
+          "started_at": "2026-10-06T03:57:46Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:01:46Z",
+          "conclusion": "success",
+          "name": "Check executable starts",
+          "number": 16,
+          "started_at": "2026-10-06T04:01:46Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:01:47Z",
+          "conclusion": "success",
+          "name": "Exercise host terminal",
+          "number": 17,
+          "started_at": "2026-10-06T04:01:46Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:01:51Z",
+          "conclusion": "success",
+          "name": "Package and verify contents",
+          "number": 18,
+          "started_at": "2026-10-06T04:01:47Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:01:53Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 19,
+          "started_at": "2026-10-06T04:01:51Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:02:12Z",
+          "conclusion": "success",
+          "name": "Save compiled dependencies for retries",
+          "number": 20,
+          "started_at": "2026-10-06T04:01:53Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:02:12Z",
+          "conclusion": "success",
+          "name": "Post Run actions/setup-python@v5",
+          "number": 39,
+          "started_at": "2026-10-06T04:02:12Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:02:12Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@v4",
+          "number": 40,
+          "started_at": "2026-10-06T04:02:12Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:02:12Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 41,
+          "started_at": "2026-10-06T04:02:12Z",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "completed_at": "2026-10-06T04:07:28Z",
+      "conclusion": "success",
+      "created_at": "2026-10-06T03:52:51Z",
+      "head_sha": "a8291d2c87939bf5a280bb232ee66991480d24a8",
+      "id": 112099357014,
+      "labels": [
+        "windows-2022"
+      ],
+      "name": "Desktop x86_64-pc-windows-msvc",
+      "run_attempt": 1,
+      "run_id": 37411053445,
+      "runner_id": 1000000287,
+      "runner_name": "GitHub Actions 1000000287",
+      "started_at": "2026-10-06T03:52:54Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completed_at": "2026-10-06T03:52:57Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "started_at": "2026-10-06T03:52:55Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:03Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v4",
+          "number": 2,
+          "started_at": "2026-10-06T03:52:57Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:03Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-python@v5",
+          "number": 3,
+          "started_at": "2026-10-06T03:53:03Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:05Z",
+          "conclusion": "success",
+          "name": "Run python scripts/package-test-artifact.py --self-test",
+          "number": 4,
+          "started_at": "2026-10-06T03:53:03Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:18Z",
+          "conclusion": "success",
+          "name": "Run dtolnay/rust-toolchain@1.94.1",
+          "number": 5,
+          "started_at": "2026-10-06T03:53:05Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:36Z",
+          "conclusion": "success",
+          "name": "Run actions/cache/restore@v4",
+          "number": 6,
+          "started_at": "2026-10-06T03:53:18Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:36Z",
+          "conclusion": "skipped",
+          "name": "Run sudo apt-get update && sudo apt-get install -y cmake clang libclang-dev libdbus-1-dev pkg-config zsh",
+          "number": 7,
+          "started_at": "2026-10-06T03:54:36Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:45Z",
+          "conclusion": "success",
+          "name": "Run ilammy/msvc-dev-cmd@v1",
+          "number": 8,
+          "started_at": "2026-10-06T03:54:36Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:55Z",
+          "conclusion": "success",
+          "name": "Run choco install nasm --no-progress -y",
+          "number": 9,
+          "started_at": "2026-10-06T03:54:45Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:58Z",
+          "conclusion": "success",
+          "name": "Run cargo fmt --all --check",
+          "number": 10,
+          "started_at": "2026-10-06T03:54:55Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:57:14Z",
+          "conclusion": "success",
+          "name": "Compile Windows test executables",
+          "number": 11,
+          "started_at": "2026-10-06T03:54:58Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:57:22Z",
+          "conclusion": "success",
+          "name": "Check Windows daemon readiness",
+          "number": 12,
+          "started_at": "2026-10-06T03:57:14Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:59:43Z",
+          "conclusion": "success",
+          "name": "Run workspace tests",
+          "number": 13,
+          "started_at": "2026-10-06T03:57:22Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:59:58Z",
+          "conclusion": "success",
+          "name": "Run cargo clippy --locked --workspace --all-targets --exclude ai-terminal-bindgen -- -D warnings",
+          "number": 14,
+          "started_at": "2026-10-06T03:59:43Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:04:47Z",
+          "conclusion": "success",
+          "name": "Build optimized test binary",
+          "number": 15,
+          "started_at": "2026-10-06T03:59:58Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:04:47Z",
+          "conclusion": "success",
+          "name": "Check executable starts",
+          "number": 16,
+          "started_at": "2026-10-06T04:04:47Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:04:47Z",
+          "conclusion": "skipped",
+          "name": "Exercise host terminal",
+          "number": 17,
+          "started_at": "2026-10-06T04:04:47Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:04:51Z",
+          "conclusion": "success",
+          "name": "Package and verify contents",
+          "number": 18,
+          "started_at": "2026-10-06T04:04:47Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:04:54Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 19,
+          "started_at": "2026-10-06T04:04:51Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:23Z",
+          "conclusion": "success",
+          "name": "Save compiled dependencies for retries",
+          "number": 20,
+          "started_at": "2026-10-06T04:04:54Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:24Z",
+          "conclusion": "success",
+          "name": "Post Run actions/setup-python@v5",
+          "number": 39,
+          "started_at": "2026-10-06T04:07:23Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:26Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@v4",
+          "number": 40,
+          "started_at": "2026-10-06T04:07:24Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:26Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 41,
+          "started_at": "2026-10-06T04:07:26Z",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "completed_at": "2026-10-06T04:54:23Z",
+      "conclusion": "cancelled",
+      "created_at": "2026-10-06T04:10:39Z",
+      "head_sha": "a8291d2c87939bf5a280bb232ee66991480d24a8",
+      "id": 112103681197,
+      "labels": [
+        "macos-15-intel"
+      ],
+      "name": "Desktop x86_64-apple-darwin",
+      "run_attempt": 2,
+      "run_id": 37411053445,
+      "runner_id": 1000000304,
+      "runner_name": "GitHub Actions 1000000304",
+      "started_at": "2026-10-06T04:10:41Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completed_at": "2026-10-06T04:10:42Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "started_at": "2026-10-06T04:10:39Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:10:46Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v4",
+          "number": 2,
+          "started_at": "2026-10-06T04:10:42Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:10:46Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-python@v5",
+          "number": 3,
+          "started_at": "2026-10-06T04:10:46Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:10:47Z",
+          "conclusion": "success",
+          "name": "Run python scripts/package-test-artifact.py --self-test",
+          "number": 4,
+          "started_at": "2026-10-06T04:10:46Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:11:07Z",
+          "conclusion": "success",
+          "name": "Run dtolnay/rust-toolchain@1.94.1",
+          "number": 5,
+          "started_at": "2026-10-06T04:10:47Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:11:08Z",
+          "conclusion": "success",
+          "name": "Run actions/cache/restore@v4",
+          "number": 6,
+          "started_at": "2026-10-06T04:11:07Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:11:08Z",
+          "conclusion": "skipped",
+          "name": "Run sudo apt-get update && sudo apt-get install -y cmake clang libclang-dev libdbus-1-dev pkg-config zsh",
+          "number": 7,
+          "started_at": "2026-10-06T04:11:08Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:11:08Z",
+          "conclusion": "skipped",
+          "name": "Run ilammy/msvc-dev-cmd@v1",
+          "number": 8,
+          "started_at": "2026-10-06T04:11:08Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:11:08Z",
+          "conclusion": "skipped",
+          "name": "Run choco install nasm --no-progress -y",
+          "number": 9,
+          "started_at": "2026-10-06T04:11:08Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:11:10Z",
+          "conclusion": "success",
+          "name": "Run cargo fmt --all --check",
+          "number": 10,
+          "started_at": "2026-10-06T04:11:08Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:11:10Z",
+          "conclusion": "skipped",
+          "name": "Compile Windows test executables",
+          "number": 11,
+          "started_at": "2026-10-06T04:11:10Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:11:10Z",
+          "conclusion": "skipped",
+          "name": "Check Windows daemon readiness",
+          "number": 12,
+          "started_at": "2026-10-06T04:11:10Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:26:06Z",
+          "conclusion": "success",
+          "name": "Run workspace tests",
+          "number": 13,
+          "started_at": "2026-10-06T04:11:10Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:31:15Z",
+          "conclusion": "success",
+          "name": "Run cargo clippy --locked --workspace --all-targets --exclude ai-terminal-bindgen -- -D warnings",
+          "number": 14,
+          "started_at": "2026-10-06T04:26:06Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:50:14Z",
+          "conclusion": "success",
+          "name": "Build optimized test binary",
+          "number": 15,
+          "started_at": "2026-10-06T04:31:15Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:50:14Z",
+          "conclusion": "success",
+          "name": "Check executable starts",
+          "number": 16,
+          "started_at": "2026-10-06T04:50:14Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:50:16Z",
+          "conclusion": "success",
+          "name": "Exercise host terminal",
+          "number": 17,
+          "started_at": "2026-10-06T04:50:14Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:50:25Z",
+          "conclusion": "success",
+          "name": "Package and verify contents",
+          "number": 18,
+          "started_at": "2026-10-06T04:50:16Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:50:29Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 19,
+          "started_at": "2026-10-06T04:50:25Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:54:14Z",
+          "conclusion": "success",
+          "name": "Save compiled dependencies for retries",
+          "number": 20,
+          "started_at": "2026-10-06T04:50:29Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:54:14Z",
+          "conclusion": "skipped",
+          "name": "Post Run actions/setup-python@v5",
+          "number": 39,
+          "started_at": "2026-10-06T04:54:14Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:54:17Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@v4",
+          "number": 40,
+          "started_at": "2026-10-06T04:54:14Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:54:19Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 41,
+          "started_at": "2026-10-06T04:54:17Z",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "completed_at": "2026-10-06T04:07:28Z",
+      "conclusion": "success",
+      "created_at": "2026-10-06T04:10:39Z",
+      "head_sha": "a8291d2c87939bf5a280bb232ee66991480d24a8",
+      "id": 112103681788,
+      "labels": [
+        "windows-2022"
+      ],
+      "name": "Desktop x86_64-pc-windows-msvc",
+      "run_attempt": 2,
+      "run_id": 37411053445,
+      "runner_id": 1000000287,
+      "runner_name": "GitHub Actions 1000000287",
+      "started_at": "2026-10-06T03:52:54Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completed_at": "2026-10-06T03:52:57Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "started_at": "2026-10-06T03:52:55Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:03Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v4",
+          "number": 2,
+          "started_at": "2026-10-06T03:52:57Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:03Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-python@v5",
+          "number": 3,
+          "started_at": "2026-10-06T03:53:03Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:05Z",
+          "conclusion": "success",
+          "name": "Run python scripts/package-test-artifact.py --self-test",
+          "number": 4,
+          "started_at": "2026-10-06T03:53:03Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:18Z",
+          "conclusion": "success",
+          "name": "Run dtolnay/rust-toolchain@1.94.1",
+          "number": 5,
+          "started_at": "2026-10-06T03:53:05Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:36Z",
+          "conclusion": "success",
+          "name": "Run actions/cache/restore@v4",
+          "number": 6,
+          "started_at": "2026-10-06T03:53:18Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:36Z",
+          "conclusion": "skipped",
+          "name": "Run sudo apt-get update && sudo apt-get install -y cmake clang libclang-dev libdbus-1-dev pkg-config zsh",
+          "number": 7,
+          "started_at": "2026-10-06T03:54:36Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:45Z",
+          "conclusion": "success",
+          "name": "Run ilammy/msvc-dev-cmd@v1",
+          "number": 8,
+          "started_at": "2026-10-06T03:54:36Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:55Z",
+          "conclusion": "success",
+          "name": "Run choco install nasm --no-progress -y",
+          "number": 9,
+          "started_at": "2026-10-06T03:54:45Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:58Z",
+          "conclusion": "success",
+          "name": "Run cargo fmt --all --check",
+          "number": 10,
+          "started_at": "2026-10-06T03:54:55Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:57:14Z",
+          "conclusion": "success",
+          "name": "Compile Windows test executables",
+          "number": 11,
+          "started_at": "2026-10-06T03:54:58Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:57:22Z",
+          "conclusion": "success",
+          "name": "Check Windows daemon readiness",
+          "number": 12,
+          "started_at": "2026-10-06T03:57:14Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:59:43Z",
+          "conclusion": "success",
+          "name": "Run workspace tests",
+          "number": 13,
+          "started_at": "2026-10-06T03:57:22Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:59:58Z",
+          "conclusion": "success",
+          "name": "Run cargo clippy --locked --workspace --all-targets --exclude ai-terminal-bindgen -- -D warnings",
+          "number": 14,
+          "started_at": "2026-10-06T03:59:43Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:04:47Z",
+          "conclusion": "success",
+          "name": "Build optimized test binary",
+          "number": 15,
+          "started_at": "2026-10-06T03:59:58Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:04:47Z",
+          "conclusion": "success",
+          "name": "Check executable starts",
+          "number": 16,
+          "started_at": "2026-10-06T04:04:47Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:04:47Z",
+          "conclusion": "skipped",
+          "name": "Exercise host terminal",
+          "number": 17,
+          "started_at": "2026-10-06T04:04:47Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:04:51Z",
+          "conclusion": "success",
+          "name": "Package and verify contents",
+          "number": 18,
+          "started_at": "2026-10-06T04:04:47Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:04:54Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 19,
+          "started_at": "2026-10-06T04:04:51Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:23Z",
+          "conclusion": "success",
+          "name": "Save compiled dependencies for retries",
+          "number": 20,
+          "started_at": "2026-10-06T04:04:54Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:24Z",
+          "conclusion": "success",
+          "name": "Post Run actions/setup-python@v5",
+          "number": 39,
+          "started_at": "2026-10-06T04:07:23Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:26Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@v4",
+          "number": 40,
+          "started_at": "2026-10-06T04:07:24Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:26Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 41,
+          "started_at": "2026-10-06T04:07:26Z",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "completed_at": "2026-10-06T04:07:57Z",
+      "conclusion": "success",
+      "created_at": "2026-10-06T04:10:39Z",
+      "head_sha": "a8291d2c87939bf5a280bb232ee66991480d24a8",
+      "id": 112103682203,
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "name": "Android debug APK (three ABIs)",
+      "run_attempt": 2,
+      "run_id": 37411053445,
+      "runner_id": 1000000283,
+      "runner_name": "GitHub Actions 1000000283",
+      "started_at": "2026-10-06T03:52:53Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completed_at": "2026-10-06T03:52:57Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "started_at": "2026-10-06T03:52:54Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:52:58Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v4",
+          "number": 2,
+          "started_at": "2026-10-06T03:52:57Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:52:59Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-python@v5",
+          "number": 3,
+          "started_at": "2026-10-06T03:52:58Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:12Z",
+          "conclusion": "success",
+          "name": "Run dtolnay/rust-toolchain@1.94.1",
+          "number": 4,
+          "started_at": "2026-10-06T03:52:59Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:13Z",
+          "conclusion": "success",
+          "name": "Run actions/cache/restore@v4",
+          "number": 5,
+          "started_at": "2026-10-06T03:53:12Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:13Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-java@v4",
+          "number": 6,
+          "started_at": "2026-10-06T03:53:13Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:30Z",
+          "conclusion": "success",
+          "name": "Run android-actions/setup-android@v3",
+          "number": 7,
+          "started_at": "2026-10-06T03:53:13Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:47Z",
+          "conclusion": "success",
+          "name": "Run sudo apt-get update && sudo apt-get install -y cmake clang libclang-dev pkg-config",
+          "number": 8,
+          "started_at": "2026-10-06T03:53:30Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:02:24Z",
+          "conclusion": "success",
+          "name": "Build native code for all supported ABIs",
+          "number": 9,
+          "started_at": "2026-10-06T03:53:47Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:04:25Z",
+          "conclusion": "success",
+          "name": "Run python scripts/prepare-bindings.py",
+          "number": 10,
+          "started_at": "2026-10-06T04:02:24Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:31Z",
+          "conclusion": "success",
+          "name": "Build APK and lint",
+          "number": 11,
+          "started_at": "2026-10-06T04:04:25Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:32Z",
+          "conclusion": "success",
+          "name": "Verify APK metadata and debug signature",
+          "number": 12,
+          "started_at": "2026-10-06T04:07:31Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:36Z",
+          "conclusion": "success",
+          "name": "Package and verify native libraries",
+          "number": 13,
+          "started_at": "2026-10-06T04:07:32Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:39Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 14,
+          "started_at": "2026-10-06T04:07:36Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:54Z",
+          "conclusion": "success",
+          "name": "Save compiled dependencies for retries",
+          "number": 15,
+          "started_at": "2026-10-06T04:07:39Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:54Z",
+          "conclusion": "success",
+          "name": "Post Run actions/setup-java@v4",
+          "number": 28,
+          "started_at": "2026-10-06T04:07:54Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:54Z",
+          "conclusion": "success",
+          "name": "Post Run actions/setup-python@v5",
+          "number": 29,
+          "started_at": "2026-10-06T04:07:54Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:54Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@v4",
+          "number": 30,
+          "started_at": "2026-10-06T04:07:54Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:07:54Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 31,
+          "started_at": "2026-10-06T04:07:54Z",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "completed_at": "2026-10-06T04:01:19Z",
+      "conclusion": "success",
+      "created_at": "2026-10-06T04:10:46Z",
+      "head_sha": "a8291d2c87939bf5a280bb232ee66991480d24a8",
+      "id": 112103710888,
+      "labels": [
+        "macos-15"
+      ],
+      "name": "Desktop aarch64-apple-darwin",
+      "run_attempt": 2,
+      "run_id": 37411053445,
+      "runner_id": 1000000290,
+      "runner_name": "GitHub Actions 1000000290",
+      "started_at": "2026-10-06T03:52:59Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completed_at": "2026-10-06T03:53:03Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "started_at": "2026-10-06T03:53:00Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:05Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v4",
+          "number": 2,
+          "started_at": "2026-10-06T03:53:03Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:05Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-python@v5",
+          "number": 3,
+          "started_at": "2026-10-06T03:53:05Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:06Z",
+          "conclusion": "success",
+          "name": "Run python scripts/package-test-artifact.py --self-test",
+          "number": 4,
+          "started_at": "2026-10-06T03:53:05Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:16Z",
+          "conclusion": "success",
+          "name": "Run dtolnay/rust-toolchain@1.94.1",
+          "number": 5,
+          "started_at": "2026-10-06T03:53:06Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:16Z",
+          "conclusion": "success",
+          "name": "Run actions/cache/restore@v4",
+          "number": 6,
+          "started_at": "2026-10-06T03:53:16Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:16Z",
+          "conclusion": "skipped",
+          "name": "Run sudo apt-get update && sudo apt-get install -y cmake clang libclang-dev libdbus-1-dev pkg-config zsh",
+          "number": 7,
+          "started_at": "2026-10-06T03:54:16Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:16Z",
+          "conclusion": "skipped",
+          "name": "Run ilammy/msvc-dev-cmd@v1",
+          "number": 8,
+          "started_at": "2026-10-06T03:54:16Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:16Z",
+          "conclusion": "skipped",
+          "name": "Run choco install nasm --no-progress -y",
+          "number": 9,
+          "started_at": "2026-10-06T03:54:16Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:18Z",
+          "conclusion": "success",
+          "name": "Run cargo fmt --all --check",
+          "number": 10,
+          "started_at": "2026-10-06T03:54:16Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:18Z",
+          "conclusion": "skipped",
+          "name": "Compile Windows test executables",
+          "number": 11,
+          "started_at": "2026-10-06T03:54:18Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:54:18Z",
+          "conclusion": "skipped",
+          "name": "Check Windows daemon readiness",
+          "number": 12,
+          "started_at": "2026-10-06T03:54:18Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:56:29Z",
+          "conclusion": "success",
+          "name": "Run workspace tests",
+          "number": 13,
+          "started_at": "2026-10-06T03:54:18Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:56:42Z",
+          "conclusion": "success",
+          "name": "Run cargo clippy --locked --workspace --all-targets --exclude ai-terminal-bindgen -- -D warnings",
+          "number": 14,
+          "started_at": "2026-10-06T03:56:29Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:00:20Z",
+          "conclusion": "success",
+          "name": "Build optimized test binary",
+          "number": 15,
+          "started_at": "2026-10-06T03:56:42Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:00:21Z",
+          "conclusion": "success",
+          "name": "Check executable starts",
+          "number": 16,
+          "started_at": "2026-10-06T04:00:20Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:00:21Z",
+          "conclusion": "success",
+          "name": "Exercise host terminal",
+          "number": 17,
+          "started_at": "2026-10-06T04:00:21Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:00:26Z",
+          "conclusion": "success",
+          "name": "Package and verify contents",
+          "number": 18,
+          "started_at": "2026-10-06T04:00:21Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:00:30Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 19,
+          "started_at": "2026-10-06T04:00:26Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:01:15Z",
+          "conclusion": "success",
+          "name": "Save compiled dependencies for retries",
+          "number": 20,
+          "started_at": "2026-10-06T04:00:30Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:01:15Z",
+          "conclusion": "success",
+          "name": "Post Run actions/setup-python@v5",
+          "number": 39,
+          "started_at": "2026-10-06T04:01:15Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:01:16Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@v4",
+          "number": 40,
+          "started_at": "2026-10-06T04:01:15Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:01:17Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 41,
+          "started_at": "2026-10-06T04:01:16Z",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "completed_at": "2026-10-06T04:02:14Z",
+      "conclusion": "success",
+      "created_at": "2026-10-06T04:10:48Z",
+      "head_sha": "a8291d2c87939bf5a280bb232ee66991480d24a8",
+      "id": 112103719587,
+      "labels": [
+        "ubuntu-22.04"
+      ],
+      "name": "Desktop x86_64-unknown-linux-gnu",
+      "run_attempt": 2,
+      "run_id": 37411053445,
+      "runner_id": 1000000288,
+      "runner_name": "GitHub Actions 1000000288",
+      "started_at": "2026-10-06T03:52:53Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completed_at": "2026-10-06T03:52:55Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "started_at": "2026-10-06T03:52:54Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:52:56Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v4",
+          "number": 2,
+          "started_at": "2026-10-06T03:52:55Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:52:56Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-python@v5",
+          "number": 3,
+          "started_at": "2026-10-06T03:52:56Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:52:56Z",
+          "conclusion": "success",
+          "name": "Run python scripts/package-test-artifact.py --self-test",
+          "number": 4,
+          "started_at": "2026-10-06T03:52:56Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:03Z",
+          "conclusion": "success",
+          "name": "Run dtolnay/rust-toolchain@1.94.1",
+          "number": 5,
+          "started_at": "2026-10-06T03:52:56Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:03Z",
+          "conclusion": "success",
+          "name": "Run actions/cache/restore@v4",
+          "number": 6,
+          "started_at": "2026-10-06T03:53:03Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:18Z",
+          "conclusion": "success",
+          "name": "Run sudo apt-get update && sudo apt-get install -y cmake clang libclang-dev libdbus-1-dev pkg-config zsh",
+          "number": 7,
+          "started_at": "2026-10-06T03:53:03Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:18Z",
+          "conclusion": "skipped",
+          "name": "Run ilammy/msvc-dev-cmd@v1",
+          "number": 8,
+          "started_at": "2026-10-06T03:53:18Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:18Z",
+          "conclusion": "skipped",
+          "name": "Run choco install nasm --no-progress -y",
+          "number": 9,
+          "started_at": "2026-10-06T03:53:18Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:19Z",
+          "conclusion": "success",
+          "name": "Run cargo fmt --all --check",
+          "number": 10,
+          "started_at": "2026-10-06T03:53:18Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:19Z",
+          "conclusion": "skipped",
+          "name": "Compile Windows test executables",
+          "number": 11,
+          "started_at": "2026-10-06T03:53:19Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:53:19Z",
+          "conclusion": "skipped",
+          "name": "Check Windows daemon readiness",
+          "number": 12,
+          "started_at": "2026-10-06T03:53:19Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:56:24Z",
+          "conclusion": "success",
+          "name": "Run workspace tests",
+          "number": 13,
+          "started_at": "2026-10-06T03:53:19Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T03:57:46Z",
+          "conclusion": "success",
+          "name": "Run cargo clippy --locked --workspace --all-targets --exclude ai-terminal-bindgen -- -D warnings",
+          "number": 14,
+          "started_at": "2026-10-06T03:56:24Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:01:46Z",
+          "conclusion": "success",
+          "name": "Build optimized test binary",
+          "number": 15,
+          "started_at": "2026-10-06T03:57:46Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:01:46Z",
+          "conclusion": "success",
+          "name": "Check executable starts",
+          "number": 16,
+          "started_at": "2026-10-06T04:01:46Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:01:47Z",
+          "conclusion": "success",
+          "name": "Exercise host terminal",
+          "number": 17,
+          "started_at": "2026-10-06T04:01:46Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:01:51Z",
+          "conclusion": "success",
+          "name": "Package and verify contents",
+          "number": 18,
+          "started_at": "2026-10-06T04:01:47Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:01:53Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 19,
+          "started_at": "2026-10-06T04:01:51Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:02:12Z",
+          "conclusion": "success",
+          "name": "Save compiled dependencies for retries",
+          "number": 20,
+          "started_at": "2026-10-06T04:01:53Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:02:12Z",
+          "conclusion": "success",
+          "name": "Post Run actions/setup-python@v5",
+          "number": 39,
+          "started_at": "2026-10-06T04:02:12Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:02:12Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@v4",
+          "number": 40,
+          "started_at": "2026-10-06T04:02:12Z",
+          "status": "completed"
+        },
+        {
+          "completed_at": "2026-10-06T04:02:12Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 41,
+          "started_at": "2026-10-06T04:02:12Z",
+          "status": "completed"
+        }
+      ]
+    }
+  ],
+  "source_urls": [
+    "https://api.github.com/repos/dqh147258/aTerminal/actions/runs/37411053445/jobs?filter=all&per_page=100",
+    "https://api.github.com/repos/dqh147258/aTerminal/actions/runs/37411053445/artifacts?per_page=100"
+  ]
+}
