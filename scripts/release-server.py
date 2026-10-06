@@ -210,9 +210,14 @@ def push(c):
         # Use an empty client configuration to prove public pulls do not depend
         # on the publishing credentials, for both native-tested platforms.
         with tempfile.TemporaryDirectory() as anonymous_config:
+            public_index = json.loads(run('docker', '--config', anonymous_config, 'buildx', 'imagetools', 'inspect', '--raw', result['pull']).stdout)
+            assert public_index == index, 'Anonymous manifest differs from verified index'
             for arch, item in items.items():
-                run('docker', '--config', anonymous_config, 'pull', '--platform', 'linux/' + arch, result['pull'])
-                pulled = json.loads(run('docker', 'image', 'inspect', '--platform', 'linux/' + arch, result['pull']).stdout)[0]
+                pull_ref = repo + '@' + item['registry_digest']
+                run('docker', '--config', anonymous_config, 'pull', '--platform', 'linux/' + arch, pull_ref)
+                # Per-platform manifest refs are unambiguous even with a multi-platform
+                # containerd store and do not require inspect --platform (API 1.49).
+                pulled = json.loads(run('docker', 'image', 'inspect', pull_ref).stdout)[0]
                 assert pulled['Id'] == item['image_id'] and pulled['Architecture'] == arch, 'Anonymous digest pull differs from tested image'
     (DIST / 'server-image.json').write_text(json.dumps(result, indent=2) + '\n')
     print('Published and verified ' + result['pull'])
@@ -245,6 +250,27 @@ This is a server-only prerelease. It does not certify public-network/NAT, long-t
     published = json.loads(run('gh', 'release', 'view', 'v' + c['version'], '--json', 'isPrerelease,isDraft,url,assets').stdout)
     assert published['isPrerelease'] and not published['isDraft']
     assert {p.name for p in DIST.iterdir() if p.is_file()} == {a['name'] for a in published['assets']}
+    repository = os.environ['GITHUB_REPOSITORY']
+    assert re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository)
+    public_url = f'https://api.github.com/repos/{repository}/releases/tags/v{c["version"]}'
+    with urllib.request.urlopen(urllib.request.Request(public_url, headers={'Accept': 'application/vnd.github+json'}), timeout=30) as response:
+        public_release = json.load(response)
+    assert public_release['prerelease'] and not public_release['draft']
+    tag_url = f'https://api.github.com/repos/{repository}/git/ref/tags/v{c["version"]}'
+    with urllib.request.urlopen(tag_url, timeout=30) as response:
+        tag_ref = json.load(response)
+    assert tag_ref['object']['type'] == 'commit' and tag_ref['object']['sha'] == sha(), 'Release tag does not point to the tested source commit'
+    public_assets = {a['name']: a for a in public_release['assets']}
+    assert set(public_assets) == {p.name for p in DIST.iterdir() if p.is_file()}
+    for path in DIST.iterdir():
+        if path.is_file():
+            asset = public_assets[path.name]
+            assert asset['size'] == path.stat().st_size
+            assert asset.get('digest') == 'sha256:' + digest(path), 'GitHub asset checksum differs from tested distribution'
+    # Independently fetch the small public manifest without GitHub credentials.
+    manifest_asset = public_assets['server-image.json']['browser_download_url']
+    with urllib.request.urlopen(manifest_asset, timeout=30) as response:
+        assert hashlib.sha256(response.read()).hexdigest() == digest(DIST / 'server-image.json')
     print(published['url'])
 
 
