@@ -2,7 +2,7 @@ name: Linux Server Images
 
 on:
   push:
-    branches: [main, 'codex/linux-server-*']
+    branches: [main]
     paths:
       - 'deploy/Dockerfile'
       - 'deploy/server-release.json'

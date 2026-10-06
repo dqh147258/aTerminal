@@ -8,12 +8,20 @@ import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DIST = ROOT / 'dist'
 ARCHES = ('amd64', 'arm64')
+TARGET = ROOT / '.server-publish-target.json'
+
+
+class HubError(RuntimeError):
+    def __init__(self, status):
+        self.status = status
+        super().__init__(f'DockerHub API returned HTTP {status}')
 
 
 def run(*args, check=True):
@@ -28,7 +36,10 @@ def config(data=None):
     assert re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-(alpha|beta|rc)\.[1-9][0-9]*', data['version']), 'Use an explicit prerelease version'
     if data['publish']:
         assert re.fullmatch(r'[a-z0-9][a-z0-9_-]*/[a-z0-9]+(?:[._-][a-z0-9]+)*', data['dockerhub_repository']), 'Confirm namespace/repository before publication'
-        assert data['dockerhub_visibility'] in ('public', 'private'), 'Confirm existing repository visibility'
+        assert data['dockerhub_visibility'] in ('public', 'private'), 'Confirm repository visibility'
+        fallback = data.get('dockerhub_fallback_repository', '')
+        assert not fallback or re.fullmatch(r'[a-z0-9][a-z0-9_-]*/[a-z0-9]+(?:[._-][a-z0-9]+)*', fallback)
+        assert type(data.get('allow_create_repository', False)) is bool
     return data
 
 
@@ -61,7 +72,7 @@ def api(path, token=None, data=None, allow_missing=False):
     except urllib.error.HTTPError as error:
         if allow_missing and error.code == 404:
             return None
-        raise RuntimeError(f'DockerHub API returned HTTP {error.code}; no repository will be created or visibility changed') from None
+        raise HubError(error.code) from None
 
 
 def metadata(c):
@@ -83,24 +94,62 @@ def tags(c):
 
 
 def preflight(c):
+    TARGET.unlink(missing_ok=True)
     assert c['publish'], 'Publication is not enabled'
     metadata(c)
-    username, secret = os.environ['DOCKERHUB_USERNAME'], os.environ['DOCKERHUB_TOKEN']
-    assert username and secret, 'Configure existing DockerHub secrets'
-    token = api('auth/token', data={'identifier': username, 'secret': secret})['access_token']
-    namespace, repository = c['dockerhub_repository'].split('/')
-    base = f'namespaces/{namespace}/repositories/{repository}'
-    repo = api(base, token)
-    assert type(repo.get('is_private')) is bool, 'Repository visibility could not be verified'
-    assert repo['is_private'] == (c['dockerhub_visibility'] == 'private'), 'DockerHub visibility does not match approval'
-    for tag in tags(c):
-        assert api(base + '/tags/' + tag, token, allow_missing=True) is None, f'Refusing to replace existing DockerHub tag {tag}; inspect partial publication before retrying'
     # Preflight both the release and git tag. Network/authentication failures are never absence.
     tag = 'v' + c['version']
     for endpoint in (f'repos/{{owner}}/{{repo}}/releases/tags/{tag}', f'repos/{{owner}}/{{repo}}/git/ref/tags/{tag}'):
         check = run('gh', 'api', endpoint, check=False)
         assert check.returncode != 0 and '(HTTP 404)' in check.stderr, f'GitHub version already exists or cannot be verified: {tag}'
-    print('Verified existing DockerHub repository, approved visibility, absent version tags, and exact-commit image checksums')
+    username, secret = os.environ['DOCKERHUB_USERNAME'], os.environ['DOCKERHUB_TOKEN']
+    assert username and secret, 'Configure existing DockerHub secrets'
+    token = api('auth/token', data={'identifier': username, 'secret': secret})['access_token']
+    selected = None
+    candidates = [c['dockerhub_repository']]
+    if c.get('dockerhub_fallback_repository'):
+        candidates.append(c['dockerhub_fallback_repository'])
+    for candidate in candidates:
+        namespace, repository = candidate.split('/')
+        base = f'namespaces/{namespace}/repositories/{repository}'
+        try:
+            repo = api(base, token, allow_missing=True)
+            if repo is None:
+                if not c.get('allow_create_repository', False):
+                    print(f'{candidate}: repository does not exist; creation is disabled')
+                    continue
+                # Only the explicitly approved repository under an existing authorized
+                # namespace may be created. Never create accounts/namespaces or change visibility.
+                try:
+                    api(f'namespaces/{namespace}/repositories', token, data={
+                        'name': repository, 'namespace': namespace, 'registry': 'docker.io',
+                        'is_private': c['dockerhub_visibility'] == 'private',
+                        'description': 'aTerminal coordination and encrypted relay server'})
+                except HubError as error:
+                    if error.status != 409:
+                        raise
+                repo = api(base, token)
+            assert repo.get('namespace') == namespace and repo.get('name') == repository, 'DockerHub returned an unexpected repository identity'
+            assert type(repo.get('is_private')) is bool, 'Repository visibility could not be verified'
+            if repo['is_private'] != (c['dockerhub_visibility'] == 'private'):
+                print(f'{candidate}: existing visibility differs from approval; it will not be changed')
+                continue
+            if repo.get('permissions', {}).get('write') is not True:
+                print(f'{candidate}: current credentials do not have verified write permission')
+                continue
+            selected = candidate
+            break
+        except HubError as error:
+            if error.status not in (401, 403, 404):
+                raise
+            print(f'{candidate}: unavailable with current credentials (HTTP {error.status})')
+    assert selected, 'Neither approved DockerHub repository is available with the required permission and visibility'
+    print('Verified publish destination: ' + selected)
+    c = dict(c, dockerhub_repository=selected)
+    for tag in tags(c):
+        assert api(base + '/tags/' + tag, token, allow_missing=True) is None, f'Refusing to replace existing DockerHub tag {tag}; inspect partial publication before retrying'
+    TARGET.write_text(json.dumps({'repository': selected, 'source_commit': sha(), 'version': c['version']}))
+    print('Verified DockerHub write permission, approved visibility, absent version tags, and exact-commit image checksums')
 
 
 def package(c, arch):
@@ -111,7 +160,7 @@ def package(c, arch):
     assert labels['org.opencontainers.image.version'] == c['version']
     archive = f'aterminal-server-{c["version"]}-linux-{arch}.tar.gz'
     item = {'version': c['version'], 'source_commit': sha(), 'platform': 'linux/' + arch,
-            'archive': archive, 'sha256': digest(DIST / archive), 'image_id': image['Id'],
+            'local_image': f'aterminal-server:test-{arch}', 'archive': archive, 'sha256': digest(DIST / archive), 'image_id': image['Id'],
             'tests': ['server cargo tests', 'native hardened container smoke test']}
     (DIST / archive.replace('.tar.gz', '.json')).write_text(json.dumps(item, indent=2) + '\n')
     (DIST / (archive + '.sha256')).write_text(item['sha256'] + '  ' + archive + '\n')
@@ -119,6 +168,10 @@ def package(c, arch):
 
 def push(c):
     assert c['publish']
+    target = json.loads(TARGET.read_text())
+    assert target['source_commit'] == sha() and target['version'] == c['version']
+    assert target['repository'] in (c['dockerhub_repository'], c.get('dockerhub_fallback_repository'))
+    c = dict(c, dockerhub_repository=target['repository'])
     items = metadata(c)
     repo = c['dockerhub_repository']
     references = []
@@ -153,6 +206,14 @@ def push(c):
     assert sha_manifest['digest'] == manifest['digest'], 'Source SHA tag differs from version manifest'
     result = {'version': c['version'], 'source_commit': sha(), 'repository': repo, 'visibility': c['dockerhub_visibility'],
               'digest': manifest['digest'], 'pull': repo + '@' + manifest['digest'], 'images': items}
+    if result['visibility'] == 'public':
+        # Use an empty client configuration to prove public pulls do not depend
+        # on the publishing credentials, for both native-tested platforms.
+        with tempfile.TemporaryDirectory() as anonymous_config:
+            for arch, item in items.items():
+                run('docker', '--config', anonymous_config, 'pull', '--platform', 'linux/' + arch, result['pull'])
+                pulled = json.loads(run('docker', 'image', 'inspect', result['pull']).stdout)[0]
+                assert pulled['Id'] == item['image_id'] and pulled['Architecture'] == arch, 'Anonymous digest pull differs from tested image'
     (DIST / 'server-image.json').write_text(json.dumps(result, indent=2) + '\n')
     print('Published and verified ' + result['pull'])
 
@@ -161,6 +222,7 @@ def release(c):
     assert c['publish'], 'Publication is not enabled'
     result = json.loads((DIST / 'server-image.json').read_text())
     assert result['source_commit'] == sha() and result['version'] == c['version']
+    assert result['repository'] in (c['dockerhub_repository'], c.get('dockerhub_fallback_repository'))
     checksums = '\n'.join(digest(p) + '  ' + p.name for p in sorted(DIST.iterdir()) if p.is_file() and p.name != 'SHA256SUMS') + '\n'
     (DIST / 'SHA256SUMS').write_text(checksums)
     note = f'''aTerminal Server Linux prerelease v{c['version']}
@@ -171,7 +233,7 @@ DockerHub: `{result['repository']}:v{c['version']}` ({result['visibility']})
 Immutable pull: `docker pull {result['pull']}`
 Platforms: linux/amd64 and linux/arm64, each built and smoke-tested on native runners.
 
-Assets include the tested Docker image archives, per-platform source/checksum metadata, and SHA256SUMS. Load an offline image with `docker load -i <archive.tar.gz>`. Images run as UID/GID 10001, require an explicit admin token file, and persist SQLite under /data. See deploy/SERVER-RELEASE.md for safe startup and TLS requirements.
+Assets include the tested Docker image archives, per-platform source/checksum metadata, and SHA256SUMS. Load an offline image with `docker load -i <archive.tar.gz>` and run the `local_image` tag recorded in its platform JSON. Images run as UID/GID 10001, require an explicit admin token file, and persist SQLite under /data. See deploy/SERVER-RELEASE.md for safe startup and TLS requirements.
 
 This is a server-only prerelease. It does not certify public-network/NAT, long-term performance, mobile signing or store release readiness. No production deployment is performed. Desktop/Android test artifacts are not copied from another commit into this release.
 '''

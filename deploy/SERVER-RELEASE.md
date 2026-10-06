@@ -4,9 +4,9 @@
 
 ## Publication
 
-`deploy/server-release.json` records the prerelease version, exact DockerHub `namespace/repository`, expected existing visibility, and the publication switch. Publication is initially disabled until the owner confirms the repository and visibility. Do not derive the DockerHub namespace from the GitHub owner.
+`deploy/server-release.json` records the prerelease version, exact DockerHub `namespace/repository`, expected existing visibility, and the publication switch. For v0.1.0-alpha.1 the owner approved public `yxf/aterminal`, with public `yixifeng/aterminal` as the only fallback if the primary is unavailable to the existing credentials. Public GitHub image archives are also approved. Do not derive the DockerHub namespace from the GitHub owner.
 
-After confirmation, enable publication in a reviewed PR. Only a successful main-branch run can publish, and only when this release configuration changes or the workflow is explicitly dispatched. Ordinary source changes build and test without republishing the previous version. Authentication uses only the existing `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` Actions secrets. The workflow verifies the DockerHub repository already exists and matches the approved visibility; it does not create repositories or change visibility. The DockerHub credential must allow read and write on that repository.
+After confirmation, enable publication in a reviewed PR. Only a successful main-branch run can publish, and only when this release configuration changes or the workflow is explicitly dispatched. Ordinary source changes build and test without republishing the previous version. Authentication uses only the existing `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` Actions secrets. The workflow verifies write permission and approved visibility. `allow_create_repository` permits creation of only the explicitly named image repository within an existing namespace the current credentials can manage. It never creates accounts/namespaces, changes existing visibility, purchases a plan, or expands access. Authentication, service, and version conflicts fail closed; only an unavailable destination or missing write permission permits the configured fallback. The DockerHub credential must allow read and write on that repository.
 
 The workflow pushes exactly the smoke-tested image archives, verifies their registry config digests, and assembles an amd64/arm64 manifest. Tags are `v<prerelease>`, `v<prerelease>-amd64`, `v<prerelease>-arm64` and `sha-<full source commit>`. It never updates `latest` or a stable-version alias and refuses to replace existing tags. These tags are treated as immutable by this workflow; registry-wide immutability settings are not changed. Use the published digest for immutable pulls.
 
@@ -16,7 +16,7 @@ If a run stops after a partial registry push, it deliberately refuses to overwri
 
 ## Run a published image
 
-Read the prerelease's `server-image.json` for the verified pull reference. Replace `NAMESPACE/REPOSITORY@sha256:DIGEST` below with that reference. Verify downloaded offline archive checksums with `sha256sum -c SHA256SUMS`, then use `docker load -i <archive.tar.gz>` if needed.
+Read the prerelease's `server-image.json` for the verified pull reference. Replace `NAMESPACE/REPOSITORY@sha256:DIGEST` below with that reference. Verify downloaded offline archive checksums with `sha256sum -c SHA256SUMS`, then use `docker load -i <archive.tar.gz>` if needed. For offline use, replace the registry digest reference in the run command with the platform JSON’s `local_image` tag (`aterminal-server:test-amd64` or `aterminal-server:test-arm64`).
 
 ```sh
 mkdir -m 700 -p secrets
