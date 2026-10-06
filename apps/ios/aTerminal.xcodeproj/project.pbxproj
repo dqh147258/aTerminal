@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AC1000000000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AC1000000000000000000002; };
 		AC0210000000000000000003 /* AgentAuthorizationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0210000000000000000004; };
 		AC0210000000000000000001 /* AgentAuthorization.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0210000000000000000002; };
 		ABCD10010000000000000007 /* AgentHistoryCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCD10010000000000000008; };
@@ -31,6 +32,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		AC1000000000000000000002 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AC0210000000000000000004 /* AgentAuthorizationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAuthorizationView.swift; sourceTree = "<group>"; };
 		AC0210000000000000000002 /* AgentAuthorization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAuthorization.swift; sourceTree = "<group>"; };
 		ABCD10010000000000000008 /* AgentHistoryCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentHistoryCache.swift; sourceTree = "<group>"; };
@@ -101,6 +103,7 @@
 		BA87ED45B9F295883E96DB8F /* aTerminal */ = {
 			isa = PBXGroup;
 			children = (
+				AC1000000000000000000002 /* Assets.xcassets */,
 				E61A9D47D7F9A3E562878563 /* aTerminalApp.swift */,
 				AABBCCDD0000000000000021 /* ChatStore.swift */,
 				AABBCCDD0000000000000022 /* AssistantModel.swift */,
@@ -206,6 +209,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AC1000000000000000000001 /* Assets.xcassets in Resources */,
 				77D8E995138A39C40A9B99E2 /* screen.pb in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -309,7 +313,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -346,7 +349,6 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_OBJC_WEAK = NO;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;

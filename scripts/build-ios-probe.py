@@ -39,6 +39,14 @@ info = {'CFBundleIdentifier':'com.yxf.aterminal','CFBundleName':'aTerminal','CFB
         'MinimumOSVersion':'15.0','LSRequiresIPhoneOS':True,'UIDeviceFamily':[1,2],
         'UILaunchScreen':{},'UIApplicationSceneManifest':{'UIApplicationSupportsMultipleScenes':False},
         'CFBundleSupportedPlatforms':['iPhoneSimulator' if a.simulator else 'iPhoneOS']}
+# Compile the same app icon used by the Xcode application target.
+icon_info = app.parent / 'app-icon-info.plist'
+subprocess.run(['xcrun', 'actool', str(ROOT/'apps/ios/aTerminal/Assets.xcassets'),
+                '--compile', str(app), '--platform', sdk, '--minimum-deployment-target', '15.0',
+                '--app-icon', 'AppIcon', '--target-device', 'iphone', '--target-device', 'ipad',
+                '--output-partial-info-plist', str(icon_info)], check=True)
+with icon_info.open('rb') as f:
+    info.update(plistlib.load(f))
 if a.input_checks:
     info['CFBundleIdentifier'] = 'dev.aiterminal.inputchecks'
     info.pop('UIApplicationSceneManifest')

@@ -13,6 +13,7 @@ group = project.main_group.new_group('aTerminal', 'aTerminal')
 root.join('apps/ios/aTerminal').glob('*.swift').sort.each do |file|
   target.source_build_phase.add_file_reference(group.new_file(file.basename.to_s))
 end
+target.resources_build_phase.add_file_reference(group.new_file('Assets.xcassets'))
 generated = project.main_group.new_group('Rust Bindings')
 target.source_build_phase.add_file_reference(generated.new_file('../../build/bindings/ai_terminal_mobile.swift'))
 core = project.frameworks_group.new_file('../../build/aTerminalCore.xcframework')
@@ -22,6 +23,7 @@ target.resources_build_phase.add_file_reference(fixture)
 target.build_configurations.each do |config|
   config.build_settings.merge!({
     'PRODUCT_BUNDLE_IDENTIFIER' => 'com.yxf.aterminal',
+    'ASSETCATALOG_COMPILER_APPICON_NAME' => 'AppIcon',
     'SWIFT_VERSION' => '5.0',
     'GENERATE_INFOPLIST_FILE' => 'YES',
     'INFOPLIST_KEY_CFBundleDisplayName' => 'aTerminal',
