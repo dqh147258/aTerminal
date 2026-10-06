@@ -1,0 +1,129 @@
+name: Linux Server Images
+
+on:
+  push:
+    branches: [main, 'codex/linux-server-*']
+    paths:
+      - 'deploy/Dockerfile'
+      - 'deploy/server-release.json'
+      - 'scripts/*server*'
+      - '.github/workflows/server-release.yml'
+      - 'crates/**'
+      - 'Cargo.*'
+      - 'rust-toolchain.toml'
+  pull_request:
+    paths:
+      - 'deploy/**'
+      - 'scripts/*server*'
+      - '.github/workflows/server-release.yml'
+      - 'crates/**'
+      - 'Cargo.*'
+      - 'rust-toolchain.toml'
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.config.outputs.version }}
+      publish: ${{ steps.config.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: config
+        run: python3 scripts/release-server.py config
+      - run: python3 scripts/release-server.py self-test
+
+  image:
+    name: Server linux/${{ matrix.arch }}
+    needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    env:
+      VERSION: ${{ needs.metadata.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Record reproducible source timestamp
+        run: echo "CREATED=$(git show -s --format=%cI HEAD)" >> "$GITHUB_ENV"
+      - name: Test server and build release image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          push: false
+          tags: aterminal-server:test-${{ matrix.arch }}
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            REVISION=${{ github.sha }}
+            CREATED=${{ env.CREATED }}
+          cache-from: type=gha,scope=server-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=server-${{ matrix.arch }}
+      - name: Smoke-test native image
+        run: python3 scripts/test-server-image.py "aterminal-server:test-$ARCH"
+      - name: Export tested image and provenance
+        run: |
+          mkdir -p dist
+          docker save "aterminal-server:test-$ARCH" | gzip -n > "dist/aterminal-server-$VERSION-linux-$ARCH.tar.gz"
+          python3 scripts/release-server.py package --arch "$ARCH"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aterminal-server-${{ matrix.arch }}-${{ github.sha }}-${{ github.run_id }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+          overwrite: true
+
+  publish:
+    name: Publish DockerHub and GitHub prerelease
+    needs: [metadata, image]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.metadata.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: aterminal-server-*-${{ github.sha }}-${{ github.run_id }}
+          path: dist
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - name: Verify exact target, visibility, archives and tag availability
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release-server.py preflight
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Push tested images and verify multi-platform manifest
+        run: python3 scripts/release-server.py push
+      - name: Publish versioned GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release-server.py release
