@@ -102,6 +102,8 @@ Rust 与本机终端回归可运行 `cargo +stable test --locked --workspace --e
 
 本地 Debug 包内置 `https://192.168.0.36:7200`；登录页只展示地址，小字“修改服务器地址”可编辑保存。已保存的地址优先于构建默认值。`scripts/build-artifacts.py android ios --server-url URL --server-ca /path/to/public-ca.pem` 可配置两端地址和公共 CA；省略参数使用本地地址及已有 `deploy/secrets/lan-ca.crt`。
 
+Android 本地 Debug 构建支持任意主机的 HTTP 地址，包括公网 HTTP 和对应的 WS 中转，便于对比直连服务与 HTTPS 代理。`build-mobile.py android` 自动加入 `debug-http` 原生特性，App 仅在 `TERMINAL_DEBUG` 为 true 时启用，并通过 Debug manifest 允许明文流量。优化原生库用于 Debug App 时，使用 `build-mobile.py android --release --debug-http`；优化等级不决定 App 的网络权限。未加入该特性的原生构建（包括默认 `--release` 构建）仍拒绝非 loopback HTTP，Release App 也不会启用该选项。
+
 在原生依赖已构建时，用 `./apps/android/gradlew -p apps/android :app:assembleDebug :app:assembleDebugAndroidTest --offline -PterminalServerUrl=https://192.168.0.36:7200` 更新 Android 包。然后运行 `python3 scripts/login-android-local.py --serial emulator-5586`，使用已有本地账号经普通登录页登录并验证进程重启恢复，最后保持 App 登录。此脚本要求显式指定设备；不启动或停止 Server/Desktop，不覆盖其他已登录账号。
 
 ## 目录改名后 Docker 挂载旧路径

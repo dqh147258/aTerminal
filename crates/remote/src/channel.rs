@@ -1,6 +1,6 @@
 //! WSS remains authenticated control/liveness; DTLS fingerprints travel inside Noise.
 //! Requests have path-independent IDs; a lost direct reply is replayed, never re-executed.
-use super::{HostPair, Socket, binary, ready, socket};
+use super::{HostPair, Socket, binary, ready, socket, wait_for_peer};
 use ai_terminal_protocol::local::{Reply, Request};
 use ai_terminal_security::{Cipher, Invitation};
 #[cfg(feature = "webrtc")]
@@ -87,6 +87,7 @@ impl Channel {
             pair.server_ca_pem.as_deref(),
         )
         .await?;
+        // Legacy pair listeners stay available until the mobile comes online.
         ready(&mut socket).await?;
         let mut noise = pair.identity.responder()?;
         let hello = tokio::time::timeout(Duration::from_secs(10), binary(&mut socket)).await??;
@@ -107,7 +108,7 @@ impl Channel {
             invitation.server_ca_pem.as_deref(),
         )
         .await?;
-        tokio::time::timeout(Duration::from_secs(15), ready(&mut socket)).await??;
+        wait_for_peer(&mut socket).await?;
         let mut noise = invitation.initiator()?;
         let mut hello = [0; 256];
         let n = noise.write_message(&[], &mut hello)?;
@@ -144,7 +145,7 @@ impl Channel {
             2,
         )
         .await?;
-        tokio::time::timeout(Duration::from_secs(15), ready(&mut socket)).await??;
+        wait_for_peer(&mut socket).await?;
         let mut noise = session.identity.handshake(grant, initiator)?;
         let mut message = [0u8; 256];
         if initiator {

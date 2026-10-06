@@ -14,15 +14,23 @@ p.add_argument('--toolchain', default='1.94.1')
 p.add_argument('--ndk', type=Path)
 p.add_argument('--webrtc', action='store_true')
 p.add_argument('--release', action='store_true', help='Build optimized native code for on-device performance measurements')
+p.add_argument('--debug-http', action='store_true', help='Enable HTTP/WS for an Android Debug app, including optimized native builds; the app must also opt in')
 p.add_argument('--simulator', action='store_true')
 p.add_argument('--android-abi', choices=['arm64-v8a','x86_64','x86'], default='arm64-v8a')
 a = p.parse_args()
+if a.debug_http and a.platform != 'android':
+    p.error('--debug-http is only supported for Android Debug apps')
 env = os.environ.copy()
 args = ['cargo', '+' + a.toolchain, 'build', '--locked', '-p', 'ai-terminal-mobile']
 if a.release:
     args += ['--release']
+features = []
 if a.webrtc:
-    args += ['--features', 'webrtc']
+    features.append('webrtc')
+if a.platform == 'android' and (a.debug_http or not a.release):
+    features.append('debug-http')
+if features:
+    args += ['--features', ','.join(features)]
 if a.platform == 'ios':
     target = 'aarch64-apple-ios' if not a.simulator else ('aarch64-apple-ios-sim' if os.uname().machine == 'arm64' else 'x86_64-apple-ios')
     env['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'

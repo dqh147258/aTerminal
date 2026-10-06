@@ -32,7 +32,7 @@ pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
 }
 pub(crate) fn ffi(e: impl std::fmt::Display) -> CoreError {
     CoreError::InvalidFrame {
-        reason: e.to_string(),
+        reason: format!("{e:#}"),
     }
 }
 #[derive(uniffi::Record)]

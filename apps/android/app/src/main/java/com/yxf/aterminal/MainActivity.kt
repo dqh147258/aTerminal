@@ -124,6 +124,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setDebugHttpEnabled(BuildConfig.TERMINAL_DEBUG)
         window.statusBarColor = Palette.background
         window.navigationBarColor = Palette.background
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)

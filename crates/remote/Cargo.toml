@@ -6,6 +6,7 @@ license.workspace = true
 
 [features]
 webrtc = ["dep:ai-terminal-transport"]
+debug-http = []
 
 [dependencies]
 anyhow.workspace = true
@@ -30,3 +31,4 @@ workspace = true
 ai-terminal-server = { path = "../server" }
 axum = "0.8"
 tempfile = "3"
+tokio = { workspace = true, features = ["test-util"] }

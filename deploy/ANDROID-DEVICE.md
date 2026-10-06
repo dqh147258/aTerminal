@@ -74,6 +74,8 @@ adb -s dmronjvo9pwsbinf shell am instrument -w -r -e class com.yxf.aterminal.Dev
 
 编译原生性能版本使用 `scripts/build-mobile.py android --release --webrtc --ndk PATH`，随后重新执行 `prepare-bindings.py` 和 App 构建，以便打入最新 `.so`。保持可调试 App 方便采样，明确记录原生库是 Debug 还是 Release，不能混用两个构建的结果。
 
+若该 Debug App 需要调试公网 HTTP，原生构建时另加 `--debug-http`；Release App 不启用此能力。
+
 采样口径：`input_to_onDraw` 从客户端输入入队前，到已更新的原生视图进入绘制回调；不等于像素扫描到屏幕的时间。`window_frame_total` 是 Android FrameMetrics 的整个窗口帧时间，包含测试回调开销。当前的 `terminal_ime_enqueue` 测量已提交文本经终端画面 InputConnection 进入客户端队列的耗时；输入法组合验证不等同于用户手动操作搜狗候选栏。
 
 续作新增 `scripts/run-android-acceptance.py`：传入 `--serial`、隔离夹具文件 `--fixture` 和 `--output`，自动安装本项目 App/测试包、检查前台、私有传入凭据、执行测试、收集数据并移除本次 ADB 转发。`--input-interval-ms 20` 用于目标固定节拍对照；失败时停止本应用，不继续注入输入。夹具服务需事先启动，完成后正常关闭。

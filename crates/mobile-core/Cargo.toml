@@ -9,6 +9,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 
 [features]
 webrtc = ["dep:ai-terminal-transport", "ai-terminal-remote/webrtc"]
+debug-http = ["ai-terminal-remote/debug-http"]
 
 [dependencies]
 ai-terminal-protocol.workspace = true

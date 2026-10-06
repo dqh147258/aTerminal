@@ -1,6 +1,6 @@
 //! Serialized account state belongs in the platform credential vault, never in logs.
 use ai_terminal_security::account::*;
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     collections::BTreeMap,
@@ -34,14 +34,21 @@ impl AccountSession {
             platform,
             public_key: identity.public.clone(),
         };
-        let tokens = super::tls::http_client(ca.as_deref())?
+        let response = super::tls::http_client(ca.as_deref())?
             .post(format!("{server}/v2/auth/login"))
             .json(&req)
             .send()
             .await?
-            .error_for_status()?
+            .error_for_status()?;
+        ensure!(
+            !response.status().is_redirection(),
+            "login server returned an HTTP redirect ({}); check the server address and port",
+            response.status()
+        );
+        let tokens = response
             .json()
-            .await?;
+            .await
+            .context("invalid login response; check the server address and port")?;
         Ok(Self {
             server,
             ca,
@@ -177,5 +184,40 @@ impl AccountSession {
             .await?
             .error_for_status()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AccountSession;
+    use axum::{Router, http::StatusCode, routing::post};
+
+    #[tokio::test]
+    async fn login_reports_redirects_and_html_from_the_wrong_server_route() {
+        for (status, expected) in [
+            (StatusCode::MOVED_PERMANENTLY, "HTTP redirect"),
+            (StatusCode::OK, "invalid login response"),
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let app = Router::new().route(
+                "/v2/auth/login",
+                post(move || async move { (status, "<html>Not the login API</html>") }),
+            );
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let result = AccountSession::login(
+                &url,
+                None,
+                "test-user".into(),
+                "test-password".into(),
+                "test-device".into(),
+                "android".into(),
+            )
+            .await;
+            server.abort();
+            let error = result.err().expect("wrong route must not authenticate");
+            assert!(error.to_string().contains(expected), "{error:#}");
+            assert!(error.to_string().contains("server address and port"));
+        }
     }
 }

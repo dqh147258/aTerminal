@@ -13,6 +13,12 @@ pub use remote::{
     TerminalHistoryViewport,
 };
 
+/// Called with the platform's debug-build flag before restoring account state.
+#[uniffi::export]
+pub fn set_debug_http_enabled(enabled: bool) {
+    ai_terminal_remote::set_debug_http_enabled(enabled);
+}
+
 /// P0 build probe: force the native WebRTC symbols to link into mobile artifacts.
 #[uniffi::export]
 pub fn native_webrtc_available() -> bool {
