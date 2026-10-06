@@ -1,7 +1,5 @@
 name: Verify Terminal
 on:
-  push:
-    branches-ignore: ['codex/test-packages-*']
   pull_request:
   workflow_dispatch:
 permissions:
