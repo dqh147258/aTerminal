@@ -1,0 +1,48 @@
+name: Runtime Deadline Regression
+
+on:
+  push:
+    branches: ['codex/test-packages-alpha2-20261006']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-runtime:
+    name: Windows 2022 deadline and approval contracts
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          components: rustfmt, clippy
+      - uses: ilammy/msvc-dev-cmd@v1
+      - run: cargo fmt --all --check
+      - name: Compile runtime test fixtures
+        timeout-minutes: 15
+        run: cargo test --locked -p ai-terminal-agent-runtime --lib --no-run
+      - name: Repeat both focused deadline contracts
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          1..3 | ForEach-Object {
+            Write-Host "Focused iteration $_"
+            cargo test --locked -p ai-terminal-agent-runtime --lib host::runtime_contracts::wait_uses_the_run_deadline_instead_of_a_fresh_tool_budget -- --exact --nocapture
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            cargo test --locked -p ai-terminal-agent-runtime --lib host::user_interaction::tests::approval_wait_suspends_deadline_without_model_iteration_and_once_executes_once -- --exact --nocapture
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Repeat full runtime suite with ordinary parallelism
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          1..3 | ForEach-Object {
+            Write-Host "Parallel runtime iteration $_"
+            cargo test --locked -p ai-terminal-agent-runtime --lib
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Lint runtime tests
+        timeout-minutes: 10
+        run: cargo clippy --locked -p ai-terminal-agent-runtime --all-targets -- -D warnings

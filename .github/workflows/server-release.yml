@@ -7,6 +7,12 @@ on:
       - 'deploy/Dockerfile'
       - 'deploy/server-release.json'
       - 'scripts/*server*'
+      - 'scripts/collect-release-assets.py'
+      - 'scripts/test-collect-release-assets.py'
+      - 'scripts/test-release-distribution.py'
+      - 'scripts/fixtures/**'
+      - '.github/workflows/test-packages.yml'
+      - '.github/workflows/verify.yml'
       - '.github/workflows/server-release.yml'
       - 'crates/**'
       - 'Cargo.*'
@@ -15,6 +21,12 @@ on:
     paths:
       - 'deploy/**'
       - 'scripts/*server*'
+      - 'scripts/collect-release-assets.py'
+      - 'scripts/test-collect-release-assets.py'
+      - 'scripts/test-release-distribution.py'
+      - 'scripts/fixtures/**'
+      - '.github/workflows/test-packages.yml'
+      - '.github/workflows/verify.yml'
       - '.github/workflows/server-release.yml'
       - 'crates/**'
       - 'Cargo.*'
@@ -45,6 +57,8 @@ jobs:
       - id: config
         run: python3 scripts/release-server.py config
       - run: python3 scripts/release-server.py self-test
+      - run: python3 scripts/test-collect-release-assets.py
+      - run: python3 scripts/test-release-distribution.py
 
   image:
     name: Server linux/${{ matrix.arch }}
@@ -102,9 +116,10 @@ jobs:
     needs: [metadata, image]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.metadata.outputs.publish == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 120
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -112,6 +127,11 @@ jobs:
           pattern: aterminal-server-*-${{ github.sha }}-${{ github.run_id }}
           path: dist
           merge-multiple: true
+      - name: Collect verified same-commit desktop and Android packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/collect-release-assets.py --sha "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" --version "${{ needs.metadata.outputs.version }}" --output dist --timeout-seconds 5400 --poll-seconds 30
       - uses: docker/setup-buildx-action@v3
       - name: Verify exact target, visibility, archives and tag availability
         env:
