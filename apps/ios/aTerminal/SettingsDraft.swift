@@ -206,15 +206,15 @@ enum SettingsFailure: LocalizedError {
         return Task {
             do {
                 let result = try await operation()
-                guard valid, serial == ticket, connectionEpoch() == connection else { if active && serial == ticket { busy = false; error = "连接已变化，操作未确认；草稿已保留，请确认状态后重试"; changed?() }; return }
+                guard valid, serial == ticket, connectionEpoch() == connection else { if active && serial == ticket { busy = false; self.error = "连接已变化，操作未确认；草稿已保留，请确认状态后重试"; changed?() }; return }
                 if mutation { snapshot = result; loaded = true }
                 busy = false; changed?(); done(result)
             } catch {
-                guard valid, serial == ticket, connectionEpoch() == connection else { if active && serial == ticket { busy = false; error = "连接已变化，操作未确认；草稿已保留，请确认状态后重试"; changed?() }; return }
+                guard valid, serial == ticket, connectionEpoch() == connection else { if active && serial == ticket { busy = false; self.error = "连接已变化，操作未确认；草稿已保留，请确认状态后重试"; changed?() }; return }
                 let message = error.localizedDescription
                 let conflict = message.localizedCaseInsensitiveContains("revision")
                 let fresh = conflict ? try? await call(["action": "show"]) : nil
-                guard valid, serial == ticket, connectionEpoch() == connection else { if active && serial == ticket { busy = false; error = "连接已变化，操作未确认；草稿已保留，请确认状态后重试"; changed?() }; return }
+                guard valid, serial == ticket, connectionEpoch() == connection else { if active && serial == ticket { busy = false; self.error = "连接已变化，操作未确认；草稿已保留，请确认状态后重试"; changed?() }; return }
                 if let fresh { snapshot = fresh }
                 busy = false
                 self.error = conflict ? "配置已变化，\(fresh == nil ? "刷新失败" : "已刷新")。草稿已保留，请检查后再次保存。" : "未完成：\(message)"
