@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AC1007000000000000000005 /* RemoteScreenFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC1007000000000000000006 /* RemoteScreenFixture.swift */; };
+		AC1007000000000000000003 /* RemoteScreensPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC1007000000000000000004 /* RemoteScreensPanel.swift */; };
+		AC1007000000000000000001 /* RemoteScreenModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC1007000000000000000002 /* RemoteScreenModel.swift */; };
 		AC0710000000000000000001 /* WorkspaceRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0710000000000000000002; };
 		AC1000000000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AC1000000000000000000002; };
 		AC0210000000000000000003 /* AgentAuthorizationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0210000000000000000004; };
@@ -33,6 +36,9 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		AC1007000000000000000006 /* RemoteScreenFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteScreenFixture.swift; sourceTree = "<group>"; };
+		AC1007000000000000000004 /* RemoteScreensPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteScreensPanel.swift; sourceTree = "<group>"; };
+		AC1007000000000000000002 /* RemoteScreenModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteScreenModel.swift; sourceTree = "<group>"; };
 		AC0710000000000000000002 /* WorkspaceRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceRecovery.swift; sourceTree = "<group>"; };
 		AC1000000000000000000002 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AC0210000000000000000004 /* AgentAuthorizationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAuthorizationView.swift; sourceTree = "<group>"; };
@@ -113,6 +119,9 @@
 				AABBCCDD0000000000000024 /* WorkspaceStyle.swift */,
 				AABBCCDD0000000000000025 /* LoginScreen.swift */,
 				AABBCCDD0000000000000026 /* WorkspaceScreen.swift */,
+				AC1007000000000000000006 /* RemoteScreenFixture.swift */,
+				AC1007000000000000000004 /* RemoteScreensPanel.swift */,
+				AC1007000000000000000002 /* RemoteScreenModel.swift */,
 				AABBCCDD0000000000000027 /* ChatPanel.swift */,
                 AC0210000000000000000002 /* AgentAuthorization.swift */,
                 AC0710000000000000000002 /* WorkspaceRecovery.swift */,
@@ -232,6 +241,9 @@
 				AABBCCDD0000000000000014 /* WorkspaceStyle.swift in Sources */,
 				AABBCCDD0000000000000015 /* LoginScreen.swift in Sources */,
 				AABBCCDD0000000000000016 /* WorkspaceScreen.swift in Sources */,
+				AC1007000000000000000005 /* RemoteScreenFixture.swift in Sources */,
+				AC1007000000000000000003 /* RemoteScreensPanel.swift in Sources */,
+				AC1007000000000000000001 /* RemoteScreenModel.swift in Sources */,
 				AABBCCDD0000000000000017 /* ChatPanel.swift in Sources */,
                 AC0210000000000000000001 /* AgentAuthorization.swift in Sources */,
                 AC0710000000000000000001 /* WorkspaceRecovery.swift in Sources */,

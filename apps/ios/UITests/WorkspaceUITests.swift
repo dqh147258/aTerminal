@@ -50,6 +50,35 @@ final class WorkspaceUITests: XCTestCase {
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
     }
+    func testRemoteScreenListSelectionSwitchReturnAndClose() {
+        let app = launch(["--workspace-fixture", "--remote-screens-fixture"])
+        app.buttons["workspace.screens"].tap()
+        XCTAssertTrue(app.buttons["screens.select.fixture-main"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["主屏"].exists)
+        XCTAssertTrue(app.staticTexts["640 × 360"].exists)
+        XCTAssertTrue(app.buttons["screens.select.fixture-external"].exists)
+        app.buttons["screens.select.fixture-main"].tap()
+        XCTAssertTrue(app.images["screens.image"].waitForExistence(timeout: 3))
+        app.buttons["screens.switch"].tap()
+        app.buttons["screens.switch.fixture-external"].tap()
+        XCTAssertTrue(app.staticTexts["480 × 320"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.images["screens.image"].waitForExistence(timeout: 3))
+        capture("remote-screen-fixture-fit-view")
+        app.buttons["screens.back"].tap()
+        XCTAssertTrue(app.buttons["screens.select.fixture-main"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.images["screens.image"].exists)
+        app.buttons["screens.close"].tap()
+        XCTAssertTrue(app.buttons["workspace.screens"].isHittable)
+        XCTAssertFalse(app.buttons["screens.back"].exists)
+    }
+    func testRemoteScreenDisconnectedDeviceEntry() {
+        let app = launch(["--workspace-fixture", "--devices-fixture"])
+        app.buttons["workspace.screens"].tap()
+        XCTAssertTrue(app.staticTexts["尚未连接 Desktop"].waitForExistence(timeout: 3))
+        app.buttons["screens.devices"].tap()
+        XCTAssertTrue(app.buttons["device.connect.online"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["screens.close"].exists)
+    }
     func testLoginValidationAndPasswordVisibility() {
         let app = launch(["--login-fixture"])
         XCTAssertFalse(app.textFields["login.server"].exists)

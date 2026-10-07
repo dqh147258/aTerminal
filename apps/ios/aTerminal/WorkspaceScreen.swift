@@ -1,7 +1,7 @@
 import SwiftUI
 import Combine
 
-private enum WorkspacePanel: String { case settings, chat, globalList, devices, account, terminalHistory, chatHistory }
+private enum WorkspacePanel: String { case settings, chat, globalList, devices, account, terminalHistory, chatHistory, remoteScreens }
 
 private struct WorkspaceEntry: Identifiable {
     let archive: ChatArchive
@@ -13,6 +13,7 @@ private struct WorkspaceEntry: Identifiable {
 struct WorkspaceScreen: View {
     @StateObject private var model = TerminalModel()
     @StateObject private var assistant = AssistantModel()
+    @StateObject private var remoteScreens = RemoteScreenModel()
     @Environment(\.scenePhase) private var phase
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @AppStorage("terminal.fontSize", store: WorkspacePreferences.defaults) private var fontSize = 16.0
@@ -114,6 +115,7 @@ struct WorkspaceScreen: View {
             if let scope, scope == continueScope { continueScope = nil; panel = .chat }
         }
         .onChange(of: model.connected) { _ in syncChat() }
+        .onChange(of: model.remoteScreenConnection) { _ in syncRemoteScreens() }
         .onChange(of: drawer) { value in
             if value { keysVisible = false; model.refreshSessions(); assistant.loadArchives(); updateWorkspaceSearch() }
             else { assistant.cancelHistorySearch() }
@@ -121,7 +123,7 @@ struct WorkspaceScreen: View {
         .onChange(of: search) { _ in updateWorkspaceSearch() }
         .onChange(of: workspaceCandidates.map(\.id)) { _ in updateWorkspaceSearch() }
         .onChange(of: assistant.historyCacheRevision) { _ in updateWorkspaceSearch(refresh: true) }
-        .onChange(of: panel) { value in if value != .terminalHistory { model.closeHistory() }; assistant.setVisible(value == .chat, core: model.core); if value != nil { inputVisible = false; keysVisible = false } }
+        .onChange(of: panel) { value in if value != .terminalHistory { model.closeHistory() }; assistant.setVisible(value == .chat, core: model.core); if value != nil { inputVisible = false; keysVisible = false }; syncRemoteScreens() }
         .onChange(of: model.hasControl) { value in if !value { inputVisible = false; keysVisible = false } }
         .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
             if drawer { model.refreshSessions(); assistant.loadArchives() }
@@ -130,12 +132,16 @@ struct WorkspaceScreen: View {
             if phase == .active { model.heartbeat() }
         }
         .onChange(of: phase) { value in
+            if value != .active { remoteScreens.stop() }
             if value == .background { assistant.stop(preservingContext: true); model.suspend(); inputVisible = false; keysVisible = false }
             if value == .active { model.resume() }
+            syncRemoteScreens()
         }
+        .onDisappear { remoteScreens.stop() }
         .onAppear {
             fontSize = min(24, max(6, fontSize)); opacity = min(100, max(0, opacity))
             syncChat()
+            syncRemoteScreens()
             #if DEBUG
             if model.fixture {
                 let args = ProcessInfo.processInfo.arguments
@@ -170,12 +176,16 @@ struct WorkspaceScreen: View {
         }
         assistant.rememberSessions(identity: model.identity, device: model.deviceID, deviceName: model.deviceName, sessions: model.sessions)
     }
+    private func syncRemoteScreens() {
+        remoteScreens.configure(source: model.remoteScreenSource, connection: model.remoteScreenConnection,
+                                visible: panel == .remoteScreens, active: phase == .active)
+    }
     private func updateOrientation() {
         let bounds = UIScreen.main.bounds
         landscape = bounds.width > bounds.height
     }
     private func panelHeight(_ panel: WorkspacePanel, available: CGFloat) -> CGFloat {
-        if [.chat, .globalList, .settings, .devices, .account].contains(panel) { return available }
+        if [.chat, .globalList, .settings, .devices, .account, .remoteScreens].contains(panel) { return available }
         let fraction: CGFloat = panel == .settings ? 0.62 : 0.74
         return max(80, min(available * fraction, available - 56))
     }
@@ -233,9 +243,10 @@ struct WorkspaceScreen: View {
                         ToolButton(symbol: "slider.horizontal.3", label: "终端设置") { panel = .settings }.accessibilityIdentifier("workspace.settings")
                         ToolButton(symbol: "bubble.left", label: "AI 对话") { assistant.openSession(); panel = .chat }.disabled(model.selected == nil && !model.fixture).accessibilityIdentifier("workspace.chat")
                         ToolButton(symbol: "sparkles", label: "全局AI助手") { panel = .globalList }.accessibilityIdentifier("workspace.global")
+                        ToolButton(symbol: "display", label: "远程屏幕") { panel = .remoteScreens }.accessibilityIdentifier("workspace.screens")
                         ToolButton(symbol: "keyboard", label: "特殊按键") { keysVisible.toggle() }.accessibilityIdentifier("workspace.keys")
                     }.padding(2).background(WorkspaceStyle.surface.opacity(opacity / 100)).cornerRadius(8)
-                }.frame(width: 48, height: min(landscape ? 280 : 188, max(44, region.size.height - 8))).padding(.trailing, 6).opacity(panel == nil && !drawer && !keysVisible ? 1 : 0)
+                }.frame(width: 48, height: min(landscape ? 326 : 234, max(44, region.size.height - 8))).padding(.trailing, 6).opacity(panel == nil && !drawer && !keysVisible ? 1 : 0)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
                 }
             }
@@ -368,7 +379,7 @@ struct WorkspaceScreen: View {
                     else if accountFromSettings && value == .account { panel = .devices }
                     else if accountFromSettings && value == .devices { accountFromSettings = false; panel = .settings }
                     else { panel = nil }
-                }.accessibilityIdentifier(value == .settings ? "settings.close" : value == .globalList || value == .chat && assistant.global ? "global.back" : "panel.close")
+                }.accessibilityIdentifier(value == .remoteScreens ? "screens.close" : value == .settings ? "settings.close" : value == .globalList || value == .chat && assistant.global ? "global.back" : "panel.close")
             }.padding(.leading, 16).padding(.trailing, 4).padding(.vertical, height < 350 ? 0 : 6).background(WorkspaceStyle.surface)
             Divider().overlay(WorkspaceStyle.line)
             switch value {
@@ -376,6 +387,7 @@ struct WorkspaceScreen: View {
             case .globalList: GlobalConversationList(model: assistant) { panel = .chat }
             case .chat: ChatPanel(model: assistant, core: model.core, fixture: model.fixture, compact: height < 400)
             case .devices: devicesPanel
+            case .remoteScreens: RemoteScreensPanel(model: remoteScreens) { accountFromSettings = false; panel = .devices; model.refreshDevices() }
             case .account: AccountPanel(model: model, logout: { logoutConfirm = true })
             case .terminalHistory:
                 HStack {
@@ -405,13 +417,13 @@ struct WorkspaceScreen: View {
         }
     }
     private func panelTitle(_ panel: WorkspacePanel) -> String {
-        switch panel { case .settings: return "设置"; case .globalList: return "全局AI助手"; case .chat: return assistant.global ? assistant.globalTitle : "Session Agent"; case .devices: return accountFromSettings ? "账号与设备" : "设备"; case .account: return "账号管理"; case .terminalHistory: return "终端历史"; case .chatHistory: return selectedHistory?.title ?? "对话记录" }
+        switch panel { case .remoteScreens: return "远程屏幕"; case .settings: return "设置"; case .globalList: return "全局AI助手"; case .chat: return assistant.global ? assistant.globalTitle : "Session Agent"; case .devices: return accountFromSettings ? "账号与设备" : "设备"; case .account: return "账号管理"; case .terminalHistory: return "终端历史"; case .chatHistory: return selectedHistory?.title ?? "对话记录" }
     }
     private func panelSubtitle(_ panel: WorkspacePanel) -> String {
-        switch panel { case .settings: return "显示与 Agent 配置"; case .globalList: return model.deviceName; case .chat: return assistant.contextLabel; case .devices: return model.server; case .account: return model.username; case .terminalHistory: return model.currentSession?.cwd ?? ""; case .chatHistory: return selectedHistory?.deviceName ?? "" }
+        switch panel { case .remoteScreens: return model.deviceName; case .settings: return "显示与 Agent 配置"; case .globalList: return model.deviceName; case .chat: return assistant.contextLabel; case .devices: return model.server; case .account: return model.username; case .terminalHistory: return model.currentSession?.cwd ?? ""; case .chatHistory: return selectedHistory?.deviceName ?? "" }
     }
     private func panelSymbol(_ panel: WorkspacePanel) -> String {
-        switch panel { case .settings: return "slider.horizontal.3"; case .globalList: return "sparkles"; case .chat: return "sparkles"; case .devices: return "desktopcomputer"; case .account: return "person.crop.circle"; case .terminalHistory, .chatHistory: return "clock" }
+        switch panel { case .remoteScreens: return "display"; case .settings: return "slider.horizontal.3"; case .globalList: return "sparkles"; case .chat: return "sparkles"; case .devices: return "desktopcomputer"; case .account: return "person.crop.circle"; case .terminalHistory, .chatHistory: return "clock" }
     }
     private var settingsPanel: some View {
         VStack(spacing: 0) {

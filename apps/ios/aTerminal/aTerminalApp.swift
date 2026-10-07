@@ -8,7 +8,7 @@ struct aTerminalApp: App {
 }
 
 @MainActor
-final class TerminalModel: ObservableObject {
+final class TerminalModel: ObservableObject, RemoteScreenSource {
     @Published var screen: RenderFrame?
     @Published var sessions: [RemoteSession] = []
     @Published var devices: [AccountDevice] = []
@@ -23,6 +23,7 @@ final class TerminalModel: ObservableObject {
     @Published private(set) var authenticationRequired = false
     private var resumeControl = false
     private var establishedDevice: String?
+    @Published private var pairedScreenChannel: String?
     private var latestFrame: RenderFrame?
     private var heartbeatBusy = false
     private var foreground = true
@@ -70,6 +71,25 @@ final class TerminalModel: ObservableObject {
     }
     var deviceName: String { devices.first { $0.id == deviceID }?.name ?? "Desktop" }
     var identity: ChatIdentity? { server.isEmpty || username.isEmpty ? nil : ChatIdentity(server: server, account: username) }
+    var remoteScreenConnection: RemoteScreenConnection? {
+        #if DEBUG
+        if fixture, ProcessInfo.processInfo.arguments.contains("--remote-screens-fixture") {
+            return RemoteScreenConnection(server: "fixture", account: "fixture", device: "fixture-desktop", generation: generation)
+        }
+        #endif
+        return RemoteScreenConnection.current(connected: connected, reconnecting: reconnecting,
+            authenticationRequired: authenticationRequired, server: server, account: username, device: deviceID,
+            pairedChannel: pairedScreenChannel, generation: generation)
+    }
+    var remoteScreenSource: RemoteScreenSource {
+        #if DEBUG
+        if fixture, ProcessInfo.processInfo.arguments.contains("--remote-screens-fixture") { return remoteScreenFixture }
+        #endif
+        return self
+    }
+    #if DEBUG
+    private let remoteScreenFixture = RemoteScreenFixtureSource()
+    #endif
     var chatScope: ChatScope? {
         guard let identity, let selected, !deviceID.isEmpty else { return nil }
         return ChatScope(identity: identity, device: deviceID, session: selected)
@@ -170,6 +190,7 @@ final class TerminalModel: ObservableObject {
             // Clear old-owner presentation before publishing a different account/server.
             self.sessionSnapshotStore.bind(to: owner)
             if self.identity != owner {
+                self.pairedScreenChannel = nil
                 self.generation += 1; self.establishedDevice = nil; self.sessions = []; self.devices = []; self.selected = nil; self.deviceID = ""
                 self.screen = nil; self.latestFrame = nil; self.history = ""; self.connected = false; self.reconnecting = false; self.authenticationRequired = false; self.hasControl = false; self.desktopAttached = false; self.sessionExited = false
                 self.sessionsRefreshInFlight = false
@@ -324,7 +345,7 @@ final class TerminalModel: ObservableObject {
         guard !WorkspacePreferences.fixture, !authenticationRequired else { return }
         guard !busy else { return }
         let preserving = WorkspaceRecovery.preservesContext(recovering: recovering, established: hasWorkspaceContext, device: deviceID, session: selected, targetDevice: id, targetSession: sessionID)
-        busy = true; preparingWorkspace = !preserving; reconnecting = preserving; error = nil; connected = false
+        busy = true; preparingWorkspace = !preserving; reconnecting = preserving; error = nil; connected = false; pairedScreenChannel = nil
         generation += 1; let version = generation
         if !preserving {
             closeHistory(); establishedDevice = nil; deviceID = id; sessions = []; selected = nil; screen = nil; latestFrame = nil
@@ -396,18 +417,23 @@ final class TerminalModel: ObservableObject {
     }
     func legacyConnect(_ invitation: String) {
         guard !WorkspacePreferences.fixture else { return }
-        guard !busy else { return }; busy = true; error = nil
+        guard !busy else { return }; busy = true; error = nil; connected = false; pairedScreenChannel = nil
         generation += 1; let version = generation; selected = nil; hasControl = false; desktopAttached = false; sessionExited = false
+        let pairedChannel = "paired:" + UUID().uuidString
         worker.async { [weak self] in guard let self else { return }
             do {
+                guard self.channelState.matches(version) else { return }
                 guard self.account.username().isEmpty else { throw CocoaError(.userCancelled) }
                 let value = invitation.isEmpty ? PairingStore.load() ?? "" : invitation
+                self.channelState.device = ""
                 try self.core.connect(invitation: value)
+                guard self.channelState.matches(version) else { return }
+                self.channelState.device = pairedChannel
                 #if DEBUG
                 if ProcessInfo.processInfo.environment["AI_TERMINAL_TEST_RELAY_ONLY"] == "1" { try self.core.useRelay() }
                 #endif
                 try PairingStore.save(value); let sessions = try self.core.sessions()
-                DispatchQueue.main.async { guard self.generation == version else { return }; self.sessions = sessions; self.busy = false; self.connected = true; self.status = "旧版配对 · 选择会话"
+                DispatchQueue.main.async { guard self.generation == version else { return }; self.pairedScreenChannel = pairedChannel; self.sessions = sessions; self.busy = false; self.connected = true; self.status = "旧版配对 · 选择会话"
                     #if DEBUG
                     let expected = ProcessInfo.processInfo.environment["AI_TERMINAL_TEST_SESSION_ID"]
                     if ProcessInfo.processInfo.arguments.contains("--connect-fixture"), let first = sessions.first(where: { expected == nil || $0.id == expected }) { self.select(first.id, control: ProcessInfo.processInfo.arguments.contains("--input-fixture")) }
@@ -473,6 +499,7 @@ final class TerminalModel: ObservableObject {
         #endif
     }
     func pause() {
+        pairedScreenChannel = nil
         generation += 1; busy = false; accountBusy = false; reconnecting = false; authenticationRequired = false; selected = nil; latestFrame = nil; establishedDevice = nil; resumeControl = false; hasControl = false; desktopAttached = false; sessionExited = false; connected = false; screen = nil; history = ""; historyLoading = false; status = "已断开，选择设备恢复连接"
         worker.async { [weak self] in self?.channelState.device = ""; try? self?.core.disconnect() }
     }
@@ -596,6 +623,56 @@ final class TerminalModel: ObservableObject {
                 } }
             }
         }
+    }
+
+    func remoteScreens(ticket: RemoteScreenRequestTicket) async throws -> [RemoteDisplay] {
+        try await remoteScreenRequest(ticket: ticket, operation: { try $0.remoteScreensJson() }, decode: RemoteScreenDecoder.screens)
+    }
+
+    func remoteScreenFrame(screenID: String, ticket: RemoteScreenRequestTicket) async throws -> RemoteScreenFrame {
+        try await remoteScreenRequest(ticket: ticket,
+            operation: { try $0.remoteScreenFrameJson(screenId: screenID, maxWidth: 1600) },
+            decode: { try RemoteScreenDecoder.frame($0, screenID: screenID) })
+    }
+
+    private func remoteScreenRequest<T>(ticket: RemoteScreenRequestTicket,
+                                       operation: @escaping (RemoteTerminal) throws -> String,
+                                       decode: @escaping (String) throws -> T) async throws -> T {
+        guard !WorkspacePreferences.fixture, foreground, ticket.isValid,
+              remoteScreenConnection == ticket.connection else { throw CancellationError() }
+        let connection = ticket.connection
+        let value: T = try await withCheckedThrowingContinuation { continuation in
+            worker.async { [weak self] in
+                guard let self else { continuation.resume(throwing: CancellationError()); return }
+                do {
+                    guard ticket.isValid, self.channelState.matches(connection.generation),
+                          self.channelState.device == connection.device else {
+                        throw CancellationError()
+                    }
+                    if !connection.account.isEmpty {
+                        let exported = try self.account.export()
+                        let owner = try JSONSerialization.jsonObject(with: Data(exported.utf8)) as? [String: Any]
+                        guard self.account.username() == connection.account, owner?["server"] as? String == connection.server else {
+                            throw CancellationError()
+                        }
+                    }
+                    guard ticket.isValid, self.channelState.matches(connection.generation) else { throw CancellationError() }
+                    let json = try operation(self.core)
+                    guard ticket.isValid, self.channelState.matches(connection.generation) else { throw CancellationError() }
+                    let value = try decode(json)
+                    guard ticket.isValid, self.channelState.matches(connection.generation) else { throw CancellationError() }
+                    continuation.resume(returning: value)
+                } catch {
+                    if error is CancellationError { continuation.resume(throwing: error) }
+                    else {
+                        self.observeTransportFailure(error, version: connection.generation)
+                        continuation.resume(throwing: RemoteScreenFailure.message(terminalError(error)))
+                    }
+                }
+            }
+        }
+        guard foreground, ticket.isValid, remoteScreenConnection == connection else { throw CancellationError() }
+        return value
     }
 
     func agent(scope: ChatScope, json: String, configuration: Bool = false) async throws -> String {
