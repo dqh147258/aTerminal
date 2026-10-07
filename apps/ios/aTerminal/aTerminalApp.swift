@@ -56,7 +56,9 @@ final class TerminalModel: ObservableObject {
     // Read and written only on worker, including assistant calls and channel changes.
     private let channelState = WorkerChannelState()
     @Published private(set) var selected: String?
-    var displayCore: RemoteTerminal? { selected == nil || !connected || busy || sessionExited ? nil : core }
+    var displayCore: RemoteTerminal? {
+        WorkspaceRecovery.canPollDisplay(selected: selected, connected: connected, busy: busy, sessionExited: sessionExited) ? core : nil
+    }
     var canInput: Bool { connected && !busy && !reconnecting && !authenticationRequired && hasControl && desktopAttached && !sessionExited }
     private var hasWorkspaceContext: Bool { !deviceID.isEmpty && (selected != nil || establishedDevice == deviceID) }
     var currentSession: RemoteSession? { sessions.first { $0.id == selected } }
@@ -446,7 +448,9 @@ final class TerminalModel: ObservableObject {
     func paste(_ value: String) -> Bool { guard canInput else { return false }; do { try core.sendText(text: value, submit: false); return true } catch { status = terminalError(error); return false } }
     func key(_ value: String) { guard canInput else { return }; os_signpost(.event, log: performanceLog, name: "InputEnqueue"); do { try core.sendKey(key: value) } catch { status = terminalError(error) } }
     func displayStatus(_ frame: RenderFrame?, _ path: String, _ controlled: Bool, _ error: String?) {
-        guard connected, !busy else { return }
+        // A retained closed-session snapshot has no native selection. Ignore an
+        // old display-link callback until SwiftUI has removed its previous core.
+        guard displayCore != nil else { return }
         if let frame { latestFrame = frame }
         if let error {
             preserveDisconnectedWorkspace(status: "连接暂时中断，正在后台重试")

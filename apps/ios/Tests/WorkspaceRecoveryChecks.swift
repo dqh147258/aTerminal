@@ -24,6 +24,13 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
         check(!WorkspaceRecovery.controlAfterDisconnect(connected: true, hasControl: false, previous: true), "Reconnect reclaimed lost control")
         check(WorkspaceRecovery.controlAfterDisconnect(connected: true, hasControl: true, previous: false), "Current control was not captured")
         check(!WorkspaceRecovery.controlAfterDisconnect(connected: false, hasControl: false, previous: false), "Offline repeated lifecycle granted control")
+        // A reconnect can succeed while the previously selected session has
+        // disappeared. The retained frame must never poll an unselected core.
+        check(!WorkspaceRecovery.canPollDisplay(selected: "closed-session", connected: true, busy: false, sessionExited: true), "Closed-session snapshot polled the replacement core")
+        check(!WorkspaceRecovery.canPollDisplay(selected: nil, connected: true, busy: false, sessionExited: false), "Global-only workspace polled an unselected terminal")
+        check(!WorkspaceRecovery.canPollDisplay(selected: "live", connected: false, busy: false, sessionExited: false), "Disconnected display polled")
+        check(!WorkspaceRecovery.canPollDisplay(selected: "live", connected: true, busy: true, sessionExited: false), "In-flight selection polled stale display")
+        check(WorkspaceRecovery.canPollDisplay(selected: "live", connected: true, busy: false, sessionExited: false), "Confirmed live selection did not resume polling")
         check(TerminalCreationOutcome.unconfirmed("lost reply").uncertain, "Post-dispatch timeout permitted duplicate create")
         check(TerminalCreationOutcome.unconfirmed("request failed").error == "request failed", "Uncertain create lost its error")
         check(!TerminalCreationOutcome.unavailable("offline before dispatch").uncertain, "Known pre-dispatch failure became uncertain")

@@ -218,9 +218,13 @@ class ReconnectUiTest {
 
     @Test fun postDispatchCreationFailureIsUncertainEvenBeforeUiDetectsDisconnect() {
         scenario().use { scenario ->
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            lateinit var activity: MainActivity
             lateinit var dialog: AlertDialog
+            lateinit var worker: ExecutorService
             var epoch = 0
-            scenario.onActivity { activity ->
+            scenario.onActivity { host ->
+                activity = host
                 // Native transport is deliberately empty; no Desktop receives this fixture call.
                 // The UI remains marked connected when the dispatched native request throws.
                 set(activity, "active", true)
@@ -233,24 +237,35 @@ class ReconnectUiTest {
                 epoch = (get(activity, "reconnect") as WorkspaceReconnect).epoch
                 call(activity, "createSession")
                 dialog = get(activity, "createDialog") as AlertDialog
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick()
+                worker = get(activity, "worker") as ExecutorService
             }
-            val deadline = android.os.SystemClock.elapsedRealtime() + 8_000
-            var uncertain = false
-            while (!uncertain && android.os.SystemClock.elapsedRealtime() < deadline) {
-                scenario.onActivity { activity ->
-                    uncertain = all(dialog.window!!.decorView).filterIsInstance<EditText>().any { it.error?.toString()?.contains("创建结果待确认") == true }
-                    if (uncertain) {
-                        assertEquals(true, get(activity, "connected"))
-                        assertEquals(epoch, (get(activity, "reconnect") as WorkspaceReconnect).epoch)
-                        assertFalse(dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled)
-                        assertTrue(dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isEnabled)
-                        assertEquals("reconnect-session", get(activity, "selected"))
-                    }
-                }
-                if (!uncertain) Thread.sleep(30)
+            // Dialog.show() posts OnShowListener to the main queue. The production creation
+            // listener is installed there; a same-turn performClick hits Android's default
+            // dismiss handler instead and never exercises the dispatched-request failure.
+            instrumentation.waitForIdleSync()
+            scenario.onActivity {
+                assertTrue("Creation dialog must finish showing before input", dialog.isShowing)
+                assertTrue(dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled)
+                assertTrue(dialog.getButton(AlertDialog.BUTTON_POSITIVE).performClick())
+                assertFalse("The creation handler must enter submitting state", dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled)
+                assertFalse("Submitting must disable cancellation until the result is known", dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isEnabled)
+                assertTrue("Submitting must not use the default dismiss handler", dialog.isShowing)
             }
-            assertTrue("Dispatched creation failure must remain uncertain, even with a healthy UI connection flag", uncertain)
+            // FIFO marker follows the native create call and its posted UI callback. No network
+            // timing or polling is needed: the deliberately empty native transport fails locally.
+            val drained = CountDownLatch(1)
+            worker.execute { activity.runOnUiThread { drained.countDown() } }
+            assertTrue("Creation worker and its UI result did not drain", drained.await(8, TimeUnit.SECONDS))
+            scenario.onActivity {
+                assertTrue("An uncertain creation must remain visible for review", dialog.isShowing)
+                assertTrue("Dispatched creation failure must remain uncertain, even with a healthy UI connection flag",
+                    all(dialog.window!!.decorView).filterIsInstance<EditText>().any { it.error?.toString()?.contains("创建结果待确认") == true })
+                assertEquals(true, get(activity, "connected"))
+                assertEquals(epoch, (get(activity, "reconnect") as WorkspaceReconnect).epoch)
+                assertFalse(dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled)
+                assertTrue(dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isEnabled)
+                assertEquals("reconnect-session", get(activity, "selected"))
+            }
         }
     }
 }

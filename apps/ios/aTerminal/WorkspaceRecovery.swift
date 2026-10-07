@@ -7,6 +7,10 @@ enum WorkspaceRecovery {
         recovering && established && !device.isEmpty && device == targetDevice && session == targetSession
     }
 
+    static func canPollDisplay(selected: String?, connected: Bool, busy: Bool, sessionExited: Bool) -> Bool {
+        selected != nil && connected && !busy && !sessionExited
+    }
+
     static func controlAfterDisconnect(connected: Bool, hasControl: Bool, previous: Bool) -> Bool {
         connected ? hasControl : previous
     }

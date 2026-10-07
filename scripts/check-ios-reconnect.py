@@ -47,6 +47,9 @@ for method, end in [('func agent(', 'nonisolated private func observeTransportFa
     check('let version = generation' in body and 'self.channelState.matches(version)' in body, f'{method} does not fence queued RPC before dispatch')
 for method in ['func text(', 'func paste(', 'func key(']:
     check('guard canInput' in model.split(method, 1)[1].split('\n', 1)[0], f'{method} accepts offline input')
+display_callback = section(model, 'func displayStatus(', 'func pause()')
+check('WorkspaceRecovery.canPollDisplay(selected: selected, connected: connected, busy: busy, sessionExited: sessionExited)' in model, 'Closed-session recovery exposes an unselected live core')
+check('guard displayCore != nil else { return }' in display_callback, 'A stale display callback can overwrite the retained closed-session state')
 check('workspace.reconnect' in view and 'safeAreaInset' in view, 'Missing nonblocking reconnect feedback')
 background = section(view, 'if value == .background', 'if value == .active')
 check('panel = nil' not in background and 'preservingContext: true' in background, 'Backgrounding discards navigation/agent context')

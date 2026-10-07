@@ -53,10 +53,7 @@ jobs:
           api-level: 35
           arch: x86_64
           disable-animations: true
-          script: |
-            ./apps/android/gradlew -p apps/android -PauthorizationUiFixture=true -Pandroid.testInstrumentationRunnerArguments.class=com.yxf.aterminal.AgentAuthorizationUiTest,com.yxf.aterminal.WorkspaceReconnectTest,com.yxf.aterminal.ReconnectUiTest :app:connectedDebugAndroidTest --no-daemon
-            mkdir -p build/reconnect-evidence
-            adb exec-out run-as com.yxf.aterminal.authorizationfixture tar -C files -cf - reconnect-evidence > build/reconnect-evidence/android-ui.tar
+          script: python3 scripts/run-android-reconnect-ui.py
       - name: Preserve test results and native screenshots
         if: always()
         uses: actions/upload-artifact@v4
