@@ -491,6 +491,9 @@ fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
         }
     }
     match op {
+        Operation::RemoteScreens | Operation::RemoteScreenFrame => {
+            crate::screens::dispatch(request)
+        }
         Operation::Agent => runtime::dispatch(host, request),
         Operation::Configuration => {
             let command: crate::config::Command = serde_json::from_str(&request.text)
@@ -610,7 +613,10 @@ fn dispatch(host: &Arc<Host>, request: Request) -> Result<Reply> {
                     .filter_map(|id| sessions.get(id).cloned())
                     .collect()
             };
-            let mut reply = Reply::default();
+            let mut reply = Reply {
+                screen_protocol_version: ai_terminal_protocol::screens::SCREEN_PROTOCOL_VERSION,
+                ..Default::default()
+            };
             for actor in sessions {
                 if let Ok(r) = request_actor(
                     &actor,

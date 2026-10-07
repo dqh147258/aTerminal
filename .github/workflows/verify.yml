@@ -19,7 +19,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y cmake clang libclang-dev libdbus-1-dev pkg-config zsh
+        run: sudo apt-get update && sudo apt-get install -y cmake clang libclang-dev libdbus-1-dev libxcb1-dev libxcb-randr0-dev libwayland-dev pkg-config zsh
       - if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
       - if: runner.os == 'Windows'

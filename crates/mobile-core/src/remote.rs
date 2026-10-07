@@ -11,7 +11,10 @@ use anyhow::{Context, Result, bail, ensure};
 use prost::Message;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{Arc, Mutex, OnceLock, TryLockError},
+    sync::{
+        Arc, Mutex, OnceLock, TryLockError,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 use tokio::{
@@ -78,6 +81,7 @@ struct State {
     full: bool,
     changed: bool,
     last_frame: u64,
+    screen_protocol_version: Option<u32>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -95,6 +99,7 @@ impl Default for State {
             full: true,
             changed: false,
             last_frame: 0,
+            screen_protocol_version: None,
         }
     }
 }
@@ -179,8 +184,50 @@ impl Drop for Worker {
 #[derive(uniffi::Object, Default)]
 pub struct RemoteTerminal {
     inner: Mutex<Option<Worker>>,
+    screen_busy: AtomicBool,
+}
+struct ScreenRequestGuard<'a>(&'a AtomicBool);
+impl Drop for ScreenRequestGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 impl RemoteTerminal {
+    fn screen_call(&self, request: Request) -> Result<String, CoreError> {
+        if self
+            .screen_busy
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(ffi(
+                "screen_capture_busy: another screen request is pending",
+            ));
+        }
+        let _guard = ScreenRequestGuard(&self.screen_busy);
+        let (_, state) = self.shared()?;
+        let known_version = state.lock().map_err(ffi)?.screen_protocol_version;
+        let version = match known_version {
+            Some(version) => version,
+            None => {
+                let version = self.call(Request::default())?.screen_protocol_version;
+                state.lock().map_err(ffi)?.screen_protocol_version = Some(version);
+                version
+            }
+        };
+        if version != ai_terminal_protocol::screens::SCREEN_PROTOCOL_VERSION {
+            return Err(ffi(
+                "remote_screens_unavailable: upgrade the Desktop to view remote screens",
+            ));
+        }
+        let reply = self.call(request)?;
+        let json = reply.history.into_iter().next().ok_or_else(|| {
+            ffi("remote_screens_unavailable: upgrade the Desktop to view remote screens")
+        })?;
+        if json.len() > ai_terminal_protocol::screens::MAX_SCREEN_JSON_BYTES {
+            return Err(ffi("screen_frame_limit"));
+        }
+        Ok(json)
+    }
     pub(crate) fn set_channel(&self, mut channel: Channel) -> Result<(), CoreError> {
         runtime()
             .block_on(channel.negotiate_stream())
@@ -307,6 +354,33 @@ impl RemoteTerminal {
     /// Older Desktops omit this optional List field and return an empty list.
     pub fn recent_directories(&self) -> Result<Vec<String>, CoreError> {
         Ok(self.call(Request::default())?.recent_directories)
+    }
+    /// Screen viewing inherits authenticated Desktop read access, including read-only pairs.
+    /// It never selects a terminal or requests an input lease.
+    pub fn remote_screens_json(&self) -> Result<String, CoreError> {
+        let json = self.screen_call(Request {
+            operation: Operation::RemoteScreens as i32,
+            ..Default::default()
+        })?;
+        validate_screen_list(&json).map_err(ffi)?;
+        Ok(json)
+    }
+    pub fn remote_screen_frame_json(
+        &self,
+        screen_id: String,
+        max_width: u32,
+    ) -> Result<String, CoreError> {
+        if !ai_terminal_protocol::screens::valid_frame_request(&screen_id, max_width) {
+            return Err(ffi("invalid_screen_request"));
+        }
+        let json = self.screen_call(Request {
+            operation: Operation::RemoteScreenFrame as i32,
+            screen_id: screen_id.clone(),
+            screen_max_width: max_width,
+            ..Default::default()
+        })?;
+        validate_screen_frame(&json, &screen_id, max_width).map_err(ffi)?;
+        Ok(json)
     }
     /// Agent requests remain independent of the selected terminal input lease.
     pub fn agent(&self, session_id: String, request_json: String) -> Result<String, CoreError> {
@@ -722,6 +796,51 @@ impl RemoteTerminal {
         Ok(())
     }
 }
+fn validate_screen_list(json: &str) -> Result<()> {
+    use ai_terminal_protocol::screens::*;
+    let list: ScreenList = serde_json::from_str(json).context("invalid_screen_list")?;
+    ensure!(list.screens.len() <= MAX_SCREENS, "screen_list_limit");
+    let mut ids = BTreeSet::new();
+    for screen in list.screens {
+        ensure!(
+            valid_frame_request(&screen.id, 1)
+                && screen.name.len() <= 256
+                && screen.width > 0
+                && screen.height > 0
+                && ids.insert(screen.id),
+            "invalid_screen_list"
+        );
+    }
+    Ok(())
+}
+fn validate_screen_frame(json: &str, screen_id: &str, max_width: u32) -> Result<()> {
+    use ai_terminal_protocol::screens::*;
+    use base64::Engine;
+    ensure!(json.len() <= MAX_SCREEN_JSON_BYTES, "screen_frame_limit");
+    let frame: ScreenFrame = serde_json::from_str(json).context("invalid_screen_frame")?;
+    ensure!(
+        frame.screen_id == screen_id
+            && frame.mime_type == "image/jpeg"
+            && frame.width > 0
+            && frame.width <= max_width
+            && frame.height > 0
+            && frame.height <= MAX_SCREEN_WIDTH
+            && frame.captured_at_ms > 0
+            && frame.image_base64.len() <= MAX_SCREEN_JPEG_BYTES.div_ceil(3) * 4,
+        "invalid_screen_frame"
+    );
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&frame.image_base64)
+        .context("invalid_screen_frame")?;
+    ensure!(
+        bytes.len() <= MAX_SCREEN_JPEG_BYTES
+            && bytes.starts_with(&[0xff, 0xd8])
+            && bytes.ends_with(&[0xff, 0xd9]),
+        "invalid_screen_frame"
+    );
+    Ok(())
+}
+
 fn history_viewport_is_current(
     live: Option<&ai_terminal_protocol::Snapshot>,
     history: &ai_terminal_protocol::Snapshot,
@@ -1000,6 +1119,136 @@ fn subscription_boundary(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn screen_rpc_probes_legacy_support_and_never_sends_unknown_operations() {
+        let (tx, mut rx) = mpsc::channel::<Job>(8);
+        let state = Arc::new(Mutex::new(State::default()));
+        let remote = RemoteTerminal {
+            inner: Mutex::new(Some(Worker {
+                tx,
+                state: state.clone(),
+                task: runtime().spawn(std::future::pending()),
+            })),
+            screen_busy: AtomicBool::new(false),
+        };
+        let worker = runtime().spawn(async move {
+            let job = rx.recv().await.unwrap();
+            assert_eq!(job.request.operation, Operation::List as i32);
+            job.response.unwrap().send(Ok(Reply::default())).unwrap();
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), rx.recv())
+                    .await
+                    .is_err()
+            );
+        });
+        assert!(
+            remote
+                .remote_screens_json()
+                .unwrap_err()
+                .to_string()
+                .contains("upgrade the Desktop")
+        );
+        runtime().block_on(worker).unwrap();
+        assert!(state.lock().unwrap().connected);
+        assert!(state.lock().unwrap().selected.is_none());
+    }
+    #[test]
+    fn screen_rpc_works_without_selected_terminal_and_rejects_concurrent_capture() {
+        let (tx, mut rx) = mpsc::channel::<Job>(8);
+        let state = Arc::new(Mutex::new(State::default()));
+        let remote = Arc::new(RemoteTerminal {
+            inner: Mutex::new(Some(Worker {
+                tx,
+                state: state.clone(),
+                task: runtime().spawn(std::future::pending()),
+            })),
+            screen_busy: AtomicBool::new(false),
+        });
+        let checking = remote.clone();
+        let worker = runtime().spawn(async move {
+            let probe = rx.recv().await.unwrap();
+            probe
+                .response
+                .unwrap()
+                .send(Ok(Reply {
+                    screen_protocol_version: 1,
+                    ..Default::default()
+                }))
+                .unwrap();
+            let screens = rx.recv().await.unwrap();
+            assert_eq!(screens.request.operation, Operation::RemoteScreens as i32);
+            assert!(screens.request.session.is_empty());
+            assert_eq!(screens.request.control_epoch, 0);
+            assert!(
+                checking
+                    .remote_screens_json()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("busy")
+            );
+            screens
+                .response
+                .unwrap()
+                .send(Ok(Reply {
+                    history: vec![r#"{"screens":[]}"#.into()],
+                    ..Default::default()
+                }))
+                .unwrap();
+            let frame = rx.recv().await.unwrap();
+            assert_eq!(frame.request.operation, Operation::RemoteScreenFrame as i32);
+            assert_eq!(frame.request.screen_id, "native:2");
+            assert_eq!(frame.request.screen_max_width, 100);
+            assert!(frame.request.session.is_empty());
+            frame
+                .response
+                .unwrap()
+                .send(Err("unknown_screen".into()))
+                .unwrap();
+        });
+        assert_eq!(remote.remote_screens_json().unwrap(), r#"{"screens":[]}"#);
+        assert!(
+            remote
+                .remote_screen_frame_json("native:2".into(), 100)
+                .unwrap_err()
+                .to_string()
+                .contains("unknown_screen")
+        );
+        runtime().block_on(worker).unwrap();
+        assert!(state.lock().unwrap().selected.is_none());
+        assert!(!state.lock().unwrap().controlled);
+        assert!(state.lock().unwrap().connected);
+    }
+    #[test]
+    fn invalid_and_oversized_screen_payloads_are_rejected_before_ui_decode() {
+        assert!(validate_screen_list(r#"{"screens":[]}"#).is_ok());
+        assert!(
+            validate_screen_list(
+                r#"{"screens":[{"id":"x","name":"n","width":0,"height":1,"is_primary":true}]}"#
+            )
+            .is_err()
+        );
+        let mut frame = ai_terminal_protocol::screens::ScreenFrame {
+            screen_id: "id".into(),
+            mime_type: "image/jpeg".into(),
+            image_base64: "/9j/2Q==".into(),
+            width: 100,
+            height: 50,
+            captured_at_ms: 1,
+        };
+        let json = serde_json::to_string(&frame).unwrap();
+        assert!(validate_screen_frame(&json, "other", 100).is_err());
+        assert!(validate_screen_frame(&json, "id", 99).is_err());
+        frame.image_base64 = "A".repeat(200 * 1024);
+        assert!(validate_screen_frame(&serde_json::to_string(&frame).unwrap(), "id", 100).is_err());
+        assert!(
+            RemoteTerminal::default()
+                .remote_screen_frame_json("id".into(), 0)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid_screen_request")
+        );
+    }
+
     use super::*;
     #[test]
     fn delayed_history_viewport_cannot_restore_old_dimensions_or_screen_mode() {
@@ -1152,6 +1401,7 @@ mod tests {
                 state: state.clone(),
                 task: runtime().spawn(std::future::pending()),
             })),
+            screen_busy: AtomicBool::new(false),
         };
         remote.type_text("git stat中文🙂".into()).unwrap();
         let typed = rx.try_recv().unwrap().request;
@@ -1193,6 +1443,7 @@ mod tests {
                 state: state.clone(),
                 task: runtime().spawn(std::future::pending()),
             })),
+            screen_busy: AtomicBool::new(false),
         };
         remote.send_text("a".into(), false).unwrap();
         assert!(
@@ -1289,6 +1540,7 @@ mod tests {
                 state: state.clone(),
                 task: runtime().spawn(std::future::pending()),
             })),
+            screen_busy: AtomicBool::new(false),
         };
         {
             let held = state.lock().unwrap();

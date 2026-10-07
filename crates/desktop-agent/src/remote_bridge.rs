@@ -248,6 +248,8 @@ pub(crate) fn authorize(read_only: bool, request: &Request) -> Result<()> {
                 | Operation::Scrollback
                 | Operation::ReleaseScrollback
                 | Operation::Detach
+                | Operation::RemoteScreens
+                | Operation::RemoteScreenFrame
         )
     {
         bail!("paired device has read-only permission")
@@ -258,6 +260,37 @@ pub(crate) fn authorize(read_only: bool, request: &Request) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn screen_viewing_is_explicit_read_access_without_a_terminal_or_control_lease() {
+        for operation in [Operation::RemoteScreens, Operation::RemoteScreenFrame] {
+            let request = Request {
+                operation: operation as i32,
+                ..Default::default()
+            };
+            assert!(authorize(true, &request).is_ok());
+            assert!(authorize(false, &request).is_ok());
+        }
+        assert!(
+            authorize(
+                true,
+                &Request {
+                    operation: Operation::Input as i32,
+                    ..Default::default()
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            authorize(
+                false,
+                &Request {
+                    operation: 999,
+                    ..Default::default()
+                }
+            )
+            .is_err()
+        );
+    }
     #[test]
     fn authorization_rpc_reads_and_real_transport_metadata_respect_readonly_grant() {
         for action in [
