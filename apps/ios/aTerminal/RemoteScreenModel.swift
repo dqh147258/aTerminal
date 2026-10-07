@@ -101,13 +101,13 @@ enum RemoteScreenErrorAdvice {
     static func message(_ detail: String) -> String {
         let value = detail.lowercased()
         if value.contains("remote_screens_unavailable") { return "当前 Desktop 版本不支持远程屏幕，请升级 Desktop 后重试" }
+        if refreshDisplays(detail) { return "该显示器已断开，请刷新显示器列表" }
         if value.contains("wayland"), value.contains("unsupported") { return "暂不支持 Wayland，请在电脑使用 X11 会话后重试" }
+        if value.contains("busy") { return "电脑正在处理屏幕请求，请稍后重试" }
+        if value.contains("timeout") || value.contains("timed out") { return "获取屏幕超时，请重试" }
         if value.contains("permission_denied") || value.contains("permission denied") || value.contains("allow screen recording") {
             return "请在电脑的系统设置中允许 Desktop 录制屏幕，然后重试"
         }
-        if refreshDisplays(detail) { return "该显示器已断开，请刷新显示器列表" }
-        if value.contains("busy") { return "电脑正在处理屏幕请求，请稍后重试" }
-        if value.contains("timeout") || value.contains("timed out") { return "获取屏幕超时，请重试" }
         return detail
     }
     static func refreshDisplays(_ detail: String) -> Bool { detail.lowercased().contains("unknown_screen") }

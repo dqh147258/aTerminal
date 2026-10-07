@@ -125,6 +125,11 @@ private func payload(_ overrides: [String: Any] = [:]) throws -> String {
                                    ("Wayland unsupported", "X11")] {
             check(RemoteScreenErrorAdvice.message(detail).contains(expected), "Known error lacks actionable Chinese guidance")
         }
+        for (specific, expected) in [("unknown_screen", "显示器已断开"), ("screen_capture_unsupported: Wayland", "X11"),
+                                     ("screen_capture_busy", "稍后重试"), ("screen_capture_timeout", "超时")] {
+            let chain = "screen_capture_failed: allow screen recording/capture on Desktop and retry: " + specific
+            check(RemoteScreenErrorAdvice.message(chain).contains(expected), "Generic permission context hid the specific capture failure")
+        }
         check(RemoteScreenErrorAdvice.message("new-server-error: details") == "new-server-error: details", "Unknown error details discarded")
         check(RemoteScreenErrorAdvice.refreshDisplays("unknown_screen"), "Disconnected display offered only frame retry")
         let paired = RemoteScreenConnection.current(connected: true, reconnecting: false, authenticationRequired: false,

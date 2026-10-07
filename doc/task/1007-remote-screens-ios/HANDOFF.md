@@ -6,6 +6,8 @@
 
 账号连接复用 owner/device/generation fence；`legacyConnect` 无账号配对连接使用每次连接生成的 UUID channel fence，不要求终端选择或控制权，也不调用 account.export。账号变化和 pause 清除此配对标识。
 
+错误提示优先匹配 unknown_screen/Wayland/busy/timeout，最后处理通用录屏权限提示；已用带有 `allow screen recording` 外层 context 的组合错误回归验证，避免将 timeout 错报为缺少权限。
+
 验证等级 Medium，已通过：
 
 - `python3 scripts/check-ios-remote-screens.py`：直接编译运行生产解析/刷新模型，覆盖列表/帧 snake_case、主屏和原始尺寸、空态/坏数据、JSON/文本/base64/JPEG/像素边界、中文错误与未知详情、配对连接资格、单请求、切换/返回/关闭/重开、后台/恢复、过期响应、错误重试、设备/账号/server/断连及 dispatch 前关闭；并检查实际 pbxproj source wiring。
