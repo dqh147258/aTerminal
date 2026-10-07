@@ -17,7 +17,6 @@ struct RemoteScreensPanel: View {
                 displayList
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity).background(WorkspaceStyle.background)
-            .accessibilityIdentifier("screens.panel")
             .onDisappear { model.stop() }
     }
 
@@ -73,14 +72,8 @@ struct RemoteScreensPanel: View {
                     Text(selected.dimensions + (selected.isPrimary ? " · 主屏" : "")).font(.caption2).foregroundColor(WorkspaceStyle.muted)
                 }
                 Spacer(minLength: 0)
-                Menu {
-                    ForEach(model.screens) { screen in
-                        Button(screen.displayName + (screen.isPrimary ? " · 主屏" : "")) { model.select(screen.id) }
-                            .accessibilityIdentifier("screens.switch." + screen.id)
-                    }
-                } label: {
-                    Image(systemName: "rectangle.on.rectangle").frame(width: 44, height: 44)
-                }.accessibilityLabel("切换显示器").accessibilityIdentifier("screens.switch")
+                ToolButton(symbol: "rectangle.on.rectangle", label: "切换显示器") { model.showList() }
+                    .accessibilityIdentifier("screens.switch")
             }.padding(.horizontal, 8)
             ZStack {
                 Color.black
@@ -100,7 +93,7 @@ struct RemoteScreensPanel: View {
                         }.frame(minHeight: 44).accessibilityIdentifier("screens.frame.retry")
                     }.padding(20).background(WorkspaceStyle.surface.opacity(0.95)).cornerRadius(8).padding(16)
                 }
-            }.frame(maxWidth: .infinity, maxHeight: .infinity).clipped().accessibilityIdentifier("screens.viewer")
+            }.frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
             Text(model.frameError == nil ? "仅查看 · 约每秒刷新" : "当前画面已停止刷新")
                 .font(.caption2).foregroundColor(WorkspaceStyle.muted).padding(8)
         }

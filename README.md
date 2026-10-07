@@ -6,6 +6,8 @@ aTerminal 由 Rust Desktop Agent、原生 Android/iOS 客户端和轻量协调�
 
 Android/iOS 工作台提供登录、设备和会话选择、终端画面直接输入（含回车、Tab 等特殊键）、终端历史、显示设置及最后会话恢复。AI 浮窗提供全局/当前终端 Agent、发送/追加/停止、分页历史与证据回读；模型和扩展配置保存在 Desktop。语音入口关闭。使用方式和授权边界见 [Agent 说明](deploy/ASSISTANT.md)。
 
+主页右侧的“远程屏幕”可列出当前连接电脑的全部显示器，选择后持续刷新查看，支持切换与返回列表。该功能复用加密连接，无需选择终端或获取输入控制权；关闭查看页或进入后台停止刷新。需要同时更新 App 与 Desktop。macOS 需要为运行 Desktop 的程序授予屏幕录制权限，Linux 当前支持 X11，Windows 使用本机显示器采集；无图形会话、权限不足或旧版 Desktop 会给出提示。当前为约每秒一张的只读图像查看，不提供鼠标或键盘控制。
+
 **[本机快速启动、调试与测试](deploy/LOCAL-DEBUG.md)** 包含 Server/Admin 启停、测试账号和管理员令牌位置、Desktop Agent、Android x86 设备、移动构建、日志及完整关闭步骤。
 
 部署与实现资料：

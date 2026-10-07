@@ -48,13 +48,13 @@ internal object RemoteScreensErrors {
         val detail = error.message.orEmpty()
         return when {
             detail.contains("remote_screens_unavailable", true) -> "当前 Desktop 不支持远程屏幕，请升级 Desktop 后重试。"
-            detail.contains("screen_capture_permission_denied", true) || detail.contains("allow screen recording", true) ->
-                "请在电脑的系统设置中允许屏幕录制，然后重试。"
             detail.contains("unknown_screen", true) -> "显示器已断开，请返回显示器列表并刷新后重新选择。"
             detail.contains("wayland", true) && (detail.contains("unsupported", true) || detail.contains("not supported", true)) ->
                 "当前暂不支持 Wayland 屏幕抓取，请在电脑切换至 X11 会话后重试。"
             detail.contains("busy", true) || detail.contains("timeout", true) || detail.contains("timed out", true) ->
                 "Desktop 正忙或请求超时，请稍后重试。"
+            detail.contains("screen_capture_permission_denied", true) || detail.contains("allow screen recording", true) ->
+                "请在电脑的系统设置中允许屏幕录制，然后重试。"
             else -> detail.ifBlank { "请重试" }
         }
     }

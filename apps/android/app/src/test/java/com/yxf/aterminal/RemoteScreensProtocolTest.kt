@@ -54,6 +54,12 @@ class RemoteScreensProtocolTest {
         rejected { RemoteScreensProtocol.screens("{\"screens\":[${JSONObject(screen).put("width", 4294967297L)}]}") }
     }
 
+    @Test fun captureTimeoutKeepsItsSpecificGuidanceThroughPermissionContext() {
+        val error = IllegalStateException("screen_capture_failed: allow screen recording/capture on Desktop and retry: screen_capture_timeout")
+        assertTrue(RemoteScreensErrors.describe(error).contains("超时"))
+        assertFalse(RemoteScreensErrors.describe(error).contains("系统设置"))
+    }
+
     @Test fun knownCoreFailuresOfferActionableChineseGuidanceAndUnknownErrorsKeepDetails() {
         for ((detail, expected) in listOf("remote_screens_unavailable" to "升级 Desktop", "screen_capture_permission_denied" to "系统设置",
             "Please allow screen recording" to "屏幕录制", "unknown_screen" to "刷新", "capture busy" to "重试",

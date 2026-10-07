@@ -14,6 +14,8 @@ import org.junit.Assert.*
 import org.junit.Test
 import java.io.ByteArrayOutputStream
 import java.util.ArrayDeque
+import uniffi.ai_terminal_mobile.CoreException
+import uniffi.ai_terminal_mobile.RemoteTerminal
 
 /** Isolated, in-memory production panel; no account data, real Desktop, or terminal writes. */
 class RemoteScreensUiTest {
@@ -27,6 +29,14 @@ class RemoteScreensUiTest {
         @Suppress("UNCHECKED_CAST") return value as T
     }
     private fun all(view: View): List<View> = listOf(view) + if (view is ViewGroup) (0 until view.childCount).flatMap { all(view.getChildAt(it)) } else emptyList()
+
+    @Test fun generatedScreenBindingsMatchThePackagedNativeLibrary() {
+        val core = RemoteTerminal()
+        try {
+            assertThrows(CoreException::class.java) { core.remoteScreensJson() }
+            assertThrows(CoreException::class.java) { core.remoteScreenFrameJson("screen-1", 640u) }
+        } finally { core.close() }
+    }
     private val screens = """{"screens":[{"id":"screen-1","name":"Primary","width":2560,"height":1600,"is_primary":true},{"id":"screen-2","name":"Portrait","width":1080,"height":1920,"is_primary":false}]}"""
     private fun jpegFrame(id: String, declaredWidth: Int = 8): String {
         val bitmap = Bitmap.createBitmap(8, 5, Bitmap.Config.ARGB_8888)
