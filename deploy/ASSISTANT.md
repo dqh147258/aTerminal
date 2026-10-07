@@ -158,3 +158,11 @@ Risky native calls use the same once/always/deny/full permissions. Permanent rul
 `run_command`, `input_text` and `send_keys` remain ordinary PTY interactions with once/full approval and input/manual/cancellation fences. They cannot receive permanent rules, since even an absolute path can be intercepted by Shell functions or aliases. Use `inspect_command` for positive fixed native reads and `run_program` for a managed effectful leaf operation. Native execution returns a durable command ID, real child exit and bounded stdout/stderr; it stops its own process group on cancellation or a 30-second execution limit. Unknown/cancelled outcomes are not replayed, and native process completion does not claim general TUI/application completion.
 
 泛用 Skill 解释器脚本的有效 imports/外部 helper 依赖版本无法完全固定，因此只提供一次/完全授权，不提供永久规则。每次描述和实际脚本启动仍校验注册包 manifest 的所有声明文件实际内容；只改 helper、入口和 manifest 未变也会拒绝旧 snapshot。可靠 `run_program` 原生叶子永久功能保留，不新增 OS 依赖沙箱。
+
+## 短暂断线与授权回执
+
+Android/iOS 已进入的工作空间遇到网络波动时保留终端画面、当前页面、Agent 草稿与导航，使用局部状态提示并在后台恢复同一 Desktop/Session。首次连接仍显示连接页；账号失效、撤权或目标终端关闭单独提示，不切换到其他终端继续操作。断线期间禁止输入和权限变更，不缓存按键、不自动重放发送、审批或创建终端等操作。结果未知时先查看恢复后的任务/会话状态，必要的显式重试沿用原请求 ID。
+
+授权确认仅表示 Desktop 已收到该答复，不表示命令执行成功。待办被消费后客户端会移除恢复提示并刷新实际任务进展；读取失败保留待办，不伪造成功。Desktop 在执行前仍核对身份、取消、cwd、版本和控制 fence。
+
+`get_capabilities` 的原生工具可用性使用当前目标 Session 的实际 cwd 观察，不再仅按平台推断。Windows 尚无可信原生 cwd 观察时会明确报告不可用；`run_program` 在创建审批卡前拒绝这个不可执行的调用，避免批准后再失败。此时使用现有终端观察工具，或对确有必要的 PTY 操作逐项授权，不会放宽 Shell/PTY 的审批规则。

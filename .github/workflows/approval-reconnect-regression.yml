@@ -1,0 +1,68 @@
+name: Approval and Reconnect Regression
+
+on:
+  push:
+    branches: [main, 'codex/fix-approval-reconnect-*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ios-state:
+    name: iOS authorization and reconnect state
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check-ios-authorization.py
+      - run: python3 scripts/check-ios-settings.py
+      - run: python3 scripts/check-ios-reconnect.py
+
+  android-ui:
+    name: Android approval and reconnect UI
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          targets: x86_64-linux-android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'ndk;28.2.13676358' 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Build isolated native cache and UI fixtures
+        run: |
+          python3 scripts/build-mobile.py android --android-abi x86_64 --ndk "$ANDROID_HOME/ndk/28.2.13676358"
+          python3 scripts/prepare-bindings.py
+          ./apps/android/gradlew -p apps/android -PauthorizationUiFixture=true :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run native Android regressions
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          disable-animations: true
+          script: |
+            ./apps/android/gradlew -p apps/android -PauthorizationUiFixture=true -Pandroid.testInstrumentationRunnerArguments.class=com.yxf.aterminal.AgentAuthorizationUiTest,com.yxf.aterminal.WorkspaceReconnectTest,com.yxf.aterminal.ReconnectUiTest :app:connectedDebugAndroidTest --no-daemon
+            mkdir -p build/reconnect-evidence
+            adb exec-out run-as com.yxf.aterminal.authorizationfixture tar -C files -cf - reconnect-evidence > build/reconnect-evidence/android-ui.tar
+      - name: Preserve test results and native screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: approval-reconnect-android-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            apps/android/app/build/reports/androidTests
+            apps/android/app/build/outputs/androidTest-results
+            build/reconnect-evidence
+          if-no-files-found: warn
+          retention-days: 14

@@ -312,12 +312,14 @@ impl Backend {
     }
     fn get_capabilities(&self, context: &ToolContext, args: Value) -> Result<ToolOutput> {
         let global = self.scope.session.is_none();
+        let mut observed_cwd = None;
         let terminal = if !global || args.get("session_id").is_some() {
             let session = self.session(&args)?;
             if let Ok(reply) = self.info(&session)
                 && let Some(info) = reply.info
             {
                 let hooks = shell(&info);
+                observed_cwd = crate::process::cwd(&info);
                 json!({"session_id":session,"available":true,"desktop_attached":info.desktop_attached,"shell_foreground_proven":crate::process::shell_foreground(&info),"shell_hooks":{"available":hooks["evidence_source"]=="session_shell_hook","dialect":hooks["dialect"],"command_association":hooks["command_association"]==true,"evidence_source":hooks["evidence_source"],"trusted_for_authorization":false},"application_task_adapter":null,"application_completion":false})
             } else {
                 ensure!(
@@ -330,8 +332,10 @@ impl Backend {
         } else {
             Value::Null
         };
+        let native = native_availability(!terminal.is_null(), observed_cwd.is_some());
+        let program_native = native_program_availability(&native, terminal["desktop_attached"] == true);
         Ok(ToolOutput::value(
-            json!({"role":if global{"global"}else{"session"},"tools":terminal_tools(global).iter().map(|t|t.name.as_str()).collect::<Vec<_>>(),"vision":context.vision,"visual":{"capture_source":"rendered_terminal","model_can_see_images":context.vision},"native_inspection":{"os_cwd_available":cfg!(unix),"source":"sidecar_read","max_elapsed_ms":30000},"native_program":{"os_cwd_available":cfg!(unix),"source":"native_program","managed_dispatch":"direct_exec_env_clear","stdin_max_bytes":16000,"args_max_count":64,"max_elapsed_ms":30000,"permanent_scope":"pinned_leaf_program_args_stdin_cwd","pty_permanent_rules":false},"terminal":terminal,"authorization":self.host()?.agents.permission_capabilities(context)?,"budget":context.budget.tool_status()?,"limits":{"wait_ms":30000,"task_ids":32,"history_page":50,"shell_evidence":"observational","os_sandbox":false,"cwd_sandbox":false,"mcp_catalog_may_start_enabled_servers":true}}),
+            json!({"role":if global{"global"}else{"session"},"tools":terminal_tools(global).iter().map(|t|t.name.as_str()).collect::<Vec<_>>(),"vision":context.vision,"visual":{"capture_source":"rendered_terminal","model_can_see_images":context.vision},"native_inspection":{"available":native["available"],"reason":native["reason"],"os_cwd_available":observed_cwd.is_some(),"supported_platform":native["supported_platform"],"source":"sidecar_read","max_elapsed_ms":30000},"native_program":{"available":program_native["available"],"reason":program_native["reason"],"os_cwd_available":observed_cwd.is_some(),"supported_platform":native["supported_platform"],"source":"native_program","managed_dispatch":"direct_exec_env_clear","stdin_max_bytes":16000,"args_max_count":64,"max_elapsed_ms":30000,"permanent_scope":"pinned_leaf_program_args_stdin_cwd","pty_permanent_rules":false},"terminal":terminal,"authorization":self.host()?.agents.permission_capabilities(context)?,"budget":context.budget.tool_status()?,"limits":{"wait_ms":30000,"task_ids":32,"history_page":50,"shell_evidence":"observational","os_sandbox":false,"cwd_sandbox":false,"mcp_catalog_may_start_enabled_servers":true}}),
         ))
     }
     fn read_delta(&self, context: &ToolContext, args: Value) -> Result<ToolOutput> {
@@ -371,6 +375,29 @@ impl Backend {
             json!({"session_id":session,"after_revision":after,"revision":current.revision,"epoch":current.epoch,"state":state,"reason":reason,"refetch_required":state=="refetch_required","next_read":if state=="refetch_required"{json!({"mode":"tail"})}else{Value::Null},"text":"","completion":"unknown","max_read_bytes":context.max_read_bytes}),
         ))
     }
+}
+/// Platform support alone is not proof that this Session's cwd is observable.
+fn native_availability(has_session: bool, cwd_observed: bool) -> Value {
+    let supported = cfg!(any(target_os = "linux", target_os = "macos"));
+    let available = supported && has_session && cwd_observed;
+    let reason = if !supported {
+        "platform_has_no_trusted_native_cwd"
+    } else if !has_session {
+        "session_id_required_to_check_availability"
+    } else if !cwd_observed {
+        "current_session_cwd_unavailable"
+    } else {
+        "available"
+    };
+    json!({"available":available,"reason":reason,"supported_platform":supported})
+}
+fn native_program_availability(native: &Value, attached: bool) -> Value {
+    let mut value = native.clone();
+    if value["available"] == true && !attached {
+        value["available"] = json!(false);
+        value["reason"] = json!("desktop_attachment_required");
+    }
+    value
 }
 fn encoded_stream(bytes: &[u8]) -> Value {
     match std::str::from_utf8(bytes) {
@@ -419,6 +446,28 @@ mod toolset_tests {
     }
     fn submitted() -> Value {
         json!({"command":"false","epoch":1,"manual_revision":2,"state":"submitted","final":false,"baseline":{"phase":"prompt","sequence":3,"instance":"hook","command_association":true},"application_task":{"state":"unknown"}})
+    }
+    #[test]
+    fn native_capabilities_never_claim_cwd_from_platform_alone() {
+        assert_eq!(native_availability(true, false)["available"], false);
+        assert_eq!(native_availability(false, false)["available"], false);
+        assert_eq!(
+            native_availability(true, true)["available"],
+            cfg!(any(target_os = "linux", target_os = "macos"))
+        );
+        let detached =
+            native_program_availability(&json!({"available":true,"reason":"available"}), false);
+        assert_eq!(detached["available"], false);
+        assert_eq!(detached["reason"], "desktop_attachment_required");
+        assert_eq!(
+            native_program_availability(&native_availability(true, false), true)["available"],
+            false
+        );
+        #[cfg(windows)]
+        assert_eq!(
+            native_availability(true, true)["reason"],
+            "platform_has_no_trusted_native_cwd"
+        );
     }
     #[test]
     fn completion_requires_exact_sequence_command_and_prompt_exit() {
