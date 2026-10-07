@@ -139,6 +139,101 @@ class AgentAuthorizationUiTest {
         waitFor("rule revoked") { calls.any { it.optString("action") == "revoke_rule" } && main { views().filterIsInstance<TextView>().any { it.text == "没有永久授权规则" } } }
     }
 
+    @Test fun approvedReceiptClearsOnlyAfterAuthoritativePendingRefresh() {
+        pending.add(approval("receipt"))
+        val keepResolved = AtomicBoolean(true)
+        val failRefresh = AtomicBoolean(false)
+        intercept = { command -> when {
+            command.optString("action") == "resolve" -> {
+                val result = JSONObject(pending.single().toString()).put("state", "resolved")
+                synchronized(this) { pending[0] = result }
+                JSONObject().put("pending", result)
+            }
+            command.optString("action") == "pending" && failRefresh.get() -> error("transient refresh failure")
+            command.optString("action") == "pending" && !keepResolved.get() -> page(emptyList())
+            else -> null
+        } }
+        launch()
+        main { tagged("once:receipt").performClick() }
+        waitFor("confirmed receipt") { main { views().filterIsInstance<TextView>().any { it.text.contains("授权已确认，正在恢复任务") } } }
+        failRefresh.set(true)
+        main { authorization!!.refresh() }
+        waitFor("failed read retains receipt") { main { views().filterIsInstance<TextView>().any { it.text.contains("transient refresh failure") } } }
+        main { assertTrue(views().filterIsInstance<TextView>().any { it.text.contains("授权已确认，正在恢复任务") }) }
+        keepResolved.set(false); failRefresh.set(false)
+        main { authorization!!.refresh() }
+        waitFor("consumed receipt retired") { main {
+            views().none { it.tag == "pending:receipt" } &&
+                views().filterIsInstance<TextView>().none { it.text.contains("正在恢复任务") || it.text.contains("等待 Desktop") }
+        } }
+        assertEquals(1, calls.count { it.optString("action") == "resolve" })
+    }
+
+    @Test fun consumedReplyDoesNotClaimAnotherReviewOrExecutionSuccess() {
+        pending.add(approval("consumed"))
+        intercept = { command -> if (command.optString("action") == "resolve") {
+            val result = JSONObject(pending.single().toString()).put("state", "consumed")
+            synchronized(this) { pending[0] = result }
+            JSONObject().put("pending", result).put("duplicate", true)
+        } else null }
+        launch()
+        main { tagged("once:consumed").performClick() }
+        waitFor("consumed display") { main { views().filterIsInstance<TextView>().any { it.text.contains("答复已处理；执行结果请查看任务进展") } } }
+        main { assertFalse(views().filterIsInstance<TextView>().any { it.text.contains("等待 Desktop") || it.text.contains("执行成功") }) }
+        assertEquals(1, calls.count { it.optString("action") == "resolve" })
+    }
+
+    @Test fun reconnectNeverAppliesLateApprovalAckOrResubmitsIt() {
+        pending.add(approval("late"))
+        val started = CountDownLatch(1); val release = CountDownLatch(1)
+        intercept = { command -> if (command.optString("action") == "resolve") {
+            started.countDown(); check(release.await(8, TimeUnit.SECONDS))
+            val result = JSONObject(pending.single().toString()).put("state", "resolved")
+            synchronized(this) { pending.clear() }
+            JSONObject().put("pending", result)
+        } else null }
+        launch()
+        try {
+            main { tagged("once:late").performClick() }
+            assertTrue(started.await(5, TimeUnit.SECONDS))
+            main { connected.set(false); authorization!!.connectionInterrupted(); assertFalse(authorization!!.canSend) }
+            main { connected.set(true); authorization!!.refresh() }
+            release.countDown()
+            waitFor("reconciled after reconnect") { main { authorization!!.canSend && views().none { it.tag == "pending:late" } } }
+            main { assertFalse(views().filterIsInstance<TextView>().any {
+                it.text.contains("授权已确认，正在恢复任务") || it.text.contains("刷新确认结果") || it.text.contains("提交未确认")
+            }) }
+            assertEquals(1, calls.count { it.optString("action") == "resolve" })
+        } finally { release.countDown() }
+    }
+
+    @Test fun queuedApprovalIsNotSentOnAReplacementConnection() {
+        pending.add(approval("queued")); launch()
+        val started = CountDownLatch(1); val release = CountDownLatch(1)
+        val blockOnce = AtomicBoolean(true)
+        intercept = { command ->
+            if (command.optString("action") == "permissions" && blockOnce.getAndSet(false)) {
+                started.countDown(); check(release.await(8, TimeUnit.SECONDS))
+            }
+            null
+        }
+        try {
+            main { authorization!!.refresh() }
+            assertTrue(started.await(5, TimeUnit.SECONDS))
+            main {
+                tagged("once:queued").performClick()
+                connected.set(false); authorization!!.connectionInterrupted()
+                connected.set(true)
+            }
+            release.countDown()
+            waitFor("queued approval rejected and state reread") { main {
+                authorization!!.canSend && views().filterIsInstance<TextView>().any { it.text.contains("未自动重发") || it.text.contains("连接已变化") }
+            } }
+            assertEquals(0, calls.count { it.optString("action") == "resolve" })
+            main { assertTrue(tagged("once:queued").isEnabled) }
+        } finally { release.countDown() }
+    }
+
     @Test fun lostResponseRetriesSameIdAndQuestionSurvivesReopening() {
         pending.add(question())
         val fail = AtomicBoolean(true)

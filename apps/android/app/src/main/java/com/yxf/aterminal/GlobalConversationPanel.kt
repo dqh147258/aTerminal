@@ -17,6 +17,7 @@ class GlobalConversationPanel(private val activity: Activity, private val body: 
     private val worker = Executors.newSingleThreadExecutor()
     private val ui = Handler(Looper.getMainLooper())
     private var closed = false
+    @Volatile private var connectionRevision = 0
     private var busy = false
     private var creating = false
     private var confirmed = false
@@ -76,29 +77,46 @@ class GlobalConversationPanel(private val activity: Activity, private val body: 
         render()
         if (busy || closed || !valid()) return
         busy = true
+        val revision = connectionRevision
         worker.execute { try {
             val rows = mutableListOf<JSONObject>(); var cursor: Long? = null
             do {
+                check(revision == connectionRevision && valid()) { "连接已变化" }
                 val command = JSONObject().put("version", 1).put("action", "global_list"); cursor?.let { command.put("cursor", it) }
                 val page = JSONObject(request(command.toString())); val array = page.getJSONArray("conversations")
                 for (i in 0 until array.length()) rows.add(array.getJSONObject(i))
                 cursor = if (page.isNull("cursor")) null else page.getLong("cursor")
             } while (cursor != null && !closed)
-            ui.post { busy = false; if (!closed && valid()) { store.merge(rows); confirmed = true; status.text = "全局AI助手会话独立于终端 Session"; render() } }
-        } catch (e: Exception) { ui.post { busy = false; if (!closed) { confirmed = false; status.text = "会话同步失败：${e.message}"; render() } } } }
+            ui.post { if (!closed && revision == connectionRevision) { busy = false; if (valid()) { store.merge(rows); confirmed = true; status.text = "全局AI助手会话独立于终端 Session"; render() } } }
+        } catch (e: Exception) { ui.post { if (!closed && revision == connectionRevision) { busy = false; confirmed = false; status.text = "会话同步失败：${e.message}"; render() } } } }
     }
     private fun create() {
         if (creating || !valid()) return
         creating = true; add.isEnabled = false
         val id = store.pendingCreate.ifEmpty { UUID.randomUUID().toString().also { store.pendingCreate = it } }
+        val revision = connectionRevision
         worker.execute { try {
+            check(revision == connectionRevision && valid()) { "连接已变化" }
             val result = JSONObject(request(JSONObject().put("version", 1).put("action", "global_create").put("request_id", id).toString()))
             val row = JSONObject().put("scope", result.getJSONObject("scope")).put("title", "新会话").put("state", "idle").put("updated_at", System.currentTimeMillis())
-            store.merge(listOf(row)); store.pendingCreate = ""
-            ui.post { if (!closed && valid()) { creating = false; store.scroll = scroll.scrollY; open(row) } }
-        } catch (e: Exception) { ui.post { if (!closed) { creating = false; status.text = "创建失败：${e.message}"; render() } } } }
+            ui.post { if (!closed && revision == connectionRevision && valid()) {
+                store.merge(listOf(row)); store.pendingCreate = ""
+                creating = false; store.scroll = scroll.scrollY; open(row)
+            } }
+        } catch (e: Exception) { ui.post { if (!closed && revision == connectionRevision) { creating = false; status.text = "创建失败：${e.message}"; render() } } } }
+    }
+    fun connectionInterrupted() {
+        if (closed) return
+        connectionRevision++; busy = false; creating = false; confirmed = false
+        status.text = "连接暂时中断 · 已保留会话列表"
+        render()
+    }
+    fun connectionRestored() {
+        if (closed) return
+        connectionRevision++; busy = false; creating = false
+        refresh()
     }
     fun pause() { store.scroll = scroll.scrollY; ui.removeCallbacks(tick) }
     fun resume() { if (!closed) { ui.removeCallbacks(tick); ui.post(tick) } }
-    fun close() { pause(); closed = true; worker.shutdown() }
+    fun close() { pause(); closed = true; connectionRevision++; worker.shutdown() }
 }

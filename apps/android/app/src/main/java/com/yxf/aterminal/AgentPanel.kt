@@ -36,7 +36,7 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
     private val markdown = ChatMarkdown(activity)
     private var details: ToolDetailsPage? = null
     @Volatile private var closed = false
-    private var epoch = 0
+    @Volatile private var epoch = 0
     private val globalId = globalConversation?.getJSONObject("scope")?.getString("agent")
     private val globalStore = GlobalConversationStore(activity, identity)
     private var visible = true
@@ -90,7 +90,7 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
     private val voice = activity.iconButton(R.drawable.ic_mic, "语音输入") { if (recognizer == null) startVoice() else stopVoice() }
     private val authorization = AgentAuthorizationPanel(activity, identity + session,
         { !closed && valid() },
-        { command -> rpc(session, command) }, { updateButton() })
+        { command -> rpc(session, command) }, { updateButton() }, { refresh() })
     private val tick = object : Runnable { override fun run() { if (!closed) { updatePath(); markRead(); syncDraft(); refresh(); authorization.refresh(); ui.postDelayed(this, 1500) } } }
     private fun scope(target: String = session) = JSONArray(identity + target).toString()
     private fun rpc(target: String, command: JSONObject): JSONObject {
@@ -246,6 +246,19 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
     }
     fun pause() { visible = false; save(); stopVoice(); ui.removeCallbacks(tick) }
     fun resume() { visible = details == null; if (!closed) { ui.removeCallbacks(tick); ui.post(tick) } }
+    /** Reconnect refreshes observations only; sends/approvals keep their request IDs. */
+    fun connectionInterrupted() {
+        if (closed) return
+        epoch++; loading = false; stateLoading = false; olderPageRequested = false
+        nextLiveText = null
+        authorization.connectionInterrupted()
+        updateButton()
+    }
+    fun connectionRestored() {
+        if (closed) return
+        epoch++; loading = false; stateLoading = false
+        authorization.refresh(); refresh()
+    }
     private fun updateButton() { with(activity) {
         val running = GlobalConversationStore.active(runState)
         val content = draft.text.toString().isNotBlank() || attachments.isNotEmpty()
@@ -264,20 +277,25 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
         syncDraft()
         if (!sendButton.isEnabled) return
         val text = draft.text.toString().trim(); val pictures = attachments.map { JSONObject(it.toString()) }
-        val target = session; val mode = authorization.permissionMode; val id = requestId
+        val target = session; val mode = authorization.permissionMode; val id = requestId; val version = epoch
         val cancel = text.isEmpty() && pictures.isEmpty() && GlobalConversationStore.active(runState)
         save(); sending.add(target); updateButton()
         worker.execute { val uploaded = mutableListOf<String>(); try {
+            fun attempt(command: JSONObject): JSONObject {
+                check(!closed && version == epoch && valid()) { "连接已变化；请确认任务状态后重试" }
+                return rpc(target, command)
+            }
+            check(!closed && version == epoch && valid()) { "连接已变化；请确认任务状态后重试" }
             val command = JSONObject().put("action", if (cancel) "cancel" else "send")
             if (!cancel) {
                 val uploads = JSONArray()
                 pictures.forEach { picture ->
                     val file = drafts.file(picture.getString("file")); check(file.isFile) { "图片文件不可用，请移除后重新选择" }
-                    val upload = rpc(target, JSONObject().put("action", "image_begin").put("media_type", picture.getString("mime")).put("size", file.length())).getString("upload_id")
+                    val upload = attempt(JSONObject().put("action", "image_begin").put("media_type", picture.getString("mime")).put("size", file.length())).getString("upload_id")
                     uploaded.add(upload)
                     file.inputStream().use { input -> var offset = 0; val buffer = ByteArray(32768)
                         while (true) { val count = input.read(buffer); if (count < 0) break
-                            rpc(target, JSONObject().put("action", "image_chunk").put("upload_id", upload).put("offset", offset).put("data", android.util.Base64.encodeToString(buffer, 0, count, android.util.Base64.NO_WRAP))); offset += count
+                            attempt(JSONObject().put("action", "image_chunk").put("upload_id", upload).put("offset", offset).put("data", android.util.Base64.encodeToString(buffer, 0, count, android.util.Base64.NO_WRAP))); offset += count
                         }
                     }; uploads.put(upload)
                 }
@@ -285,10 +303,14 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
                 command.put("request_id", id).put("message", text).put("permission_mode", mode)
                 if (uploads.length() > 0) command.put("images", uploads)
             }
-            check(!closed && valid()) { "连接或对话已变化" }
-            val result = rpc(target, command)
+            check(!closed && version == epoch && valid()) { "连接或对话已变化" }
+            val result = attempt(command)
             ui.post {
                 sending.remove(target)
+                if (version != epoch) {
+                    if (!closed && target == session) { feedback("发送结果需重新确认；草稿已保留，请先查看任务进展"); updateButton() }
+                    return@post
+                }
                 val resultState = result.optString("state", if (cancel) "stopping" else "running")
                 if (!closed && target == session) {
                     runState = resultState
@@ -306,7 +328,7 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
                     drafts.save(target, saved)
                 }
             }
-        } catch (e: Exception) { ui.post { sending.remove(target); if (!closed && target == session) { feedback(errorText(e)); updateButton() } } } finally { uploaded.forEach { upload -> runCatching { rpc(target, JSONObject().put("action", "image_release").put("upload_id", upload)) } } } }
+        } catch (e: Exception) { ui.post { sending.remove(target); if (!closed && target == session) { feedback(errorText(e)); updateButton() } } } finally { if (version == epoch && !closed && valid()) uploaded.forEach { upload -> runCatching { rpc(target, JSONObject().put("action", "image_release").put("upload_id", upload)) } } } }
     }
     private fun errorText(e: Exception): String {
         val message = e.message.orEmpty()
