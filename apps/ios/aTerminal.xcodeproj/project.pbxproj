@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AC0710000000000000000001 /* WorkspaceRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0710000000000000000002; };
 		AC1000000000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AC1000000000000000000002; };
 		AC0210000000000000000003 /* AgentAuthorizationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0210000000000000000004; };
 		AC0210000000000000000001 /* AgentAuthorization.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0210000000000000000002; };
@@ -32,6 +33,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		AC0710000000000000000002 /* WorkspaceRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceRecovery.swift; sourceTree = "<group>"; };
 		AC1000000000000000000002 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AC0210000000000000000004 /* AgentAuthorizationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAuthorizationView.swift; sourceTree = "<group>"; };
 		AC0210000000000000000002 /* AgentAuthorization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAuthorization.swift; sourceTree = "<group>"; };
@@ -113,6 +115,7 @@
 				AABBCCDD0000000000000026 /* WorkspaceScreen.swift */,
 				AABBCCDD0000000000000027 /* ChatPanel.swift */,
                 AC0210000000000000000002 /* AgentAuthorization.swift */,
+                AC0710000000000000000002 /* WorkspaceRecovery.swift */,
                 AC0210000000000000000004 /* AgentAuthorizationView.swift */,
                 ABCD10010000000000000008 /* AgentHistoryCache.swift */,
                 ABCD10010000000000000006 /* AgentCacheSearch.swift */,
@@ -231,6 +234,7 @@
 				AABBCCDD0000000000000016 /* WorkspaceScreen.swift in Sources */,
 				AABBCCDD0000000000000017 /* ChatPanel.swift in Sources */,
                 AC0210000000000000000001 /* AgentAuthorization.swift in Sources */,
+                AC0710000000000000000001 /* WorkspaceRecovery.swift in Sources */,
                 AC0210000000000000000003 /* AgentAuthorizationView.swift in Sources */,
                 ABCD10010000000000000007 /* AgentHistoryCache.swift in Sources */,
                 ABCD10010000000000000005 /* AgentCacheSearch.swift in Sources */,

@@ -179,36 +179,42 @@ enum SettingsFailure: LocalizedError {
     var changed: (() -> Void)?
     private let transport: Transport
     private let identity: () -> String
+    private let connectionEpoch: () -> Int
+    private var operationConnection: Int?
     private let origin: String
     private var active = true
     private var serial = 0
-    init(identity: @escaping () -> String, transport: @escaping Transport) {
-        self.identity = identity; origin = identity(); self.transport = transport
+    init(identity: @escaping () -> String, connectionEpoch: @escaping () -> Int = { 0 }, transport: @escaping Transport) {
+        self.identity = identity; origin = identity(); self.connectionEpoch = connectionEpoch; self.transport = transport
     }
     var valid: Bool { active && identity() == origin }
     func cancelRead() { serial += 1; busy = false; changed?() }
     func close() { active = false; serial += 1; busy = false; changed?() }
     func call(_ command: Object) async throws -> Object {
         guard valid else { throw SettingsFailure.message("账号或 Desktop 连接已变化，请重新打开设置") }
+        let connection = connectionEpoch()
+        guard !busy || operationConnection == nil || operationConnection == connection else { throw SettingsFailure.message("连接已变化，草稿已保留，请确认状态后重试") }
         let result = try await transport(command)
+        guard connectionEpoch() == connection else { throw SettingsFailure.message("连接已变化，操作未确认；草稿已保留") }
         guard valid else { throw SettingsFailure.message("账号或 Desktop 连接已变化，请重新打开设置") }
         return result
     }
     @discardableResult func run(mutation: Bool = false, operation: @escaping () async throws -> Object, done: @escaping (Object) -> Void = { _ in }) -> Task<Void, Never>? {
         guard !busy, valid else { if !valid { error = "连接已变化，请重新打开设置" }; return nil }
-        busy = true; error = ""; serial += 1; let ticket = serial; changed?()
+        busy = true; error = ""; serial += 1; let ticket = serial; let connection = connectionEpoch()
+        operationConnection = connection; changed?()
         return Task {
             do {
                 let result = try await operation()
-                guard valid, serial == ticket else { if active && serial == ticket { busy = false; error = "连接已变化，请重新打开设置" }; return }
+                guard valid, serial == ticket, connectionEpoch() == connection else { if active && serial == ticket { busy = false; self.error = "连接已变化，操作未确认；草稿已保留，请确认状态后重试"; changed?() }; return }
                 if mutation { snapshot = result; loaded = true }
                 busy = false; changed?(); done(result)
             } catch {
-                guard valid, serial == ticket else { if active && serial == ticket { busy = false; changed?() }; return }
+                guard valid, serial == ticket, connectionEpoch() == connection else { if active && serial == ticket { busy = false; self.error = "连接已变化，操作未确认；草稿已保留，请确认状态后重试"; changed?() }; return }
                 let message = error.localizedDescription
                 let conflict = message.localizedCaseInsensitiveContains("revision")
                 let fresh = conflict ? try? await call(["action": "show"]) : nil
-                guard valid, serial == ticket else { if active && serial == ticket { busy = false; changed?() }; return }
+                guard valid, serial == ticket, connectionEpoch() == connection else { if active && serial == ticket { busy = false; self.error = "连接已变化，操作未确认；草稿已保留，请确认状态后重试"; changed?() }; return }
                 if let fresh { snapshot = fresh }
                 busy = false
                 self.error = conflict ? "配置已变化，\(fresh == nil ? "刷新失败" : "已刷新")。草稿已保留，请检查后再次保存。" : "未完成：\(message)"

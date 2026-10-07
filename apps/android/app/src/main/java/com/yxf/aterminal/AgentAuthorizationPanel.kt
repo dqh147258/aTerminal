@@ -19,6 +19,7 @@ class AgentAuthorizationPanel(
     private val valid: () -> Boolean,
     private val request: (JSONObject) -> JSONObject,
     private val changed: () -> Unit,
+    private val resolved: () -> Unit = {},
 ) {
     private val ui = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
@@ -37,6 +38,12 @@ class AgentAuthorizationPanel(
     private var rulesLoading = false
     private var error = ""
     private var actionError = ""
+    private var uncertainPendingId: String? = null
+    // An acknowledgement is not an execution result. Retire it only after an
+    // authoritative pending refresh, never merely because time has elapsed.
+    private data class ActionReceipt(val pendingId: String, val message: String)
+    private var actionReceipt: ActionReceipt? = null
+    @Volatile private var connectionRevision = 0
     private data class ApprovalDetails(val fingerprint: String, val text: String)
     private val details = mutableMapOf<String, ApprovalDetails>()
     private val detailsLoading = mutableSetOf<String>()
@@ -62,6 +69,7 @@ class AgentAuthorizationPanel(
         check(!closed && valid()) { "连接或对话已变化，请回到原对话重试" }
         if (mutation) check(canSend) { "当前设备操作权限尚未确认或仅可查看" }
         val result = request(command)
+        check(!closed && valid()) { "连接或对话已变化，请刷新确认结果" }
         if (result.has("error") && !result.isNull("error") && result.optString("error").isNotBlank()) error(result.optString("error"))
         return result
     }
@@ -96,6 +104,17 @@ class AgentAuthorizationPanel(
         return items
     }
 
+    /** Retain review cards/drafts, but invalidate reads from the old transport. */
+    fun connectionInterrupted() {
+        connectionRevision++
+        refreshing = false
+        rulesLoading = false
+        detailsLoading.clear()
+        permissionsFresh = false
+        error = "连接暂时中断 · 待办和回答已保留"
+        renderStatus(); renderPending(); renderDialog(); changed()
+    }
+
     fun refresh() {
         if (closed) return
         if (!valid()) {
@@ -104,17 +123,29 @@ class AgentAuthorizationPanel(
         }
         if (refreshing || mutating) return
         refreshing = true
+        val revision = connectionRevision
         worker.execute {
             val permissionResult = runCatching { parsePermissions(rpc(JSONObject().put("action", "permissions"))) }
             val pendingResult = runCatching { page("pending") }
             ui.post {
-                if (closed) return@post
+                if (closed || revision != connectionRevision) return@post
                 refreshing = false
                 permissionsFresh = permissionResult.isSuccess && valid()
                 permissionResult.getOrNull()?.let { permissions = it }
                 // Only a complete successful page replaces cards. Failed reads retain them.
-                pendingResult.getOrNull()?.let {
+                pendingResult.getOrNull()?.takeIf { valid() }?.let {
                     pending = it
+                    actionReceipt?.let { receipt ->
+                        if (it.none { row -> row.optString("id") == receipt.pendingId && row.optString("state") == "resolved" }) actionReceipt = null
+                    }
+                    uncertainPendingId?.let { id ->
+                        val row = it.firstOrNull { item -> item.optString("id") == id }
+                        if (row == null || !pendingActive(row)) {
+                            // This retires an obsolete retry warning, not a claim
+                            // that the approved operation executed successfully.
+                            uncertainPendingId = null; actionError = ""
+                        }
+                    }
                     details.keys.toList().filter { id -> it.none { row -> row.optString("id") == id && row.optString("fingerprint") == details[id]?.fingerprint } }.forEach { id -> details.remove(id) }
                     prefs.edit().putString("pending", JSONArray(it).toString()).apply()
                 }
@@ -139,7 +170,7 @@ class AgentAuthorizationPanel(
             permissions?.optBoolean("full_authorization") == true -> "权限 · 完全授权"
             else -> "权限 · 按需询问"
         }
-        notice.text = listOf(actionError, error).filter { it.isNotBlank() }.joinToString("\n")
+        notice.text = listOf(actionReceipt?.message.orEmpty(), actionError, error).filter { it.isNotBlank() }.joinToString("\n")
         notice.visibility = if (notice.text.isBlank()) View.GONE else View.VISIBLE
     }
     private fun button(text: String, tag: String, enabled: Boolean = true, action: () -> Unit) = activity.actionButton(text, action = action).apply {
@@ -169,7 +200,8 @@ class AgentAuthorizationPanel(
             if (!pendingActive(item)) {
                 val status = when {
                     item.optString("state") == "denied" || item.optJSONObject("response")?.optString("decision") == "deny" -> "已拒绝本次操作"
-                    item.optString("state") in setOf("resolved", "consumed") -> if (item.optString("kind") == "question") "回答已提交" else "授权已提交，等待 Desktop 核对并继续"
+                    item.optString("state") == "resolved" -> if (item.optString("kind") == "question") "回答已确认，正在恢复任务" else "授权已确认，正在恢复任务"
+                    item.optString("state") == "consumed" -> "答复已处理；执行结果请查看任务进展"
                     item.optString("state") in setOf("expired", "interrupted", "cancelled") -> "请求已失效：${item.optString("state")}；请发送新任务"
                     else -> "请求状态：${item.optString("state")}"
                 }
@@ -232,6 +264,7 @@ class AgentAuthorizationPanel(
         if (closed || !valid() || !detailsLoading.add(id)) return
         detailsErrors.remove(id); renderPending()
         val fingerprint = item.optString("fingerprint")
+        val revision = connectionRevision
         worker.execute {
             val result = runCatching {
                 check(fingerprint.isNotBlank()) { "Desktop 未提供操作指纹，无法核对完整详情" }
@@ -255,7 +288,7 @@ class AgentAuthorizationPanel(
                 ApprovalDetails(fingerprint, text.toString())
             }
             ui.post {
-                if (closed) return@post
+                if (closed || revision != connectionRevision) return@post
                 detailsLoading.remove(id)
                 if (valid() && pending.any { it.optString("id") == id && it.optString("fingerprint") == fingerprint }) {
                     result.fold({ details[id] = it }, { detailsErrors[id] = "完整详情读取失败：${it.message}；可重试或拒绝" })
@@ -274,14 +307,26 @@ class AgentAuthorizationPanel(
     }
     private fun mutate(command: JSONObject, done: (JSONObject) -> Unit) {
         if (closed || blocked() != null) return
-        mutating = true; actionError = ""; renderPending(); renderDialog()
+        mutating = true; actionError = ""; uncertainPendingId = null; actionReceipt = null; renderStatus(); renderPending(); renderDialog()
+        val revision = connectionRevision
+        val pendingId = command.optString("pending_id").takeIf { command.optString("action") == "resolve" && it.isNotBlank() }
         worker.execute {
-            val result = runCatching { rpc(command, true) }
+            val result = runCatching {
+                check(revision == connectionRevision) { "连接已变化；待确认操作未自动重发" }
+                rpc(command, true)
+            }
             ui.post {
                 if (closed) return@post
                 mutating = false
-                if (!valid()) { permissionsFresh = false; actionError = "连接已变化；请回到原对话刷新确认结果" }
-                else result.fold({ value -> runCatching { done(value) }.onFailure { actionError = it.message.orEmpty(); permissionsFresh = false } }, { actionError = "提交未确认：${it.message}；待办和回答已保留，可重试" })
+                if (!valid() || revision != connectionRevision) {
+                    permissionsFresh = false; actionError = "连接已变化；请回到原对话刷新确认结果"; uncertainPendingId = pendingId
+                } else result.fold({ value ->
+                    runCatching { done(value) }.onFailure {
+                        actionError = it.message.orEmpty(); uncertainPendingId = pendingId; permissionsFresh = false
+                    }
+                }, {
+                    actionError = "提交未确认：${it.message}；待办和回答已保留，可重试"; uncertainPendingId = pendingId
+                })
                 renderStatus(); renderPending(); renderDialog(); changed()
                 refresh()
             }
@@ -299,7 +344,15 @@ class AgentAuthorizationPanel(
             check(resolved.getString("id") == item.getString("id") && !pendingActive(resolved)) { "Desktop 尚未确认本次回答，请刷新重试" }
             pending = pending.map { if (it.getString("id") == resolved.getString("id")) resolved else it }
             prefs.edit().remove("answer:${item.getString("id")}").apply()
-            actionError = when (decision) { "deny" -> "已拒绝本次操作"; null -> "回答已提交"; else -> "授权已提交，等待 Desktop 核对并继续" }
+            actionReceipt = if (resolved.optString("state") == "resolved") ActionReceipt(
+                item.getString("id"), when (decision) {
+                    "deny" -> "已拒绝本次操作"
+                    null -> "回答已确认，正在恢复任务"
+                    else -> "授权已确认，正在恢复任务"
+                }
+            ) else null
+            if (decision == "deny") actionError = "已拒绝本次操作"
+            this.resolved()
         }
     }
     private fun showPermissions() {
@@ -321,9 +374,10 @@ class AgentAuthorizationPanel(
     private fun loadRules() {
         if (closed || rulesLoading || !valid()) return
         rulesLoading = true; renderDialog()
+        val revision = connectionRevision
         worker.execute {
             val result = runCatching { page("rules") }
-            ui.post { if (!closed) {
+            ui.post { if (!closed && revision == connectionRevision) {
                 rulesLoading = false
                 result.fold({ ruleRows = it }, { error = "规则读取失败：${it.message}；原列表已保留" })
                 renderDialog()

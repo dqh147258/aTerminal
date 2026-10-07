@@ -42,6 +42,7 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
     private var sourceEpoch: ULong? = null
     private var sourceGeneration: ULong? = null
     private var followCursor = true
+    private var preserveNextViewport = false
     init {
         frame = frame.copy(cells = cells)
         contentDescription = "终端屏幕，点击输入"
@@ -185,7 +186,17 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
     private val rowNodes = mutableMapOf<Int, RenderNode>()
     private val changedRows = mutableSetOf<Int>()
     fun zoom(scale: Float) { rowNodes.clear(); paint.textSize = 15f * resources.displayMetrics.scaledDensity * scale; metrics.textSize = paint.textSize; cellWidth = metrics.measureText("M"); cellHeight = metrics.fontSpacing; baseline = -metrics.fontMetrics.top; requestLayout(); invalidate() }
-    fun update(next: RenderFrame) { historyInvalidated(); historyFrame = null; rowNodes.clear(); changedRows.clear(); val resized = next.rows != frame.rows || next.cols != frame.cols; cells = next.cells.toMutableList(); frame = next.copy(cells = cells); sourceEpoch = null; sourceGeneration = null; if (resized) requestLayout(); invalidate(); revealCursor() }
+    fun update(next: RenderFrame, preserveViewport: Boolean = false) {
+        val resized = next.rows != frame.rows || next.cols != frame.cols
+        if (!preserveViewport || resized) { historyInvalidated(); historyFrame = null }
+        rowNodes.clear(); changedRows.clear()
+        cells = next.cells.toMutableList(); frame = next.copy(cells = cells)
+        sourceEpoch = null; sourceGeneration = null
+        preserveNextViewport = preserveViewport
+        if (resized) requestLayout()
+        invalidate()
+        if (!preserveViewport) revealCursor()
+    }
     fun apply(update: RenderUpdate) {
         val resized = frame.rows != update.rows || frame.cols != update.cols
         val count = update.rows.toLong() * update.cols.toLong()
@@ -213,7 +224,7 @@ class TerminalView(context: Context, private var frame: RenderFrame) : View(cont
         if (update.full || resized) { rowNodes.clear(); changedRows.clear() } else changedRows.addAll(dirty)
         if (resized) requestLayout()
         if (update.full) invalidate() else for (row in dirty) invalidate(0, (row * cellHeight).toInt(), width, kotlin.math.ceil((row + 1) * cellHeight.toDouble()).toInt())
-        revealCursor()
+        if (preserveNextViewport) preserveNextViewport = false else revealCursor()
     }
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE; textSize = 15f * resources.displayMetrics.scaledDensity; fontFeatureSettings = "'liga' 0" }
     private val metrics = Paint(paint)

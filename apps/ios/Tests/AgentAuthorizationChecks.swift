@@ -194,6 +194,48 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
         var acknowledged: [String: Any] = [:]
         for command in server.commands { if command["action"] as? String == "resolve" { acknowledged = command } }
         check(acknowledged["details_ack"] as? Bool == true && acknowledged["fingerprint"] as? String == "fp-long", "Resolve did not acknowledge exact details")
+        // Lost response, transport replacement, and explicit retry keep the same
+        // account/device/agent idempotency key. Recovery itself sends only reads.
+        let resumed = AgentAuthorization(), resumedServer = Server()
+        let stableScope = "account-a/desktop-a/session-a"
+        resumed.bind(context: "transport-1", scopeKey: stableScope, writable: true, transport: resumedServer.request)
+        await resumed.refresh()
+        let retryItem = resumed.pending[0]
+        resumedServer.failedResolve = true
+        await resumed.resolve(retryItem, decision: "once")
+        let uncertain = resumedServer.commands.last { $0["action"] as? String == "resolve" }!
+        let beforeDisconnect = resumedServer.commands.count
+        resumed.bind(context: "offline", scopeKey: stableScope, writable: false, transport: nil)
+        check(!resumed.canAct && resumed.permissions == nil && resumed.pending.count == 2, "Reconnect discarded pending UI or retained stale authority")
+        await resumed.resolve(retryItem, decision: "once")
+        check(resumedServer.commands.count == beforeDisconnect, "Disconnected approval transmitted")
+        resumed.bind(context: "transport-2", scopeKey: stableScope, writable: true, transport: resumedServer.request)
+        check(!resumed.canAct, "Reconnect enabled action before fresh permission snapshot")
+        await resumed.refresh()
+        check(resumedServer.commands.filter { $0["action"] as? String == "resolve" }.count == 1, "Recovery automatically replayed approval")
+        await resumed.resolve(resumed.pending[0], decision: "once")
+        let retried = resumedServer.commands.last { $0["action"] as? String == "resolve" }!
+        check(uncertain["request_id"] as? String == retried["request_id"] as? String, "Transport replacement lost the uncertain request ID")
+        // Same pending IDs in another account must never reuse an approval token.
+        resumedServer.rows = [["id": retryItem.id, "kind": "approval", "state": "pending"]]
+        resumed.bind(context: "transport-3", scopeKey: "account-b/desktop-a/session-a", writable: true, transport: resumedServer.request)
+        await resumed.refresh(); await resumed.resolve(resumed.pending[0], decision: "once")
+        let other = resumedServer.commands.last { $0["action"] as? String == "resolve" }!
+        check(uncertain["request_id"] as? String != other["request_id"] as? String, "Approval token crossed account scope")
+        // The presentation context is stable across transport changes, preserving
+        // the open question, while authorization uses a separate connection epoch.
+        let retained = AgentInteractionState()
+        retained.bind(scopeKey: stableScope, context: stableScope)
+        retained.open(question, kind: .question, scopeKey: stableScope)
+        let retainedQuestion = retained.presentation!
+        retained.setDraft("answer through offline period", for: retainedQuestion)
+        retained.bind(scopeKey: stableScope, context: stableScope)
+        check(retained.isCurrent(retainedQuestion) && retained.draft(retainedQuestion) == "answer through offline period", "Transport retry closed the open question")
+        let beforeDelayedTap = resumedServer.commands.count
+        let delayedTap = resumed.perform { await $0.setPermissions(full: true) }
+        resumed.bind(context: "next-transport", scopeKey: "account-b/desktop-a/session-a", writable: true, transport: resumedServer.request)
+        await delayedTap.value
+        check(resumedServer.commands.count == beforeDelayedTap, "Queued authorization tap crossed the connection epoch")
         print("PASS: scoped presentation/draft lifetime, consumption and stale-editor fences; authorization recovery, CAS, idempotency, grants, detail ACK and legacy fail-closed")
     }
 }

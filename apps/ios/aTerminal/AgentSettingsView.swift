@@ -12,13 +12,13 @@ import UniformTypeIdentifiers
         #if DEBUG
         if SettingsFixture.enabled {
             let fixture = SettingsFixture.shared
-            session = ConfigurationSession(identity: { (model.target?.key ?? "fixture") + ":" + String(model.connectionEpoch) }, transport: { try await fixture.request($0) })
+            session = ConfigurationSession(identity: { model.target?.key ?? "fixture" }, connectionEpoch: { model.connectionEpoch }, transport: { try await fixture.request($0) })
             session.changed = { [weak self] in self?.objectWillChange.send() }
             return
         }
         #endif
-        session = ConfigurationSession(identity: { (model.target?.key ?? "") + ":" + String(model.connectionEpoch) }, transport: { command in
-            do { return try await model.request(command, configuration: true) }
+        session = ConfigurationSession(identity: { model.target?.key ?? "" }, connectionEpoch: { model.connectionEpoch }, transport: { command in
+            do { return try await model.request(command, configuration: true, expectedEpoch: model.connectionEpoch) }
             catch { throw SettingsFailure.message(terminalError(error)) }
         })
         session.changed = { [weak self] in self?.objectWillChange.send() }

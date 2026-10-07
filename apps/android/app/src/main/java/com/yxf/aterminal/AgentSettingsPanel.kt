@@ -27,7 +27,9 @@ class AgentSettingsPanel(private val activity: Activity, private val body: Linea
         val disabled = mutableListOf<View>()
     }
     private val screens = mutableListOf<Screen>()
-    private var closed = false
+    @Volatile private var closed = false
+    @Volatile private var connectionRevision = 0
+    @Volatile private var connectionAvailable = true
     private val current get() = screens.lastOrNull()
     init {
         body.grow(host); body.addView(status)
@@ -38,7 +40,28 @@ class AgentSettingsPanel(private val activity: Activity, private val body: Linea
         status.setOnClickListener { if (screens.size <= 1 && current?.busy != true) load() }
         load()
     }
-    fun close() { if (closed) return; closed = true; screens.forEach { it.clear() }; screens.clear(); worker.shutdown() }
+    fun close() { if (closed) return; closed = true; connectionRevision++; screens.forEach { it.clear() }; screens.clear(); worker.shutdown() }
+    fun connectionInterrupted() {
+        if (closed) return
+        connectionAvailable = false; connectionRevision++
+        screens.forEach { it.serial++; if (it.busy) busy(it, false) }
+        status.text = "连接暂时中断 · 草稿已保留，恢复后可保存"
+    }
+    fun connectionRestored() {
+        if (closed) return
+        connectionAvailable = true; connectionRevision++
+        if (screens.isEmpty()) load()
+        else run(JSONObject().put("action", "show")) {
+            view = it
+            status.text = "连接已恢复 · 草稿已保留，请检查后保存"
+        }
+    }
+    private fun requestCurrent(command: String, revision: Int): String {
+        check(!closed && connectionAvailable && revision == connectionRevision) { "连接已变化，操作未自动重试" }
+        val result = request(command)
+        check(!closed && connectionAvailable && revision == connectionRevision) { "连接已变化，结果待确认" }
+        return result
+    }
     fun back(): Boolean {
         if (screens.size <= 1) return false
         dismissKeyboard(); screens.removeAt(screens.lastIndex).clear(); display()
@@ -78,14 +101,16 @@ class AgentSettingsPanel(private val activity: Activity, private val body: Linea
     }
     private fun run(command: JSONObject, mutation: Boolean = false, done: (JSONObject) -> Unit) {
         if (closed || current?.busy == true) return
+        if (!connectionAvailable) { status.text = "连接暂时中断 · 草稿已保留，恢复后可保存"; return }
+        val revision = connectionRevision
         val origin = current; val serial = origin?.let { ++it.serial }
         origin?.let { busy(it, true) }
         worker.execute {
             try {
-                val result = JSONObject(request(command.toString()))
+                val result = JSONObject(requestCurrent(command.toString(), revision))
                 val fresh = if (mutation) result else null
                 activity.runOnUiThread {
-                    if (!closed && current === origin && (origin == null || origin.serial == serial)) {
+                    if (!closed && revision == connectionRevision && current === origin && (origin == null || origin.serial == serial)) {
                         origin?.let { busy(it, false) }; fresh?.let { view = it }
                         status.text = if (mutation) "已保存，下次任务生效" else "修改在下次任务生效"
                         done(result)
@@ -93,9 +118,9 @@ class AgentSettingsPanel(private val activity: Activity, private val body: Linea
                 }
             } catch (e: Exception) {
                 val conflict = e.message.orEmpty().contains("revision", true)
-                val fresh = if (conflict) runCatching { JSONObject(request(JSONObject().put("action", "show").toString())) }.getOrNull() else null
+                val fresh = if (conflict) runCatching { JSONObject(requestCurrent(JSONObject().put("action", "show").toString(), revision)) }.getOrNull() else null
                 activity.runOnUiThread {
-                    if (!closed && current === origin && (origin == null || origin.serial == serial)) {
+                    if (!closed && revision == connectionRevision && current === origin && (origin == null || origin.serial == serial)) {
                         origin?.let { busy(it, false) }; fresh?.let { view = it }
                         // Keep controls and non-sensitive draft intact. A second explicit save uses the refreshed revision.
                         status.text = if (conflict) "配置已变化，${if (fresh != null) "已刷新" else "刷新失败"}。请检查草稿后重新保存。" else "未完成：${e.message}"
@@ -435,15 +460,17 @@ class AgentSettingsPanel(private val activity: Activity, private val body: Linea
         fields.labelled("Skill ID *", id)
         fields.addView(activity.label("上传完整文件夹：最多 256 个文件、8 层目录、单文件 2 MiB、总计 8 MiB。", 12f, Palette.muted))
         push("导入 Skill 文件夹", fields, saveTitle = "上传", save = uploadForm@{
+            if (!connectionAvailable) { status.text = "连接暂时中断 · 恢复后可重新上传"; return@uploadForm }
             if (!validId(id, "skills")) return@uploadForm
             val origin = current ?: return@uploadForm
             val revision = view.getLong("revision"); val skillId = id.text.toString()
+            val transportRevision = connectionRevision
             busy(origin, true)
             worker.execute {
                 try {
                     val resolver = activity.contentResolver
                     val document = android.provider.DocumentsContract.getTreeDocumentId(tree)
-                    val start = JSONObject(request(JSONObject().put("action", "skill_upload_begin").put("id", skillId).put("expected_revision", revision).toString()))
+                    val start = JSONObject(requestCurrent(JSONObject().put("action", "skill_upload_begin").put("id", skillId).put("expected_revision", revision).toString(), transportRevision))
                     val token = start.getString("upload_id"); var total = 0L; var files = 0
                     fun walk(parent: String, prefix: String, depth: Int) {
                         check(depth <= 8) { "文件夹层级超过限制" }
@@ -464,7 +491,7 @@ class AgentSettingsPanel(private val activity: Activity, private val body: Linea
                                             val count = size.coerceAtLeast(0); total += count
                                             check(total <= 8388608 && offset + count <= 2097152) { "Skill 文件过大" }
                                             val data = android.util.Base64.encodeToString(buffer, 0, count, android.util.Base64.NO_WRAP)
-                                            request(JSONObject().put("action", "skill_upload_chunk").put("upload_id", token).put("path", path).put("offset", offset).put("data", data).toString())
+                                            requestCurrent(JSONObject().put("action", "skill_upload_chunk").put("upload_id", token).put("path", path).put("offset", offset).put("data", data).toString(), transportRevision)
                                             offset += count; if (size < 0) break
                                         }
                                     }
@@ -473,12 +500,12 @@ class AgentSettingsPanel(private val activity: Activity, private val body: Linea
                         }
                     }
                     walk(document, "", 0)
-                    val fresh = JSONObject(request(JSONObject().put("action", "skill_upload_commit").put("upload_id", token).toString()))
-                    activity.runOnUiThread { if (!closed && current === origin) { busy(origin, false); view = fresh; render() } }
+                    val fresh = JSONObject(requestCurrent(JSONObject().put("action", "skill_upload_commit").put("upload_id", token).toString(), transportRevision))
+                    activity.runOnUiThread { if (!closed && transportRevision == connectionRevision && current === origin) { busy(origin, false); view = fresh; render() } }
                 } catch (e: Exception) {
                     val conflict = e.message.orEmpty().contains("revision", true)
-                    val fresh = if (conflict) runCatching { JSONObject(request(JSONObject().put("action", "show").toString())) }.getOrNull() else null
-                    activity.runOnUiThread { if (!closed && current === origin) {
+                    val fresh = if (conflict) runCatching { JSONObject(requestCurrent(JSONObject().put("action", "show").toString(), transportRevision)) }.getOrNull() else null
+                    activity.runOnUiThread { if (!closed && transportRevision == connectionRevision && current === origin) {
                         busy(origin, false); fresh?.let { view = it }
                         status.text = if (conflict) "配置已变化，请检查后重新上传。" else "导入失败：${e.message}"
                     } }

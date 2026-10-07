@@ -27,7 +27,7 @@ import uniffi.ai_terminal_mobile.*
 import java.util.concurrent.Executors
 
 class MainActivity : Activity(), Choreographer.FrameCallback {
-    private val remote = RemoteTerminal()
+    @Volatile private var remote = RemoteTerminal()
     private val account = Account()
     private val worker = Executors.newSingleThreadExecutor()
     private val historyWorker = Executors.newSingleThreadExecutor()
@@ -39,18 +39,18 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     @Volatile private var generation = 0
     @Volatile private var accountEpoch = 0
     private val accountPersistenceLock = Any()
-    private var selected: String? = null
+    @Volatile private var selected: String? = null
     private var currentTerminalPath: String? = null
     private var controlled = false
     private var desktopAttached = false
     private var sessionExited = false
-    private var connected = false
-    private var accountName = ""
+    @Volatile private var connected = false
+    @Volatile private var accountName = ""
     private var lastHeartbeatAt = 0L
     private var lastSessionRefreshAt = 0L
     private val terminalKeyUps = mutableSetOf<Int>()
-    private var serverUrl = ""
-    private var deviceId = ""
+    @Volatile private var serverUrl = ""
+    @Volatile private var deviceId = ""
     private var deviceName = ""
     private var devices = emptyList<AccountDevice>()
     private var sessions = emptyList<RemoteSession>()
@@ -101,6 +101,11 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private var memory: WorkspaceMemory? = null
     private var restorePending = false
     private var connecting = false
+    private val reconnect = WorkspaceReconnect()
+    private var reconnectControl = false
+    private var displayReady = false
+    private lateinit var reconnectBanner: TextView
+    private val retryConnection = Runnable { reconnectWorkspace() }
     private var aiBusy = false
     private var sessionRefreshBusy = false
     private var refreshDrawer: (() -> Unit)? = null
@@ -152,6 +157,19 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             visibility = View.GONE
         }
         root.addView(entryScreen, FrameLayout.LayoutParams(-1, -1))
+        reconnectBanner = label("", 12f, Palette.text).apply {
+            tag = "workspace.reconnect"
+            gravity = Gravity.CENTER
+            background = shape(Palette.surface, true)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+            visibility = View.GONE
+            setOnClickListener {
+                if (reconnect.blocked != null) accountPanel()
+                else if (reconnect.pending) scheduleReconnect(0)
+            }
+        }
+        placeReconnectBanner()
         setContentView(root)
         applyWorkspaceLayout()
         if (BuildConfig.TERMINAL_DEBUG && intent.getBooleanExtra("render_fixture", false)) {
@@ -422,7 +440,9 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             val list = account.devices()
             post { if (epoch == accountEpoch) {
                 devices = list; deviceBusy = false
-                if (!connected) status.text = "${accountName} · ${list.count { it.platform == "desktop" && it.online }} 台 Desktop 在线"
+                if (!connected && !reconnect.pending) status.text = "${accountName} · ${list.count { it.platform == "desktop" && it.online }} 台 Desktop 在线"
+                // An in-flight discovery must not navigate away from a preserved workspace.
+                if (reconnect.pending) return@post
                 if (overlay?.tag == "account") accountPanel()
                 if (localDebugAutoLogin && !connected && !connecting) {
                     val desktop = list.firstOrNull { it.platform == "desktop" && it.online && it.name == localDebugDesktop }
@@ -469,11 +489,14 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         if (sessionRefreshBusy) return
         sessionRefreshBusy = true
         val version = generation; val device = deviceId; val pathSession = selected
+        val transport = remote; val transportEpoch = reconnect.epoch
         worker.execute {
             try {
-                val list = remote.sessions()
-                val cwd = pathSession?.let { id -> runCatching { JSONObject(remote.agent(id, JSONObject().put("version", 1).put("action", "context").toString())).optString("cwd").takeUnless { it.isBlank() || it == "null" } }.getOrNull() }
+                if (!connected || transportEpoch != reconnect.epoch || generation != version) return@execute
+                val list = transport.sessions()
+                val cwd = pathSession?.let { id -> runCatching { JSONObject(transport.agent(id, JSONObject().put("version", 1).put("action", "context").toString())).optString("cwd").takeUnless { it.isBlank() || it == "null" } }.getOrNull() }
                 post {
+                    if (transportEpoch != reconnect.epoch || generation != version) return@post
                     sessionRefreshBusy = false
                     if (generation == version && connected && deviceId == device) {
                         sessions = list
@@ -485,7 +508,12 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                         if (selected == null && !sessionBusy && overlay == null) list.firstOrNull { !it.exited }?.let { select(it.id, true) }
                     }
                 }
-            } catch (e: Exception) { post { sessionRefreshBusy = false; if (manual && generation == version) notice(e.message ?: "刷新会话失败") } }
+            } catch (e: Exception) { post {
+                if (transportEpoch == reconnect.epoch && generation == version) {
+                    sessionRefreshBusy = false
+                    if (connected) beginReconnect()
+                }
+            } }
         }
     }
     private fun rememberSessions(device: String, list: List<RemoteSession>) {
@@ -497,10 +525,11 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         sessionMeta.text = "$deviceName · ${session.cwd}"
     }
     private fun select(id: String, control: Boolean, chat: Boolean = false) {
+        if (!connected || reconnect.pending) { notice("连接恢复后可切换终端"); return }
         val reopenKeyboard = control && keyboardOpen
         beginEntry("正在打开终端…")
         terminalScrollback?.live(); terminalScrollback = null
-        closeOverlay(); toggleInput(false); currentTerminalPath = null; generation++; val version = generation
+        closeOverlay(); toggleInput(false); currentTerminalPath = null; generation++; sessionRefreshBusy = false; val version = generation
         selected = null; controlled = false; desktopAttached = false; sessionExited = false
         surface.removeAllViews(); terminal = null
         status.text = "打开会话…"
@@ -510,6 +539,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 val attached = remote.desktopAttached(); val exited = remote.sessionExited()
                 post { if (generation == version && active) {
                     selected = id; controlled = hasControl; desktopAttached = attached; sessionExited = exited
+                    displayReady = true
                     memory?.remember(deviceId, id)
                     updateSessionHeader()
                     if (sessions.none { it.id == id }) { sessionTitle.text = "终端"; sessionMeta.text = "$deviceName · $id" }
@@ -532,7 +562,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         if (terminal == null) { terminal = TerminalView(this, frame).apply {
             beforeInput = { terminalScrollback?.live() }
             historyInvalidated = { terminalScrollback?.live() }
-            canType = { selected != null && controlled && (this@MainActivity.overlay == null || this@MainActivity.overlay?.tag == "keys") }
+            canType = { connected && !reconnect.pending && selected != null && controlled && (this@MainActivity.overlay == null || this@MainActivity.overlay?.tag == "keys") }
             sendText = { text -> enqueue { remote.typeText(text) } }
             sendPaste = { text -> enqueue { remote.sendText(text, false) } }
             sendKey = { key -> enqueue { remote.sendKey(key) } }
@@ -544,11 +574,12 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         dimensions.text = "${frame.cols} 列 × ${frame.rows} 行 · UTF-8"
     }
     private fun enqueue(action: () -> Unit): Boolean {
+        if (!connected || reconnect.pending || !controlled || selected == null) { notice(readOnlyReason()); return false }
         terminalScrollback?.live()
-        if (!controlled || selected == null) { notice(readOnlyReason()); return false }
         return try { action(); true } catch (e: Exception) { notice(e.message ?: "输入失败"); false }
     }
     private fun readOnlyReason() = when {
+        reconnect.pending || !connected -> "连接暂时中断，恢复后可输入；离线输入不会发送"
         selected == null -> "请先选择会话"
         sessionExited -> "会话已结束，只能查看历史"
         !desktopAttached -> "Desktop 已离开；在桌面重新 --attach 后可输入"
@@ -708,33 +739,43 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 if (!current() || submitting) return@setOnClickListener
                 // Keep the exact path: spaces and shell metacharacters are valid directory names.
                 val path = cwd.text.toString()
+                val transport = remote; val transportEpoch = reconnect.epoch
                 submitting = true; cwd.isEnabled = false; dialog.setCancelable(false)
                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
                 dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isEnabled = false
                 worker.execute {
+                    var sent = false
                     try {
-                        if (generation != version || deviceId != desktop) { post { dialog.dismiss() }; return@execute }
-                        val created = remote.createSession(path)
+                        check(connected && generation == version && deviceId == desktop && transportEpoch == reconnect.epoch) { "连接已变化，尚未发送创建请求" }
+                        sent = true
+                        val created = transport.createSession(path)
                         // A failed refresh must never turn successful creation into a retryable failure.
-                        val list = runCatching { remote.sessions() }.getOrNull()
-                        post { if (current()) {
+                        val list = runCatching { transport.sessions() }.getOrNull()
+                        post { if (current() && transportEpoch == reconnect.epoch) {
                             dialog.dismiss(); sessions = list ?: (listOf(created) + sessions); select(created.id, true)
+                        } else if (generation == version && deviceId == desktop && dialog.isShowing) {
+                            cwd.error = "创建结果待确认，请先查看工作空间中的会话"
+                            dialog.setCancelable(true); dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isEnabled = true
                         } else { dialog.dismiss() } }
                     } catch (e: Exception) { post {
-                        if (current()) {
-                            submitting = false; cwd.isEnabled = true; cwd.error = e.message
+                        if (generation == version && deviceId == desktop && dialog.isShowing) {
+                            // Creation has no idempotency key. An uncertain result is never retried.
+                            val uncertain = sent
+                            submitting = uncertain; cwd.isEnabled = !uncertain
+                            cwd.error = if (uncertain) "创建结果待确认，请先查看工作空间中的会话" else e.message
                             dialog.setCancelable(true)
-                            dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true
+                            dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = !uncertain
                             dialog.getButton(AlertDialog.BUTTON_NEGATIVE).isEnabled = true
                         } else { dialog.dismiss() }
                     } }
                 }
             }
+            val transport = remote; val transportEpoch = reconnect.epoch
             worker.execute {
                 try {
-                    if (generation != version || deviceId != desktop) return@execute
-                    val paths = remote.recentDirectories()
-                    post { if (current()) {
+                    if (!connected || generation != version || deviceId != desktop || transportEpoch != reconnect.epoch) return@execute
+                    val paths = transport.recentDirectories()
+                    post { if (current() && transportEpoch == reconnect.epoch) {
                         loading.text = if (paths.isEmpty()) "暂无最近目录，可输入目录或使用默认目录" else "选择后可编辑，再点击创建"
                         paths.forEach { path ->
                             recent.addView(settingsRow(path.substringAfterLast('/').ifEmpty { path }, path, R.drawable.ic_terminal) {
@@ -742,16 +783,18 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                             }); recent.settingsDivider()
                         }
                     } }
-                } catch (e: Exception) { post { if (current()) { loading.text = "最近目录读取失败，可输入目录或使用默认目录" } } }
+                } catch (e: Exception) { post { if (current() && transportEpoch == reconnect.epoch) { loading.text = "最近目录读取失败，可输入目录或使用默认目录" } } }
             }
         }
         dialog.show()
     }
     private fun closeSession(session: RemoteSession) {
+        val ownerEpoch = accountEpoch; val device = deviceId
         AlertDialog.Builder(this).setTitle("关闭会话？").setMessage(session.cwd + "\n终端进程将结束，AI 历史保留。")
             .setNegativeButton("取消", null).setPositiveButton("关闭会话") { _, _ ->
-                if (sessionBusy) return@setPositiveButton
+                if (sessionBusy || !connected || reconnect.pending || ownerEpoch != accountEpoch || device != deviceId) return@setPositiveButton
                 sessionBusy = true; val version = ++generation
+                val transport = remote; val transportEpoch = reconnect.epoch
                 val closingDevice = deviceId
                 uncertainSessions.add(closingDevice to session.id)
                 selected = null; controlled = false; desktopAttached = false; sessionExited = false; toggleInput(false)
@@ -759,20 +802,22 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 status.text = "正在关闭会话"
                 worker.execute {
                     var confirmed = false
-                    try { if (generation == version) {
-                        remote.select(session.id, true); remote.closeSelected(); confirmed = true
-                        post { if (generation == version) {
+                    try { if (generation == version && connected && transportEpoch == reconnect.epoch) {
+                        transport.select(session.id, true)
+                        check(connected && transportEpoch == reconnect.epoch) { "连接已变化" }
+                        transport.closeSelected(); confirmed = true
+                        post { if (generation == version && transportEpoch == reconnect.epoch) {
                             uncertainSessions.remove(closingDevice to session.id)
                             sessions = sessions.filterNot { it.id == session.id }
                             memory?.record(closingDevice, sessions.associate { it.id to it.exited })
                             status.text = "会话已关闭"; openDrawer()
                         } }
-                        val list = remote.sessions()
-                        post { if (generation == version) { sessions = list; uncertainSessions.removeAll { it.first == closingDevice }; memory?.record(closingDevice, list.associate { it.id to it.exited }) } }
+                        val list = transport.sessions()
+                        post { if (generation == version && transportEpoch == reconnect.epoch) { sessions = list; uncertainSessions.removeAll { it.first == closingDevice }; memory?.record(closingDevice, list.associate { it.id to it.exited }) } }
                     } } catch (e: Exception) {
                         val message = (if (confirmed) "会话已关闭，刷新列表失败" else "关闭结果待确认") + "：" + (e.message ?: "连接错误")
-                        post { if (generation == version) { notice(message); openDrawer() } }
-                    } finally { post { sessionBusy = false; if (generation == version && overlay?.tag == "drawer") openDrawer() } }
+                        post { if (generation == version && transportEpoch == reconnect.epoch) { notice(message); openDrawer() } }
+                    } finally { post { if (generation == version) { sessionBusy = false; if (transportEpoch == reconnect.epoch && overlay?.tag == "drawer") openDrawer() } } }
                 }
             }.show()
     }
@@ -795,19 +840,28 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         val lines = mutableListOf<String>()
         var closed = false
         var loading = false
+        val transport = remote; val transportEpoch = reconnect.epoch
         fun release(value: TerminalHistoryCursor?) {
-            if (value != null && !historyWorker.isShutdown) historyWorker.execute { runCatching { remote.releaseHistory(value) } }
+            if (value != null && !historyWorker.isShutdown) historyWorker.execute { runCatching { transport.releaseHistory(value) } }
         }
         historyClose = { closed = true; release(cursor); cursor = null }
         fun load() {
             if (closed || loading) return
+            if (!connected || transportEpoch != reconnect.epoch) {
+                summary.text = "连接已变化 · 已保留历史，可在恢复后读取最新历史"
+                return
+            }
             loading = true; more.isEnabled = false
             val previous = cursor
             historyWorker.execute {
                 try {
-                    val page = remote.readHistoryPage(previous)
+                    val page = transport.readHistoryPage(previous)
                     post {
-                        if (!active || generation != version || closed) { release(page.cursor); return@post }
+                        if (!active || generation != version || transportEpoch != reconnect.epoch || closed) {
+                            release(page.cursor)
+                            if (!closed) { loading = false; summary.text = "连接已变化 · 已保留历史，可在恢复后读取最新历史" }
+                            return@post
+                        }
                         val oldHeight = text.height; val oldY = viewport.scrollY
                         cursor = page.cursor; lines.addAll(0, page.lines)
                         text.text = lines.joinToString("\n").ifEmpty { "暂无终端历史" }
@@ -818,7 +872,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                         else viewport.post { if (!closed) viewport.fullScroll(View.FOCUS_DOWN) }
                     }
                 } catch (e: Exception) {
-                    post { if (active && generation == version && !closed) {
+                    post { if (active && generation == version && transportEpoch == reconnect.epoch && !closed) {
                         loading = false; more.isEnabled = false
                         summary.text = "历史读取失败，请读取最新历史：${e.message}"
                     } }
@@ -955,10 +1009,13 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private fun loadAgentArchives() {
         if(!connected||archiveLoading)return
         archiveLoading=true;val version=generation;val device=deviceId
+        val transport = remote; val transportEpoch = reconnect.epoch
         historyWorker.execute{try {
-            val rows=JSONObject(remote.agent("",JSONObject().put("version",1).put("action","list").toString())).getJSONArray("agents")
+            if (!connected || transportEpoch != reconnect.epoch) return@execute
+            val rows=JSONObject(transport.agent("",JSONObject().put("version",1).put("action","list").toString())).getJSONArray("agents")
             val archives=(0 until rows.length()).mapNotNull { val scope=rows.getJSONObject(it).getJSONObject("scope");val id=scope.optString("session").takeUnless {it.isEmpty() || it=="null"};id?.let { Conversation(device,it,"终端 "+it.take(8)) } }
             post {
+                if (transportEpoch != reconnect.epoch) return@post
                 archiveLoading = false
                 if (version == generation && device == deviceId) {
                     val known = agentArchives.associateBy { it.deviceId to it.sessionId }
@@ -968,7 +1025,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                     refreshDrawer?.invoke()
                 }
             }
-        }catch(_:Exception){post{archiveLoading=false}}}
+        }catch(_:Exception){post{if (transportEpoch == reconnect.epoch) archiveLoading=false}}}
     }
     private fun accountPanel() = accountPanel(overlay?.tag == "account" && accountFromSettings)
     private fun accountPanel(fromSettings: Boolean) {
@@ -1126,6 +1183,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         }
         layer.setOnClickListener { closeOverlay(hideIme = !special) }
         root.addView(layer, FrameLayout.LayoutParams(-1, -1)); overlay = layer; overlayPanel = body
+        if (::reconnectBanner.isInitialized && reconnect.pending) placeReconnectBanner()
         body.announceForAccessibility(title)
         return body
     }
@@ -1137,6 +1195,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         globalPanel?.close(); globalPanel = null
         refreshDrawer = null; ui.removeCallbacks(drawerRefresh)
         overlay?.let { root.removeView(it) }; overlay = null; overlayPanel = null
+        if (::reconnectBanner.isInitialized) placeReconnectBanner()
         workspace.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
         toolRail.visibility = View.VISIBLE
         if (hideIme) hideKeyboard()
@@ -1148,8 +1207,11 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         globalPanel = GlobalConversationPanel(this, body, listOf(server, owner, device), deviceName.ifEmpty { "Desktop" },
             { connected && deviceId == device && accountName == owner && serverUrl == server },
             { json ->
+                val transport = remote; val transportEpoch = reconnect.epoch
                 check(connected && deviceId == device && accountName == owner && serverUrl == server) { "连接已变化" }
-                remote.agent("", json)
+                val result = transport.agent("", json)
+                check(connected && transportEpoch == reconnect.epoch && transport === remote && deviceId == device && accountName == owner && serverUrl == server) { "连接已变化" }
+                result
             }, { closeOverlay() }, { row -> openChat(global = row) })
     }
     private fun openChat(history: Conversation? = null, global: JSONObject? = null) {
@@ -1160,8 +1222,11 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         agentPanel = AgentPanel(this, body, listOf(serverUrl, accountName, device), history?.sessionId ?: selected.orEmpty(),
             { connected && deviceId == device && accountName == account && serverUrl == server && (global != null || generation == version) },
             { session, json ->
+                val transport = remote; val transportEpoch = reconnect.epoch
                 check(connected && deviceId == device && accountName == account && serverUrl == server && (global != null || generation == version)) { "连接已变化" }
-                remote.agent(session, json)
+                val result = transport.agent(session, json)
+                check(connected && transportEpoch == reconnect.epoch && transport === remote && deviceId == device && accountName == account && serverUrl == server && (global != null || generation == version)) { "连接已变化" }
+                result
             }, {}, history != null, workingPath = {
                 if (global != null) deviceName.ifEmpty { "Desktop" }
                 else if (history != null && history.sessionId != selected) history.title
@@ -1182,18 +1247,20 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         body.addView(label("$accountName · $deviceName",12f,Palette.muted))
         val device=deviceId; val account=accountName;val version=generation
         settingsEditor = AgentSettingsPanel(this, body, { json ->
+            val transport = remote; val transportEpoch = reconnect.epoch
             check(connected && device==deviceId && account==accountName && version==generation) { "连接已变化" }
-            val result = remote.configuration(json)
-            check(connected && device==deviceId && account==accountName && version==generation) { "连接已变化" }
+            val result = transport.configuration(json)
+            check(connected && transportEpoch == reconnect.epoch && transport === remote && device==deviceId && account==accountName && version==generation) { "连接已变化" }
             result
         }, selected.orEmpty(), { callback ->
             skillPicker=callback
             startActivityForResult(android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT_TREE),830)
         }, page, { heading -> (header.getChildAt(1) as TextView).text = heading })
+        if (reconnect.pending) settingsEditor?.connectionInterrupted()
     }
 
     private fun restoreLastSession() {
-        if (!active || !restorePending || connecting || connected) return
+        if (!active || !restorePending || connecting || connected || reconnect.pending) return
         restorePending = false
         val target = memory?.last() ?: return
         if (memory?.closed(target.first, target.second) == true) { status.text = "上次会话已关闭"; return }
@@ -1219,10 +1286,120 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         return super.dispatchTouchEvent(event)
     }
 
+    /** A transport outage is not navigation. Keep the exact views, drafts, selection and scroll. */
+    private fun beginReconnect() {
+        if (!reconnect.interrupt()) return
+        reconnectControl = controlled
+        connected = false; controlled = false; displayReady = false; connecting = false
+        sessionRefreshBusy = false; archiveLoading = false; restorePending = false
+        terminalKeyUps.clear()
+        terminalScrollback?.suspendTransport()
+        agentPanel?.connectionInterrupted()
+        globalPanel?.connectionInterrupted()
+        settingsEditor?.connectionInterrupted()
+        connection.text = "重连中"; connection.setTextColor(Palette.muted)
+        updateReconnectBanner()
+        refreshDrawer?.invoke()
+        scheduleReconnect(reconnect.delayMillis)
+    }
+
+    private fun updateReconnectBanner() {
+        reconnectBanner.text = when (reconnect.blocked) {
+            WorkspaceReconnect.Blocked.AUTHENTICATION -> "登录已失效 · 点此到账号页重新登录"
+            WorkspaceReconnect.Blocked.ACCESS -> "设备访问已变化 · 点此检查账号与设备"
+            WorkspaceReconnect.Blocked.LEGACY_PAIRING -> "连接已断开 · 点此重新配对"
+            null -> "连接暂时中断，正在后台重连 · 可继续查看"
+        }
+        reconnectBanner.visibility = if (reconnect.pending) View.VISIBLE else View.GONE
+        placeReconnectBanner()
+    }
+
+    private fun placeReconnectBanner() {
+        // A real inline row leaves back/close controls and the composer reachable during outages.
+        val parent = overlayPanel as? LinearLayout ?: workspace
+        if (reconnectBanner.parent === parent) return
+        (reconnectBanner.parent as? android.view.ViewGroup)?.removeView(reconnectBanner)
+        parent.addView(reconnectBanner, if (parent === workspace) 2 else 1, LinearLayout.LayoutParams(-1, -2).apply {
+            setMargins(dp(12), dp(4), dp(12), dp(4))
+        })
+    }
+
+    private fun scheduleReconnect(delayMillis: Long) {
+        ui.removeCallbacks(retryConnection)
+        if (active && reconnect.pending && !reconnect.inFlight && reconnect.blocked == null) {
+            ui.postDelayed(retryConnection, delayMillis)
+        }
+    }
+
+    private fun reconnectWorkspace() {
+        if (!active) return
+        val ticket = reconnect.attempt() ?: return
+        if (accountName.isEmpty() || deviceId.isEmpty()) {
+            reconnect.fail(ticket, WorkspaceReconnect.Blocked.LEGACY_PAIRING)
+            updateReconnectBanner()
+            return
+        }
+        val epoch = accountEpoch; val version = generation; val device = deviceId
+        val session = selected; val takeControl = reconnectControl
+        fun current() = reconnect.epoch == ticket && epoch == accountEpoch && version == generation && device == deviceId && session == selected
+        worker.execute {
+            // Each attempt gets a new native channel. Old RPCs can never bind to its session.
+            val candidate = RemoteTerminal()
+            var posted = false
+            try {
+                if (!current()) return@execute
+                account.connect(device, candidate)
+                if (!current()) return@execute
+                val list = candidate.sessions()
+                if (!current()) return@execute
+                val target = list.firstOrNull { it.id == session }
+                val frame = target?.let { candidate.select(it.id, takeControl) }
+                val hasControl = candidate.hasControl()
+                val attached = candidate.desktopAttached()
+                val exited = target?.exited ?: (session != null)
+                if (!current()) return@execute
+                ui.post {
+                    if (isDestroyed || !active || !current() || !reconnect.complete(ticket)) {
+                        candidate.close()
+                        return@post
+                    }
+                    val previous = remote
+                    remote = candidate
+                    sessions = list; connected = true; displayReady = frame != null
+                    controlled = frame != null && hasControl; desktopAttached = attached; sessionExited = exited
+                    uncertainSessions.removeAll { it.first == device }
+                    memory?.record(device, list.associate { it.id to it.exited }); rememberSessions(device, list)
+                    terminalScrollback?.resumeTransport(candidate)
+                    if (frame != null) terminal?.update(frame, preserveViewport = true)
+                    connection.text = "已连接"; connection.setTextColor(Palette.green)
+                    status.text = if (session != null && target == null) "原会话已关闭 · 已保留最后画面和 AI 历史" else "连接已恢复"
+                    if (entryPending) finishEntry()
+                    updateSessionHeader(); updateReconnectBanner()
+                    agentPanel?.connectionRestored(); globalPanel?.connectionRestored()
+                    settingsEditor?.connectionRestored()
+                    refreshDrawer?.invoke()
+                    if (overlay?.tag == "drawer") { ui.removeCallbacks(drawerRefresh); ui.postDelayed(drawerRefresh, 3000) }
+                    worker.execute { runCatching { previous.disconnect() }; previous.close() }
+                }
+                posted = true
+            } catch (error: Exception) {
+                post {
+                    if (current() && reconnect.fail(ticket, WorkspaceReconnect.blockedBy(error.message.orEmpty()))) {
+                        updateReconnectBanner()
+                        scheduleReconnect(reconnect.delayMillis)
+                    }
+                }
+            } finally {
+                if (!posted) candidate.close()
+                runCatching { persist(epoch) }
+            }
+        }
+    }
+
     override fun doFrame(frameTimeNanos: Long) {
         if (!active) return
         val now = android.os.SystemClock.elapsedRealtime()
-        if (accountName.isNotEmpty() && !heartbeatBusy && !entryPending && !connecting && now - lastHeartbeatAt >= 10_000) {
+        if (accountName.isNotEmpty() && !heartbeatBusy && !entryPending && !connecting && !reconnect.pending && now - lastHeartbeatAt >= 10_000) {
             lastHeartbeatAt = now; heartbeatBusy = true
             val epoch = accountEpoch
             val discover = !connected && !deviceBusy
@@ -1245,7 +1422,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             }
         }
         if (connected && now - lastSessionRefreshAt >= 3000) { lastSessionRefreshAt = now; refreshSessions() }
-        if (selected != null) try {
+        if (connected && displayReady && selected != null) try {
             remote.pollDisplay()?.let { batch ->
                 batch.update?.let { terminal?.apply(it); dimensions.text = "${it.cols} 列 × ${it.rows} 行 · UTF-8" }
                 val lostControl = controlled && !batch.controlled
@@ -1260,10 +1437,13 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                 val shownStatus = historyStatus ?: next
                 if (status.text.toString() != shownStatus) status.text = shownStatus
             }
-        } catch (e: Exception) { disconnect(); notice(e.message ?: "显示同步失败，请重新连接") }
+        } catch (_: Exception) { beginReconnect() }
         Choreographer.getInstance().postFrameCallback(this)
     }
     private fun disconnect() {
+        reconnect.cancel(); ui.removeCallbacks(retryConnection)
+        if (::reconnectBanner.isInitialized) reconnectBanner.visibility = View.GONE
+        displayReady = false
         createDialog?.dismiss()
         terminalScrollback?.live(); terminalScrollback = null
         generation++; selected = null; currentTerminalPath = null; controlled = false; desktopAttached = false; sessionExited = false; connected = false; connecting = false; sessions = emptyList()
@@ -1272,18 +1452,28 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         connection.text = "未连接"; connection.setTextColor(Palette.muted)
         toggleInput(false); surface.removeAllViews(); terminal = null; empty.visibility = View.VISIBLE
         sessionTitle.text = "aTerminal"; sessionMeta.text = deviceName.ifEmpty { "选择 Desktop" }
-        work { remote.disconnect() }
+        val transport = remote
+        work { transport.disconnect() }
     }
     override fun onStart() {
         super.onStart(); agentPanel?.resume(); globalPanel?.resume(); active = true; Choreographer.getInstance().postFrameCallback(this)
-        if (accountName.isNotEmpty() && !connected) { beginEntry(); restorePending = true; val epoch = accountEpoch; work { loadDevices(epoch) } }
+        if (reconnect.pending) scheduleReconnect(0)
+        else if (accountName.isNotEmpty() && !connected) { beginEntry(); restorePending = true; val epoch = accountEpoch; work { loadDevices(epoch) } }
     }
     override fun onStop() {
-        terminalScrollback?.live(); terminalScrollback = null
         active = false; terminalKeyUps.clear(); toast?.cancel(); agentPanel?.pause(); globalPanel?.pause(); Choreographer.getInstance().removeFrameCallback(this)
-        if (imagePicker == null && skillPicker == null) { closeOverlay(); disconnect() }; super.onStop()
+        if (imagePicker == null && skillPicker == null) {
+            if (connected || reconnect.pending) {
+                beginReconnect(); reconnect.suspend(); ui.removeCallbacks(retryConnection)
+                val transport = remote
+                work { transport.disconnect() }
+            } else { closeOverlay(); disconnect() }
+        }
+        super.onStop()
     }
     override fun onDestroy() {
+        createDialog?.dismiss(); settingsEditor?.close()
+        reconnect.cancel(); ui.removeCallbacks(retryConnection)
         synchronized(accountPersistenceLock) { accountEpoch++ }
         agentPanel?.close(); globalPanel?.close(); assistant?.close(); worker.execute { remote.close(); account.close() }; worker.shutdown(); historyWorker.shutdown()
         super.onDestroy()

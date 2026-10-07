@@ -40,7 +40,10 @@ struct AgentPendingCard: View {
     }
     private var canRespond: Bool { model.authorization.canAct && model.agentConnectionReason == nil }
     private func action(_ title: String, decision: String) -> some View {
-        Button(title) { Task { await model.authorization.resolve(item, decision: decision) } }
+        Button(title) {
+            guard model.target == destination else { return }
+            model.authorization.perform { await $0.resolve(item, decision: decision) }
+        }
             .frame(minHeight: 44).disabled(!canRespond || (decision != "deny" && !model.authorization.canApprove(item))).accessibilityIdentifier("authorization.resolve." + decision)
     }
 }
@@ -99,9 +102,9 @@ struct AgentQuestionView: View {
         guard canSubmit else { return }
         answering = false
         let submittedAnswer = answer
-        Task {
+        model.authorization.perform { authorization in
             guard model.target?.key == presentation.scopeKey, model.interactions.isCurrent(presentation) else { return }
-            await model.authorization.resolve(item, answer: submittedAnswer)
+            await authorization.resolve(item, answer: submittedAnswer)
             if model.target?.key != presentation.scopeKey || (model.authorization.permissions != nil && !current) { dismiss() }
         }
     }
@@ -114,11 +117,11 @@ struct AgentAuthorizationView: View {
         NavigationView {
             Form {
                 Section(header: Text("当前 Agent 对话")) {
-                    Picker("操作模式", selection: Binding(get: { model.authorization.mode }, set: { mode in Task { await model.authorization.setPermissions(mode: mode) } })) {
+                    Picker("操作模式", selection: Binding(get: { model.authorization.mode }, set: { mode in model.authorization.perform { await $0.setPermissions(mode: mode) } })) {
                         Text("按需授权").tag("ask")
                         Text("只读").tag("read_only")
                     }.accessibilityIdentifier("authorization.mode")
-                    Toggle("完全授权直到手动关闭", isOn: Binding(get: { model.authorization.full }, set: { full in Task { await model.authorization.setPermissions(full: full) } }))
+                    Toggle("完全授权直到手动关闭", isOn: Binding(get: { model.authorization.full }, set: { full in model.authorization.perform { await $0.setPermissions(full: full) } }))
                         .disabled(model.authorization.mode == "read_only")
                         .accessibilityIdentifier("authorization.full")
                     Text("开启后，此对话的后续任务及委托无需逐项审批；关闭后尚未执行的操作重新检查。账号、Session、取消和人工控制限制始终有效。").font(.caption)
@@ -131,7 +134,7 @@ struct AgentAuthorizationView: View {
                     ForEach(model.authorization.rules) { rule in
                         VStack(alignment: .leading, spacing: 8) {
                             Text(rule.preview).font(.callout).textSelection(.enabled)
-                            Button("撤销规则", role: .destructive) { Task { await model.authorization.revoke(rule) } }
+                            Button("撤销规则", role: .destructive) { model.authorization.perform { await $0.revoke(rule) } }
                                 .disabled(!model.authorization.canAct || model.agentConnectionReason != nil)
                                 .accessibilityIdentifier("authorization.revoke." + rule.id)
                         }
