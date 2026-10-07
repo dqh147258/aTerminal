@@ -1,5 +1,6 @@
 //! Versioned terminal display protocol. Application VT bytes never reach replicas.
 pub mod local;
+pub mod screens;
 use prost::Message;
 use thiserror::Error;
 

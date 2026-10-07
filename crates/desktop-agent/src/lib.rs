@@ -12,6 +12,7 @@ pub mod pty;
 pub mod raster;
 mod recent_directories;
 mod remote_bridge;
+mod screens;
 mod secrets;
 mod service;
 mod shell;

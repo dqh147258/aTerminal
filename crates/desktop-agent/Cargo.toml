@@ -14,6 +14,8 @@ jsonschema = { version = "=0.33.0", default-features = false }
 process-wrap = { version = "=10.0.1", default-features = false, features = ["tokio1", "process-group", "job-object", "kill-on-drop"] }
 fontdue = { version = "=0.9.3", default-features = false, features = ["std"] }
 png = "=0.18.1"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+tempfile = "3"
 unicode-width = "0.2"
 base64.workspace = true
 chrono = "0.4"
@@ -36,6 +38,15 @@ keyring = { version = "3", features = ["apple-native", "windows-native", "linux-
 [target.'cfg(windows)'.dependencies]
 ai-terminal-windows-process = { path = "../windows-process" }
 
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+xcap = "=0.4.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "=0.25.0"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+xcb = { version = "1.7", features = ["randr"] }
+
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1", features = ["process"] }
 
@@ -43,5 +54,6 @@ rustix = { version = "1.1", features = ["process"] }
 workspace = true
 
 [dev-dependencies]
+ai-terminal-server = { path = "../server" }
 axum = "0.8"
 tempfile = "3"

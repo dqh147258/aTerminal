@@ -68,6 +68,11 @@ pub struct Request {
     /// Zero captures a new reading copy; otherwise reads this client's existing copy.
     #[prost(uint64, tag = "26")]
     pub scrollback_id: u64,
+    /// Screens use their own identity and size, independent of terminal session/control.
+    #[prost(string, tag = "27")]
+    pub screen_id: String,
+    #[prost(uint32, tag = "28")]
+    pub screen_max_width: u32,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, prost::Enumeration)]
 #[repr(i32)]
@@ -107,6 +112,8 @@ pub enum Operation {
     /// a positive limit selects a text page, newest page first.
     Scrollback = 25,
     ReleaseScrollback = 26,
+    RemoteScreens = 27,
+    RemoteScreenFrame = 28,
 }
 
 #[derive(Clone, PartialEq, Message)]
@@ -183,6 +190,9 @@ pub struct Reply {
     /// Absent on older Desktops; only populated by List.
     #[prost(string, repeated, tag = "16")]
     pub recent_directories: Vec<String>,
+    /// Advertised by List. Probe before sending screen operations to older Desktops.
+    #[prost(uint32, tag = "17")]
+    pub screen_protocol_version: u32,
 }
 pub fn write_message<W: Write, M: Message>(out: &mut W, message: &M) -> io::Result<()> {
     let bytes = message.encode_to_vec();
@@ -225,10 +235,12 @@ mod compatibility_tests {
             }],
         };
         let new = Reply::decode(old.encode_to_vec().as_slice()).unwrap();
+        assert_eq!(new.screen_protocol_version, 0);
         assert!(new.recent_directories.is_empty());
         assert_eq!(new.sessions, old.sessions);
         let new = Reply {
             recent_directories: vec!["/project space".into()],
+            screen_protocol_version: crate::screens::SCREEN_PROTOCOL_VERSION,
             ..new
         };
         assert_eq!(
