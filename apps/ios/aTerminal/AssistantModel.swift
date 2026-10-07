@@ -80,6 +80,7 @@ struct AgentItem: Identifiable {
     private var visible = false
     private var epoch = 0
     private var authorizationEpoch = 0
+    private var presentationEpoch = 0
     private var generation: Int64?
     private var cursor: String?
     private var pages: [[AgentItem]] = []
@@ -164,6 +165,15 @@ struct AgentItem: Identifiable {
         if connectionChanged || self.connected != connected { globalEpoch += 1; globalLoading = false; globalCreating = false; globalConfirmed = false; archiveLoading = false }
         let changedDesktop = self.scope?.identity != scope?.identity || self.scope?.device != scope?.device
         if self.scope?.identity != identity { historySearch.cancel() }
+        if self.scope == scope {
+            // The page, history cursor, global agent, open question and draft belong
+            // to this scope, not the transport. Reconnect only replaces its RPC epoch.
+            stop(preservingContext: true); self.connected = connected; available = false
+            bindAuthorization()
+            if connected { loadArchives(); if visible { start() } }
+            else { status = "连接暂时中断 · 当前页面和草稿已保留" }
+            return
+        }
         saveDraft(); stop(); self.scope = scope; historyTarget=nil; self.connected = connected; available = false; historyCacheWarning = ""
         if let identity, let data = WorkspacePreferences.defaults.data(forKey: "agent.archives." + identity.key) { archives = (try? JSONDecoder().decode([ChatArchive].self, from: data)) ?? [] }
         else { archives = [] }
@@ -191,7 +201,15 @@ struct AgentItem: Identifiable {
         reset(); if visible { start() }
     }
     func setVisible(_ value: Bool, core: RemoteTerminal) { visible = value; stop(); if value { reset(); start() } }
-    func stop() { interactions.bind(scopeKey: nil, context: UUID().uuidString); authorizationEpoch += 1; authorization.bind(context: UUID().uuidString, writable: false, transport: nil); epoch += 1; task?.cancel(); task = nil; loading = false }
+    func stop(preservingContext: Bool = false) {
+        if !preservingContext {
+            presentationEpoch += 1
+            interactions.bind(scopeKey: nil, context: UUID().uuidString)
+        }
+        authorizationEpoch += 1
+        authorization.bind(context: UUID().uuidString, scopeKey: target?.key, writable: false, transport: nil)
+        epoch += 1; task?.cancel(); task = nil; loading = false
+    }
     func switchScope() { historyTarget=nil; restoreDraft(); stop(); reset(); if visible { start() } }
     func openSession() { saveDraft(); global = false; globalID = nil; browsing = false; switchScope() }
     func openGlobal(_ row: [String: Any]) {
@@ -231,8 +249,8 @@ struct AgentItem: Identifiable {
     private func bindAuthorization() {
         let destination = target; let connection = connectionEpoch; let version = authorizationEpoch
         let context = "\(destination?.key ?? ""):\(connection):\(version)"
-        interactions.bind(scopeKey: destination?.key, context: context)
-        authorization.bind(context: context, writable: agentConnectionReason == nil && connected,
+        interactions.bind(scopeKey: destination?.key, context: "\(destination?.key ?? ""):\(presentationEpoch)")
+        authorization.bind(context: context, scopeKey: destination?.key, writable: agentConnectionReason == nil && connected,
             transport: connected && destination != nil ? { [weak self] command in
                 guard let self, self.target == destination, self.authorizationEpoch == version else { throw CancellationError() }
                 let value = try await self.request(command, destination: destination, expectedEpoch: connection)

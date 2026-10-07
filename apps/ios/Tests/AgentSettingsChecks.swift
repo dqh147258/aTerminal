@@ -242,6 +242,27 @@ private func same(_ left: Any, _ right: Any) -> Bool {
             try check(newCompleted && !session.busy && transport.commands.count == 2, "New read after cancellation did not complete independently")
         }
     }
+    @MainActor static func settingsResumeSameScopeWithoutReplay() async throws {
+        var connection = 1
+        let transport = ControlledTransport()
+        let session = ConfigurationSession(identity: { "account/desktop/session" }, connectionEpoch: { connection }, transport: transport.call)
+        let load = session.load()!; _ = await transport.next()
+        transport.resolve(["revision": 1, "config": config()]); await load.value
+        var navigated = false
+        let save = session.save(config()) { navigated = true }!; _ = await transport.next()
+        connection = 2
+        transport.resolve(["revision": 99, "config": ["stale": true]]); await save.value
+        try check(session.valid && !session.busy && !navigated && session.snapshot["revision"] as? Int == 1, "Reconnect consumed stale save or invalidated the stable settings page")
+        try check(transport.commands.count == 2, "Reconnect automatically repeated a settings mutation")
+        // An explicit read/save remains possible in the same editor; view-owned
+        // field drafts are not replaced by the late result above.
+        let resumed = session.load()!; _ = await transport.next()
+        transport.resolve(["revision": 3, "config": config()]); await resumed.value
+        let retried = session.save(config())!; let request = await transport.next()
+        try check(request["expected_revision"] as? Int == 3, "Resumed editor bypassed current revision")
+        transport.resolve(["revision": 4, "config": config()]); await retried.value
+        try check(session.snapshot["revision"] as? Int == 4 && !session.busy, "Same-page explicit save did not recover")
+    }
     @MainActor static func main() async {
         let checks: [(String, () async throws -> Void)] = [
             ("provider hidden fields, Azure and endpoints", { try providerContracts() }),
@@ -253,7 +274,8 @@ private func same(_ left: Any, _ right: Any) -> Bool {
             ("conflict refresh and explicit retry", { try await conflictRequiresExplicitRetry() }),
             ("closed/reconnected late response barriers", { try await closedAndReconnectedLateResults() }),
             ("conflict-refresh reconnect barrier", { try await conflictRefreshReconnectBarrier() }),
-            ("catalog cancel/read serial barrier", { try await cancelledReadCannotOverwriteNewOperation() })
+            ("catalog cancel/read serial barrier", { try await cancelledReadCannotOverwriteNewOperation() }),
+            ("same-scope settings recovery without mutation replay", { try await settingsResumeSameScopeWithoutReplay() })
         ]
         var failures = 0
         for (name, run) in checks {

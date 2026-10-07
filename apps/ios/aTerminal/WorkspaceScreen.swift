@@ -45,7 +45,7 @@ struct WorkspaceScreen: View {
                 } else if workspace { terminalWorkspace } else { LoginScreen(model: model) }
                 if keysVisible && !model.preparingWorkspace {
                     Color.clear.contentShape(Rectangle()).onTapGesture { keysVisible = false }
-                    TerminalSpecialKeys(enabled: model.hasControl && model.connected && !model.busy,
+                    TerminalSpecialKeys(enabled: model.canInput,
                         keyboardOpen: inputVisible, dismiss: { keysVisible = false },
                         key: { value in keysVisible = false; model.key(value) },
                         paste: { keysVisible = false; if let text = UIPasteboard.general.string { _ = model.paste(text) } },
@@ -73,6 +73,9 @@ struct WorkspaceScreen: View {
                         .accessibilityAddTraits(.isModal)
                 }
             }.frame(width: geometry.size.width, height: geometry.size.height)
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if model.reconnecting || model.authenticationRequired { connectionBanner }
+                }
                 .onAppear { updateOrientation() }
                 .onChange(of: geometry.size) { _ in updateOrientation() }
         }
@@ -96,7 +99,7 @@ struct WorkspaceScreen: View {
             Button("退出登录", role: .destructive) { panel = nil; drawer = false; assistant.stop(); model.logout(); syncChat() }
             Button("取消", role: .cancel) {}
         }
-        .onChange(of: model.generation) { _ in creating = false; syncChat() }
+        .onChange(of: model.generation) { _ in syncChat() }
         .onChange(of: model.deviceID) { _ in creating = false }
         .onChange(of: model.sessions.map { [$0.id, $0.cwd] }) { _ in syncChat() }
         .onChange(of: model.identity) { _ in
@@ -110,7 +113,7 @@ struct WorkspaceScreen: View {
             syncChat(); inputVisible = false; keysVisible = false
             if let scope, scope == continueScope { continueScope = nil; panel = .chat }
         }
-        .onChange(of: model.connected) { connected in if !connected { creating = false }; syncChat(); if connected && panel == .devices { panel = nil } }
+        .onChange(of: model.connected) { _ in syncChat() }
         .onChange(of: drawer) { value in
             if value { keysVisible = false; model.refreshSessions(); assistant.loadArchives(); updateWorkspaceSearch() }
             else { assistant.cancelHistorySearch() }
@@ -127,7 +130,7 @@ struct WorkspaceScreen: View {
             if phase == .active { model.heartbeat() }
         }
         .onChange(of: phase) { value in
-            if value == .background { assistant.stop(); model.suspend(); panel = nil; inputVisible = false; keysVisible = false }
+            if value == .background { assistant.stop(preservingContext: true); model.suspend(); inputVisible = false; keysVisible = false }
             if value == .active { model.resume() }
         }
         .onAppear {
@@ -142,6 +145,21 @@ struct WorkspaceScreen: View {
             }
             #endif
         }
+    }
+
+    private var connectionBanner: some View {
+        HStack(spacing: 10) {
+            if model.busy { ProgressView().scaleEffect(0.8) }
+            Image(systemName: model.authenticationRequired ? "lock.shield" : "wifi.slash")
+            Text(model.authenticationRequired ? "连接授权失效，请检查账号与设备" : "连接中断 · 页面和草稿已保留，正在重连")
+                .font(.caption).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Button(model.authenticationRequired ? "账号与设备" : "重试") {
+                if model.authenticationRequired { accountFromSettings = false; panel = .devices }
+                else { model.retryConnection() }
+            }.font(.caption).disabled(model.busy).accessibilityIdentifier("workspace.reconnect.retry")
+        }.padding(.horizontal, 12).padding(.vertical, 8).background(WorkspaceStyle.surface)
+            .accessibilityElement(children: .contain).accessibilityIdentifier("workspace.reconnect")
     }
 
     private func syncChat() {
@@ -188,7 +206,7 @@ struct WorkspaceScreen: View {
             ZStack(alignment: .bottomTrailing) {
                 if let frame = model.screen {
                     TerminalSurface(frame: frame, zoom: min(24, max(6, fontSize)) / 15, generation: model.generation, core: model.displayCore,
-                        canInput: model.hasControl && model.connected && !model.busy && panel == nil && !drawer, keyboardRequested: inputVisible,
+                        canInput: model.canInput && panel == nil && !drawer, keyboardRequested: inputVisible,
                         onText: model.text, onPaste: model.paste, onKey: model.key, onKeyboardChange: { inputVisible = $0 },
                         onReadOnly: { model.status = model.readOnlyReason },
                         onStatus: model.displayStatus, onOpenWorkspace: { drawer = true })
@@ -519,6 +537,7 @@ private struct CreateTerminalSheet: View {
     @State private var loading = true
     @State private var loadError: String?
     @State private var createError: String?
+    @State private var uncertainCreation = false
     @State private var submitting = false
     @State private var active = false
     var body: some View {
@@ -547,16 +566,22 @@ private struct CreateTerminalSheet: View {
                         }
                     }
                     if let createError { Text(createError).font(.subheadline).foregroundColor(WorkspaceStyle.danger).accessibilityIdentifier("terminal.createError") }
+                    if uncertainCreation {
+                        Text("创建结果未确认。请取消并检查会话列表，确认没有创建成功后再新建，避免重复创建。")
+                            .font(.subheadline).foregroundColor(WorkspaceStyle.danger).accessibilityIdentifier("terminal.createUnconfirmed")
+                    }
                 }.padding(16).disabled(submitting)
             }
             PrimaryButton(title: "创建", symbol: "plus", busy: submitting) {
+                guard !uncertainCreation else { return }
                 submitting = true; createError = nil
-                model.create(directory) { error in
+                model.create(directory) { outcome in
                     guard active else { return }
                     submitting = false
-                    if let error { createError = error } else { created() }
+                    uncertainCreation = uncertainCreation || outcome.uncertain
+                    if let error = outcome.error { createError = error } else { created() }
                 }
-            }.disabled(submitting || !model.connected).padding(16)
+            }.disabled(submitting || uncertainCreation || !model.connected).padding(16).accessibilityIdentifier("terminal.create")
         }
         .background(WorkspaceStyle.background).foregroundColor(WorkspaceStyle.foreground).tint(WorkspaceStyle.accent)
         .interactiveDismissDisabled(submitting)
@@ -568,6 +593,14 @@ private struct CreateTerminalSheet: View {
             }
         }
         .onDisappear { active = false }
+        .onChange(of: model.generation) { _ in
+            loading = false
+            if submitting {
+                uncertainCreation = true
+                createError = "连接已变化，创建结果未确认"
+            }
+            submitting = false
+        }
     }
     private func directoryRow(title: String, path: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {

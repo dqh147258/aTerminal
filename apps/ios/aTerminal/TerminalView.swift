@@ -38,6 +38,7 @@ struct TerminalSurface: UIViewRepresentable {
         guard let view = scroll.viewWithTag(10) as? TerminalView else { return }
         let coordinator = context.coordinator
         context.coordinator.core = core; context.coordinator.onStatus = onStatus
+        if core != nil && context.coordinator.link == nil { context.coordinator.start() }
         context.coordinator.onOpenWorkspace = onOpenWorkspace
         view.canInput = canInput
         view.onText = { text in coordinator.followCursor = true; coordinator.revealCursor(); return onText?(text) ?? false }
@@ -113,7 +114,12 @@ struct TerminalSurface: UIViewRepresentable {
                     lastPath = path; lastControl = control; lastDesktopAttached = desktopAttached; lastExited = exited
                     onStatus?(view.screen, path, control, nil)
                 }
-            } catch { onStatus?(nil, "offline", false, terminalError(error)); link?.invalidate() }
+            } catch {
+                // Keep the last visible frame and stop only this failed transport.
+                // The same view restarts polling when a replacement core is ready.
+                link?.invalidate(); link = nil
+                onStatus?(view.screen, "offline", false, terminalError(error))
+            }
         }
     }
 }

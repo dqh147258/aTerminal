@@ -88,16 +88,31 @@ enum AuthorizationFailure: LocalizedError {
     var changed: (() -> Void)?
     private var generation = 0
     private var context = ""
+    private var scopeKey: String?
     private var transport: Transport?
     // Keep the idempotency key for a retry after an uncertain network response.
     private var requestIDs: [String: String] = [:]
-    var canAct: Bool { writable && permissions?.canMutate == true && !busy }
+    var canAct: Bool { writable && permissions?.canMutate == true && !busy && !loading }
     var mode: String { permissions?.mode ?? "ask" }
     var full: Bool { permissions?.full ?? false }
-    func bind(context: String, writable: Bool, transport: Transport?) {
-        if self.context == context { self.writable = writable; self.transport = transport; return }
-        generation += 1; self.context = context; self.writable = writable; self.transport = transport
-        permissions = nil; pending = []; rules = []; detailText = [:]; detailErrors = [:]; detailFingerprints = [:]; error = ""; busy = false; loading = false; requestIDs = [:]; changed?()
+    func bind(context: String, scopeKey: String? = nil, writable: Bool, transport: Transport?) {
+        let sameScope = scopeKey != nil && self.scopeKey == scopeKey
+        if self.context == context && self.scopeKey == scopeKey { self.writable = writable; self.transport = transport; return }
+        generation += 1; self.context = context; self.scopeKey = scopeKey; self.writable = writable; self.transport = transport
+        // Keep uncertain delivery IDs and visible cards across transport replacement.
+        // New permissions and exact details must still be fetched before any action.
+        if !sameScope { pending = []; rules = []; requestIDs = [:] }
+        permissions = nil; detailText = [:]; detailErrors = [:]; detailFingerprints = [:]
+        error = ""; busy = false; loading = false; changed?()
+    }
+    /// Capture the action context synchronously at the tap, before Swift schedules
+    /// its async task. A delayed tap can never mutate a replacement connection/scope.
+    @discardableResult func perform(_ operation: @escaping (AgentAuthorization) async -> Void) -> Task<Void, Never> {
+        let token = generation
+        return Task {
+            guard token == generation else { return }
+            await operation(self)
+        }
     }
     private func call(_ command: Object, using transport: Transport) async throws -> Object {
         let result = try await transport(command)
@@ -201,7 +216,7 @@ enum AuthorizationFailure: LocalizedError {
         if item.kind == "approval" {
             guard let decision, ["once", "always", "deny"].contains(decision), decision != "always" || current.canAlways, decision == "deny" || canApprove(current) else { return }
         } else { guard let answer, !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return } }
-        let key = "resolve:\(item.id):\(decision ?? answer ?? "")"
+        let key = "resolve:\(item.id):\(item.fingerprint):\(decision ?? answer ?? "")"
         var command: Object = ["action": "resolve", "pending_id": item.id, "request_id": requestID(key)]
         command["decision"] = decision; command["answer"] = answer
         if item.kind == "approval", decision != "deny", current.requiresDetails {
