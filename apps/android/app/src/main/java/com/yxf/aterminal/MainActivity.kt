@@ -31,11 +31,24 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private val account = Account()
     private val worker = Executors.newSingleThreadExecutor()
     private val historyWorker = Executors.newSingleThreadExecutor()
+    private val screenWorker = Executors.newSingleThreadExecutor()
     private var terminalScrollback: TerminalScrollback? = null
     private var historyStatus: String? = null
     private var historyClose: (() -> Unit)? = null
     private val ui = Handler(Looper.getMainLooper())
-    private var active = false
+    private val screenRequests = RemoteScreenRequests<RemoteScreenResult>(
+        execute = { task -> screenWorker.execute { task() } },
+        post = { task -> ui.post { task() } },
+        schedule = { delay, task ->
+            val callback = Runnable { task() }
+            ui.postDelayed(callback, delay)
+            val cancel: () -> Unit = { ui.removeCallbacks(callback) }
+            cancel
+        },
+        discard = { result -> if (result is RemoteScreenResult.Frame) result.bitmap.recycle() }
+    )
+    @Volatile private var active = false
+    @Volatile private var screenForeground = false
     @Volatile private var generation = 0
     @Volatile private var accountEpoch = 0
     private val accountPersistenceLock = Any()
@@ -79,6 +92,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private var overlay: FrameLayout? = null
     private var overlayPanel: View? = null
     private var settingsEditor: AgentSettingsPanel? = null
+    private var remoteScreensPanel: RemoteScreensPanel? = null
     private var accountFromSettings = false
     private var assistant: AssistantPanel? = null
     private var agentPanel: AgentPanel? = null
@@ -381,6 +395,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
             addView(iconButton(R.drawable.ic_sliders_horizontal, "设置") { settingsPanel() })
             addView(iconButton(R.drawable.ic_message_circle, "AI 对话") { openChat() })
             addView(iconButton(R.drawable.ic_globe, "全局AI助手") { openGlobalList() })
+            addView(iconButton(R.drawable.ic_monitor_smartphone, "远程屏幕") { openRemoteScreens() })
             addView(iconButton(R.drawable.ic_keyboard, "特殊按键") { specialKeys() })
             for (i in 0 until childCount) getChildAt(i).background = null
         }
@@ -1188,6 +1203,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         return body
     }
     private fun closeOverlay(hideIme: Boolean = true) {
+        remoteScreensPanel?.close(); remoteScreensPanel = null
         settingsEditor?.close(); settingsEditor = null
         historyClose?.invoke(); historyClose = null
         assistant?.close(); assistant = null
@@ -1200,6 +1216,22 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         toolRail.visibility = View.VISIBLE
         if (hideIme) hideKeyboard()
         if (controlled && keyboardOpen) terminal?.requestFocus() else root.requestFocus()
+    }
+    private fun openRemoteScreens() {
+        toggleInput(false)
+        val owner = accountEpoch; val device = deviceId; val server = serverUrl
+        fun current() = active && screenForeground && connected && owner == accountEpoch && device == deviceId && server == serverUrl
+        fun rpc(action: (RemoteTerminal) -> String): String {
+            val transport = remote; val ticket = reconnect.epoch
+            check(current()) { "请先连接 Desktop" }
+            val result = action(transport)
+            check(current() && transport === remote && ticket == reconnect.epoch) { "设备连接已变化" }
+            return result
+        }
+        val body = panel("远程屏幕"); overlay?.tag = "remote-screens"
+        remoteScreensPanel = RemoteScreensPanel(this, body, screenRequests, deviceName.ifEmpty { "Desktop" },
+            { current() }, { rpc { it.remoteScreensJson() } },
+            { screen, width -> rpc { it.remoteScreenFrameJson(screen, width) } }, { accountPanel() })
     }
     private fun openGlobalList() {
         val device = deviceId; val owner = accountName; val server = serverUrl
@@ -1297,6 +1329,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         agentPanel?.connectionInterrupted()
         globalPanel?.connectionInterrupted()
         settingsEditor?.connectionInterrupted()
+        remoteScreensPanel?.connectionInterrupted()
         connection.text = "重连中"; connection.setTextColor(Palette.muted)
         updateReconnectBanner()
         refreshDrawer?.invoke()
@@ -1377,6 +1410,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
                     updateSessionHeader(); updateReconnectBanner()
                     agentPanel?.connectionRestored(); globalPanel?.connectionRestored()
                     settingsEditor?.connectionRestored()
+                    remoteScreensPanel?.connectionRestored()
                     refreshDrawer?.invoke()
                     if (overlay?.tag == "drawer") { ui.removeCallbacks(drawerRefresh); ui.postDelayed(drawerRefresh, 3000) }
                     worker.execute { runCatching { previous.disconnect() }; previous.close() }
@@ -1441,6 +1475,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         Choreographer.getInstance().postFrameCallback(this)
     }
     private fun disconnect() {
+        remoteScreensPanel?.connectionInterrupted("设备连接已断开，请重新连接 Desktop")
         reconnect.cancel(); ui.removeCallbacks(retryConnection)
         if (::reconnectBanner.isInitialized) reconnectBanner.visibility = View.GONE
         displayReady = false
@@ -1460,7 +1495,18 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         if (reconnect.pending) scheduleReconnect(0)
         else if (accountName.isNotEmpty() && !connected) { beginEntry(); restorePending = true; val epoch = accountEpoch; work { loadDevices(epoch) } }
     }
+    override fun onResume() {
+        super.onResume()
+        screenForeground = true
+        remoteScreensPanel?.connectionRestored()
+    }
+    override fun onPause() {
+        screenForeground = false
+        remoteScreensPanel?.connectionInterrupted("已暂停查看，返回后继续")
+        super.onPause()
+    }
     override fun onStop() {
+        remoteScreensPanel?.connectionInterrupted("已暂停查看，返回后继续")
         active = false; terminalKeyUps.clear(); toast?.cancel(); agentPanel?.pause(); globalPanel?.pause(); Choreographer.getInstance().removeFrameCallback(this)
         if (imagePicker == null && skillPicker == null) {
             if (connected || reconnect.pending) {
@@ -1472,6 +1518,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         super.onStop()
     }
     override fun onDestroy() {
+        remoteScreensPanel?.close(); remoteScreensPanel = null; screenRequests.stop(); screenWorker.shutdown()
         createDialog?.dismiss(); settingsEditor?.close()
         reconnect.cancel(); ui.removeCallbacks(retryConnection)
         synchronized(accountPersistenceLock) { accountEpoch++ }
@@ -1489,7 +1536,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         }
         return super.dispatchKeyEvent(event)
     }
-    override fun onBackPressed() { if (settingsEditor?.back() == true) return; if (overlay?.tag == "account" && accountFromSettings) { settingsPanel(); return }; if (agentPanel?.closeDetails() == true) return; if (overlay?.tag == "global-chat") openGlobalList() else if (overlay?.tag == "setting-detail") settingsPanel() else if (overlay != null) closeOverlay() else if (keyboardOpen) toggleInput(false) else super.onBackPressed() }
+    override fun onBackPressed() { if (remoteScreensPanel?.back() == true) return; if (settingsEditor?.back() == true) return; if (overlay?.tag == "account" && accountFromSettings) { settingsPanel(); return }; if (agentPanel?.closeDetails() == true) return; if (overlay?.tag == "global-chat") openGlobalList() else if (overlay?.tag == "setting-detail") settingsPanel() else if (overlay != null) closeOverlay() else if (keyboardOpen) toggleInput(false) else super.onBackPressed() }
     @Deprecated("Legacy activity result bridge")
     override fun onActivityResult(requestCode:Int,resultCode:Int,data:android.content.Intent?) {
         super.onActivityResult(requestCode,resultCode,data)
