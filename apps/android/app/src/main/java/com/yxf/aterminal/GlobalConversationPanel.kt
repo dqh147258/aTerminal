@@ -83,7 +83,8 @@ class GlobalConversationPanel(private val activity: Activity, private val body: 
             do {
                 check(revision == connectionRevision && valid()) { "连接已变化" }
                 val command = JSONObject().put("version", 1).put("action", "global_list"); cursor?.let { command.put("cursor", it) }
-                val page = JSONObject(request(command.toString())); val array = page.getJSONArray("conversations")
+                val page = AgentReadRetry.run("global_list", { !closed && revision == connectionRevision && valid() }) { JSONObject(request(command.toString())) }
+                val array = page.getJSONArray("conversations")
                 for (i in 0 until array.length()) rows.add(array.getJSONObject(i))
                 cursor = if (page.isNull("cursor")) null else page.getLong("cursor")
             } while (cursor != null && !closed)

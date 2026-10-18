@@ -30,6 +30,9 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
     private val pickImages: (((List<Uri>) -> Unit) -> Unit)? = null,
     private val globalConversation: JSONObject? = null, private val back: (() -> Unit)? = null) {
     private val worker = Executors.newSingleThreadExecutor()
+    private val readWorker = Executors.newSingleThreadExecutor()
+    private val recordWorker = Executors.newSingleThreadExecutor()
+    private val localWorker = Executors.newSingleThreadExecutor()
     private val ui = Handler(Looper.getMainLooper())
     private val cache = AgentCache.open(cachePath)
     private val drafts = AgentDraftStore(activity, identity)
@@ -51,8 +54,9 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
     private val readingImages get() = session in importing
     private var cursor: String? = null
     private var hasMore = true
-    private var generation: Long? = null
+    @Volatile private var generation: Long? = null
     private var runState = "idle"
+    private var modelRetry: JSONObject? = null
     private var liveText = ""
     private var nextLiveText: String? = null
     private var liveRoot = ""
@@ -64,7 +68,12 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
     private var answerScrollHeld = false
     private var manualScrollRevision = 0L
     private val items = linkedMapOf<String, JSONObject>()
+    private var historyDirty = false
     private val attachments = mutableListOf<JSONObject>()
+    private val pendingRecords = mutableSetOf<String>()
+    private val recordErrors = mutableMapOf<String, String>()
+    private var connectionFeedback = false
+    private var compactComposer = false
     private val state = activity.label("", 12f, Palette.muted)
     private val path = activity.label("", 12f, Palette.muted)
     private val taskState = activity.label("", 12f, Palette.muted)
@@ -83,6 +92,19 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
     private val preview = activity.row()
     private val latest = activity.actionButton("↓ 最新消息") { scroll.post { scroll.scrollTo(0, (messages.height - scroll.height).coerceAtLeast(0)) }; latestVisible(false) }
     private val sendButton = activity.iconButton(R.drawable.ic_arrow_up, "发送") { submit() }
+    private val composerStatus = activity.label("草稿自动保存", 11f, Palette.muted)
+    private val pendingNotice = activity.label("", 12f, Palette.warning)
+    private val pendingSend = activity.row().apply {
+        tag = "pending-send"; visibility = View.GONE; setPadding(activity.dp(12), activity.dp(4), activity.dp(4), 0)
+        fill(pendingNotice)
+        addView(activity.iconButton(R.drawable.ic_history, "查看待确认发送") { showPendingSend() }.apply { background = null })
+    }
+    private val compactPending = activity.iconButton(R.drawable.ic_history, "查看待确认发送") { showPendingSend() }.apply {
+        visibility = View.GONE; background = null
+    }
+    private val compactImages = activity.iconButton(R.drawable.ic_image, "查看已选图片") { showSelectedImages() }.apply {
+        visibility = View.GONE; background = null
+    }
     private val conversationTitle = activity.heading(globalConversation?.optString("title", "新会话") ?: workingPath().substringAfterLast('/').ifEmpty { "终端" })
     private var recognizer: SpeechRecognizer? = null
     private var voiceEpoch = 0
@@ -97,7 +119,16 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
         globalId?.let { command.put("agent_id", it) }
         return JSONObject(request(if (globalId != null) "" else target, command.put("version", 1).toString()))
     }
-    private fun updatePath() { path.text = workingPath(); taskState.text = GlobalConversationStore.stateLabel(runState) }
+    private fun readRpc(target: String, command: JSONObject, version: Int, historyVersion: Long? = null): JSONObject {
+        val action = command.getString("action")
+        return AgentReadRetry.run(action,
+            { !closed && epoch == version && valid() && (action != "record" || generation == historyVersion) }) {
+            rpc(target, JSONObject(command.toString()))
+        }
+    }
+    private fun retryStatus(): String? = modelRetry?.takeIf { it.optInt("attempt") > 0 && it.optInt("max_attempts") > 0 }
+        ?.let { "模型重试 ${it.optInt("attempt")}/${it.optInt("max_attempts")}" }
+    private fun updatePath() { path.text = workingPath(); taskState.text = retryStatus() ?: GlobalConversationStore.stateLabel(runState) }
     private fun markRead() {
         if (globalId == null || closed || !visible || loading || initialScroll != null || !activity.hasWindowFocus() || !scroll.isShown || scroll.height == 0 || messages.isLayoutRequested || scroll.isLayoutRequested || !atBottom()) return
         if (items.values.any { it.optString("kind") in setOf("assistant", "interaction") && it.optJSONObject("value")?.optBoolean("partial") == true }) return
@@ -108,7 +139,7 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
         val header = body.getChildAt(0) as LinearLayout
         val close = header.getChildAt(header.childCount - 1)
         header.removeAllViews()
-        val scopeLabel = label(if (globalId != null) "全局AI助手" else "Session", 12f, Palette.accent)
+        val scopeLabel = label(if (globalId != null) "全局 AI 助手" else "终端对话", 11f, Palette.accent)
         if (globalId != null) {
             body.setBackgroundColor(Palette.background)
             header.addView(iconButton(R.drawable.ic_arrow_left, "返回全局AI助手") { back?.invoke() }.apply { background = null })
@@ -132,7 +163,8 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
             addView(scroll, FrameLayout.LayoutParams(-1, -1))
             addView(latest, FrameLayout.LayoutParams(-2, dp(44), android.view.Gravity.BOTTOM or android.view.Gravity.END).apply { rightMargin = dp(12); bottomMargin = dp(8) })
         })
-        state.setPadding(dp(16), 0, dp(16), 0); state.visibility = View.GONE; body.addView(state)
+        state.setPadding(dp(16), dp(6), dp(16), dp(6)); state.visibility = View.GONE
+        state.accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE; body.addView(state)
         scroll.setOnTouchListener { _, event ->
             if (event.actionMasked == android.view.MotionEvent.ACTION_MOVE) {
                 manualScrollRevision++; initialScroll = null
@@ -146,18 +178,27 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
         }
         draft.apply {
             hint = "你想做什么？"; contentDescription = "发送任务或追加消息"; textSize = 16f
-            setTextColor(Palette.text); setHintTextColor(Palette.muted); background = shape(Palette.background, true)
+            setTextColor(Palette.text); setHintTextColor(Palette.muted); background = null
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            minHeight = dp(44); maxHeight = dp(112); maxLines = 4; isVerticalScrollBarEnabled = false
-            setPadding(dp(8), dp(8), dp(8), dp(8))
+            minHeight = dp(48); maxHeight = dp(112); maxLines = 4; isVerticalScrollBarEnabled = false
+            setPadding(dp(12), dp(10), dp(12), dp(8))
             imeOptions = android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI or android.view.inputmethod.EditorInfo.IME_FLAG_NO_FULLSCREEN
         }
-        val composerLabel = label("发送任务或追加消息", 12f, Palette.secondary).apply { setPadding(dp(8), 0, 0, dp(8)) }
-        body.addView(column(8).apply {
-            setBackgroundColor(Palette.surface)
-            addView(composerLabel)
-            addView(preview)
-            addView(row().apply {
+        val composerLabel = label("发送任务或追加消息", 11f, Palette.secondary).apply { setPadding(dp(4), 0, 0, dp(6)) }
+        val editorRow = row().apply {
+            addView(draft, LinearLayout.LayoutParams(0, -2, 1f)); addView(compactImages); addView(compactPending)
+        }
+        val toolsRow = row()
+        val composer = column().apply {
+            tag = "agent-composer"; background = shape(Palette.surface, true)
+            addView(pendingSend)
+            addView(HorizontalScrollView(activity).apply {
+                isHorizontalScrollBarEnabled = false
+                addView(preview.apply { setPadding(dp(10), 0, dp(10), 0) })
+            })
+            addView(editorRow)
+            addView(toolsRow.apply {
+                setPadding(dp(4), 0, dp(8), dp(4))
                 val image = iconButton(R.drawable.ic_image, "选择图片；长按粘贴图片") {
                     val target = session
                     pickImages?.invoke { uris -> importImages(uris, target) } ?: feedback("图片选择器不可用")
@@ -167,16 +208,32 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
                     if (uris.isEmpty()) feedback("剪贴板中没有可读取的图片") else importImages(uris); true }
                 listOf(image, voice, sendButton).forEach { it.setPadding(dp(14), dp(14), dp(14), dp(14)); it.background = shape(android.graphics.Color.TRANSPARENT); it.layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = 0 } }
                 sendButton.background = shape(Palette.accent); sendButton.imageTintList = android.content.res.ColorStateList.valueOf(Palette.background)
-                addView(image); addView(voice)
-                addView(draft, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(4); marginEnd = dp(4) })
+                addView(image); addView(voice); fill(composerStatus)
                 addView(sendButton)
             })
-        })
+        }
+        val composerContainer = column(12).apply {
+            addView(composerLabel); addView(composer)
+        }
+        body.addView(composerContainer)
         // Adapt after the layout traversal so Android remeasures every affected parent.
         compactLayoutListener = android.view.ViewTreeObserver.OnGlobalLayoutListener {
             val visibility = if (body.height < dp(280)) View.GONE else View.VISIBLE
             val changed = listOf(composerLabel, scopeLabel, path, taskState).filter { it.visibility != visibility }
             changed.forEach { it.visibility = visibility }
+            val compact = body.height < dp(240)
+            if (compact != compactComposer) {
+                compactComposer = compact
+                // Move only the button. The focused EditText and its IME connection stay attached.
+                (sendButton.parent as? android.view.ViewGroup)?.removeView(sendButton)
+                (if (compact) editorRow else toolsRow).addView(sendButton)
+                toolsRow.visibility = if (compact) View.GONE else View.VISIBLE
+                val inset = dp(if (compact) 6 else 12)
+                composerContainer.setPadding(inset, inset, inset, inset)
+                draft.maxLines = if (compact) 2 else 4; draft.maxHeight = dp(if (compact) 64 else 112)
+                state.visibility = if (state.text.isEmpty() || (connectionFeedback && compact)) View.GONE else View.VISIBLE
+                updateButton()
+            }
             keepAnswerControlsVisible()
         }
         body.viewTreeObserver.addOnGlobalLayoutListener(compactLayoutListener)
@@ -199,26 +256,29 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
         submit.requestRectangleOnScreen(android.graphics.Rect(0, input.top - submit.top, submit.width, submit.height), true)
     }
 
-    private fun feedback(text: String) { state.text = text; state.visibility = if (text.isEmpty()) View.GONE else View.VISIBLE }
+    private fun feedback(text: String, connection: Boolean = false) {
+        connectionFeedback = connection
+        state.text = text; state.visibility = if (text.isEmpty() || (connection && compactComposer)) View.GONE else View.VISIBLE
+    }
+    private fun clearConnectionFeedback() { if (connectionFeedback) feedback("") }
     private fun latestVisible(show: Boolean) { latest.visibility = if (show) View.VISIBLE else View.GONE }
     private fun atBottom() = scroll.scrollY + scroll.height >= messages.height - activity.dp(48)
-    private fun snapshot() = JSONObject().put("text", draft.text.toString()).put("images", JSONArray(attachments)).put("request_id", requestId)
-        .put("run_state", runState).put("scroll", scroll.scrollY).put("cursor", cursor).put("has_more", hasMore).put("generation", generation)
-        .put("items", JSONArray(items.values.toList())).put("search", items.values.joinToString("\n") { AgentTimeline.text(it) })
-    private fun saveComposer() { if (!closed && !restoring) drafts.save(session, snapshot()) }
+    private fun saveComposer() { if (!closed && !restoring) drafts.saveComposer(session,
+        JSONObject().put("text", draft.text.toString()).put("images", JSONArray(attachments)).put("request_id", requestId)) }
     private fun save() {
         if (closed || restoring) return
-        val published = drafts.read(session)
+        val published = drafts.readComposer(session)
         syncDraft(published)
-        val viewState = snapshot()
-        // History/scroll callbacks must not overwrite a send acknowledgement from a closed panel.
-        // Only explicit edits, attachment changes and the matching send acknowledgement own these fields.
-        if (published.has("request_id")) for (key in listOf("text", "images", "request_id")) {
-            if (published.has(key)) viewState.put(key, published.get(key)) else viewState.remove(key)
+        drafts.saveView(session, JSONObject().put("run_state", runState).put("scroll", scroll.scrollY)
+            .put("cursor", cursor ?: JSONObject.NULL).put("has_more", hasMore).put("generation", generation ?: JSONObject.NULL))
+        // Only a changed history rebuilds its potentially large JSON/search index. Keystrokes
+        // and scroll/connection updates use their own small records and cannot undo a receipt.
+        if (historyDirty) {
+            drafts.saveHistory(session, JSONArray(items.values.toList()), items.values.joinToString("\n") { AgentTimeline.text(it) })
+            historyDirty = false
         }
-        drafts.save(session, viewState)
     }
-    private fun syncDraft(saved: JSONObject = drafts.read(session)) {
+    private fun syncDraft(saved: JSONObject = drafts.readComposer(session)) {
         val id = saved.optString("request_id")
         if (id.isNotEmpty() && id != requestId && !submitting && !readingImages) {
             restoring = true; draft.setText(saved.optString("text")); draft.setSelection(draft.length()); requestId = id
@@ -236,11 +296,12 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
         cursor = saved.optString("cursor").takeUnless { it.isEmpty() || it == "null" }; hasMore = saved.optBoolean("has_more", true)
         generation = saved.optLong("generation").takeIf { saved.has("generation") && !saved.isNull("generation") }
         initialScroll = saved.optInt("scroll").takeIf { saved.has("scroll") }; runState = saved.optString("run_state", "idle"); liveText = ""; nextLiveText = null; liveRoot = ""
-        restoring = false; render(false); renderAttachments(); updateButton()
+        restoring = false; saveComposer(); render(false); renderAttachments(); updateButton()
     }
     fun close() {
         details?.close(); details = null
         save(); closed = true; authorization.close(); epoch++; stopVoice(); ui.removeCallbacks(tick); worker.shutdown()
+        readWorker.shutdown(); recordWorker.shutdown(); localWorker.shutdown()
         compactLayoutListener?.let { if (body.viewTreeObserver.isAlive) body.viewTreeObserver.removeOnGlobalLayoutListener(it) }
         compactLayoutListener = null
     }
@@ -251,12 +312,16 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
         if (closed) return
         epoch++; loading = false; stateLoading = false; olderPageRequested = false
         nextLiveText = null
+        pendingRecords.clear()
+        details?.connectionInterrupted()
         authorization.connectionInterrupted()
         updateButton()
     }
     fun connectionRestored() {
         if (closed) return
         epoch++; loading = false; stateLoading = false
+        pendingRecords.clear(); recordErrors.clear(); clearConnectionFeedback()
+        details?.connectionRestored()
         authorization.refresh(); refresh()
     }
     private fun updateButton() { with(activity) {
@@ -266,20 +331,51 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
         val reason = if (valid()) null else "设备离线或对话已变化 · 只读缓存"
         val icon = if (running && !content) R.drawable.ic_square else if (running) R.drawable.ic_plus else R.drawable.ic_arrow_up
         sendButton.setImageResource(icon); sendButton.contentDescription = if (cancelling) "取消中" else if (running && !content) "停止" else if (running) "追加" else "发送"
-        sendButton.isEnabled = !submitting && !readingImages && !cancelling && reason == null && authorization.canSend && (running || content)
-        draft.isEnabled = !submitting
+        val pending = drafts.pending(session)
+        sendButton.isEnabled = pending == null && !submitting && !readingImages && !cancelling && reason == null && authorization.canSend && (running || content)
+        // Sending owns a snapshot. Editing a new draft never changes or replays that request.
+        draft.isEnabled = true
         sendButton.alpha = if (sendButton.isEnabled) 1f else .4f
+        composerStatus.text = if (reason != null) "草稿已保留 · 可继续编辑" else if (submitting) "正在发送 · 可继续编辑" else retryStatus() ?: "草稿自动保存"
+        pendingSend.visibility = if (pending != null && !submitting && !compactComposer) View.VISIBLE else View.GONE
+        compactPending.visibility = if (pending != null && !submitting && compactComposer) View.VISIBLE else View.GONE
+        preview.visibility = if (attachments.isNotEmpty() && !compactComposer) View.VISIBLE else View.GONE
+        compactImages.visibility = if (attachments.isNotEmpty() && compactComposer) View.VISIBLE else View.GONE
+        compactImages.contentDescription = "查看已选的 ${attachments.size} 张图片"
+        pendingNotice.text = "上一条发送待确认 · 点击查看并重试"
         updatePath()
-        if (reason != null) feedback(reason)
+        if (reason != null && (state.text.isEmpty() || connectionFeedback)) feedback(reason, connection = true)
     } }
-    private fun submit() {
+    private fun showPendingSend() {
+        val pending = drafts.pending(session) ?: return
+        val id = pending.getString("request_id")
+        val count = pending.optJSONArray("images")?.length() ?: 0
+        val text = pending.optString("text").ifBlank { "图片消息" } + if (count > 0) "\n\n附带 $count 张图片" else ""
+        AlertDialog.Builder(activity).setTitle("上一条发送待确认")
+            .setMessage("$text\n\n重试将沿用原消息，不会发送当前编辑的草稿。结束重试不会停止已开始的任务，当前草稿会保留。")
+            .setNegativeButton("关闭", null)
+            .setNeutralButton("结束重试") { _, _ -> if (!submitting) { drafts.clearPending(session, id); updateButton() } }
+            .setPositiveButton("重试原消息") { _, _ -> submit(pending) }.show().apply {
+                getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = valid() && authorization.canSend && !submitting && !readingImages
+                getButton(AlertDialog.BUTTON_NEUTRAL).isEnabled = !submitting
+            }
+    }
+    private fun submit(retry: JSONObject? = null) {
         if (closed) return
         syncDraft()
-        if (!sendButton.isEnabled) return
-        val text = draft.text.toString().trim(); val pictures = attachments.map { JSONObject(it.toString()) }
-        val target = session; val mode = authorization.permissionMode; val id = requestId; val version = epoch
-        val cancel = text.isEmpty() && pictures.isEmpty() && GlobalConversationStore.active(runState)
-        save(); sending.add(target); updateButton()
+        if (retry == null && !sendButton.isEnabled) return
+        if (retry != null && (!valid() || !authorization.canSend || submitting || readingImages || drafts.pending(session)?.optString("request_id") != retry.optString("request_id"))) return
+        val text = retry?.getString("text") ?: draft.text.toString().trim()
+        val pictures = retry?.getJSONArray("images")?.let { images -> (0 until images.length()).map { JSONObject(images.getJSONObject(it).toString()) } }
+            ?: attachments.map { JSONObject(it.toString()) }
+        val target = session; val mode = retry?.getString("permission_mode") ?: authorization.permissionMode
+        val id = retry?.getString("request_id") ?: requestId; val version = epoch
+        val cancel = retry == null && text.isEmpty() && pictures.isEmpty() && GlobalConversationStore.active(runState)
+        save()
+        if (!cancel) try {
+            drafts.savePending(target, JSONObject().put("request_id", id).put("text", text).put("images", JSONArray(pictures)).put("permission_mode", mode))
+        } catch (error: Exception) { feedback(error.message.orEmpty()); return }
+        sending.add(target); updateButton()
         worker.execute { val uploaded = mutableListOf<String>(); try {
             fun attempt(command: JSONObject): JSONObject {
                 check(!closed && version == epoch && valid()) { "连接已变化；请确认任务状态后重试" }
@@ -307,25 +403,18 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
             val result = attempt(command)
             ui.post {
                 sending.remove(target)
+                val resultState = result.optString("state", if (cancel) "stopping" else "running")
+                // A definitive receipt may arrive after closing the originating panel. It still
+                // confirms this request, but can only clear the exact persisted draft it owns.
+                if (!cancel) { drafts.acknowledge(target, id, resultState); drafts.clearPending(target, id) }
                 if (version != epoch) {
-                    if (!closed && target == session) { feedback("发送结果需重新确认；草稿已保留，请先查看任务进展"); updateButton() }
+                    if (!closed && target == session) { syncDraft(); updateButton() }
                     return@post
                 }
-                val resultState = result.optString("state", if (cancel) "stopping" else "running")
                 if (!closed && target == session) {
                     runState = resultState
-                    if (!cancel && requestId == id) {
-                        attachments.clear(); restoring = true; draft.setText(""); restoring = false
-                        requestId = UUID.randomUUID().toString(); saveComposer(); pictures.forEach { drafts.file(it.getString("file")).delete() }; renderAttachments()
-                    }
+                    if (!cancel) syncDraft()
                     feedback(if (cancel) "正在请求停止；已执行的操作不会撤销" else ""); updateButton(); load(true); refresh()
-                } else {
-                    val saved = drafts.read(target).put("run_state", resultState)
-                    if (!cancel && saved.optString("request_id") == id) {
-                        saved.put("text", "").put("images", JSONArray()).put("request_id", UUID.randomUUID().toString())
-                        pictures.forEach { drafts.file(it.getString("file")).delete() }
-                    }
-                    drafts.save(target, saved)
                 }
             }
         } catch (e: Exception) { ui.post { sending.remove(target); if (!closed && target == session) { feedback(errorText(e)); updateButton() } } } finally { if (version == epoch && !closed && valid()) uploaded.forEach { upload -> runCatching { rpc(target, JSONObject().put("action", "image_release").put("upload_id", upload)) } } } }
@@ -335,46 +424,68 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
         return if (message.contains("vision", true)) "当前模型不支持图片。请到设置 → LLM 大模型更换支持图片的模型，草稿已保留。"
         else "未完成：$message；草稿已保留，可重试"
     }
+    /** Both state and history can be first after reconnect; neither may mix history generations. */
+    private fun acceptGeneration(next: Long): Boolean {
+        val current = generation
+        if (current != null && next < current) return false
+        if (current != null && current != next) {
+            items.clear(); historyDirty = true; cursor = null; hasMore = true; olderPageRequested = false
+            liveText = ""; nextLiveText = null; liveRoot = ""; initialScroll = null
+            pendingRecords.clear(); recordErrors.clear()
+            details?.historyChanged()
+            generation = next
+            // Empty generations are visible changes too: the previous views must disappear.
+            render(false); save()
+        } else generation = next
+        return true
+    }
     private fun refresh() {
         if (closed || !valid() || stateLoading) { updateButton(); return }
         stateLoading = true
         val version = epoch; val target = session; val key = scope()
-        worker.execute { try {
-            val result = rpc(target, JSONObject().put("action", "state"))
-            val newGeneration = result.optLong("history_generation"); cache.reconcile(key, newGeneration)
+        readWorker.execute { try {
+            val result = readRpc(target, JSONObject().put("action", "state"), version)
+            val newGeneration = result.getLong("history_generation"); cache.reconcile(key, newGeneration)
             ui.post { if (version == epoch && !closed) {
-                stateLoading = false; runState = result.optString("state", "idle")
+                stateLoading = false
+                if (!acceptGeneration(newGeneration)) return@post
+                runState = result.optString("state", "idle"); modelRetry = result.optJSONObject("model_retry")
                 val live = result.optString("live_text").takeUnless { it == "null" }.orEmpty()
                 val root = result.optString("root_user_message_id").takeUnless { it == "null" }.orEmpty()
                 if (root.isNotEmpty() && root != liveRoot) { liveRoot = root; liveText = "" }
                 nextLiveText = live
                 val error = result.optString("error").takeUnless { it.isEmpty() || it == "null" }
+                clearConnectionFeedback()
                 if (error != null) feedback(error)
-                if (generation != null && generation != newGeneration) { items.clear(); cursor = null; hasMore = true; generation = newGeneration; feedback("历史已清理，正在刷新") }
                 updateButton(); if (!loading) load(true)
             } }
-        } catch (e: Exception) { ui.post { if (version == epoch && !closed) { stateLoading = false; feedback("离线缓存 · ${e.message}"); updateButton() } } } }
+        } catch (e: Exception) { ui.post { if (version == epoch && !closed) { stateLoading = false; feedback("同步暂未完成 · 已保留对话", connection = true); updateButton() } } } }
     }
     private fun load(first: Boolean) {
         if (closed || (!first && !hasMore)) return
         if (loading) { if (!first) olderPageRequested = true; return }
         loading = true
         val version = epoch; val target = session; val key = scope(); val before = if (first) null else cursor
-        worker.execute { var offline = false; try {
+        readWorker.execute { var offline = false; try {
             val command = JSONObject().put("action", "history"); before?.let { command.put("cursor", it) }
-            val text = try { rpc(target, command).toString().also { cache.storePage(key, before, it) } }
+            val text = try { readRpc(target, command, version).toString().also { cache.storePage(key, before, it) } }
                 catch (e: Exception) { offline = true; cache.page(key, before) ?: throw e }
             val page = JSONObject(text); val array = page.getJSONArray("items")
-            for (i in 0 until array.length()) {
-                val item = array.getJSONObject(i)
-                try { completeMessage(item, target) } catch (e: Exception) { item.put("full_message_error", e.message) }
-            }
             ui.post { if (version == epoch && !closed) {
-                loading = false; generation = page.getLong("generation")
+                loading = false
+                if (!acceptGeneration(page.getLong("generation"))) return@post
                 // Refreshing the newest page must never replace an older paging chain.
                 if (!first || cursor == null) { hasMore = page.optBoolean("has_more"); cursor = page.optString("cursor").takeUnless { it.isEmpty() || it == "null" } }
                 var changed = false
-                for (i in 0 until array.length()) { val item = array.getJSONObject(i); val id = item.getString("id"); if (items[id]?.toString() != item.toString()) changed = true; items[id] = item }
+                for (i in 0 until array.length()) {
+                    val item = array.getJSONObject(i); val id = item.getString("id"); val old = items[id]
+                    val record = item.optJSONObject("value")?.takeIf { it.optBoolean("partial") }?.optString("record_id")
+                    if (!record.isNullOrBlank() && old?.optString("full_message_record_id") == record) {
+                        item.put("value", old.getJSONObject("value")).put("full_message_record_id", record)
+                    }
+                    if (old?.toString() != item.toString()) { changed = true; historyDirty = true }
+                    items[id] = item
+                }
                 val next = nextLiveText
                 if (next != null) {
                     // Swap streaming text and durable history in one render, avoiding a blank frame.
@@ -382,7 +493,9 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
                     nextLiveText = null
                 }
                 if (changed) render(!first); details?.let { page -> items[page.itemId]?.let { page.update(it) } }; save(); scroll.post { markRead() }
-                if (offline) feedback("离线缓存 · 删除状态尚未同步")
+                if (offline) feedback("离线缓存 · 删除状态尚未同步", connection = true) else clearConnectionFeedback()
+                // Long records never delay the first visible page or the independent send queue.
+                items.values.toList().forEach { retryCompleteMessage(it, automatic = true) }
                 if (olderPageRequested) { olderPageRequested = false; if (hasMore) load(false) }
             } }
         } catch (e: Exception) { ui.post { if (version == epoch && !closed) { loading = false; olderPageRequested = false; feedback("历史加载失败：${e.message} · 向上滑动重试") } } } }
@@ -392,23 +505,23 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
             it.optString("kind") in setOf("assistant", "interaction") && AgentTimeline.text(it) == liveText
     }
     /** The history endpoint bounds large values; its record contains the original value JSON. */
-    private fun completeMessage(item: JSONObject, target: String) {
+    private fun completeMessage(item: JSONObject, target: String, version: Int, historyVersion: Long?) {
         val value = item.optJSONObject("value") ?: return
         if (!value.optBoolean("partial") || item.optString("kind") !in setOf("assistant", "user", "interaction")) return
         val id = value.getString("record_id")
         val file = drafts.file("record-$id")
         val recordCache = android.util.AtomicFile(file)
         val original = if (file.isFile) JSONObject(recordCache.openRead().bufferedReader().use { it.readText() }) else {
-            val text = StringBuilder(); var cursor: String? = null; var bytes = 0
+            val text = StringBuilder(); var cursor: String? = null; var bytes = 0; val seen = mutableSetOf<String>()
             do {
-                check(!closed) { "会话已关闭" }
                 val command = JSONObject().put("action", "record").put("record_id", id).put("part", "body")
                 cursor?.let { command.put("cursor", it) }
-                val part = rpc(target, command)
+                val part = readRpc(target, command, version, historyVersion)
                 check(part.optString("kind") == "history_event") { "消息原文格式不正确" }
                 val chunk = part.getString("body"); bytes += chunk.toByteArray(Charsets.UTF_8).size
                 check(bytes <= 4 * 1024 * 1024) { "消息原文超过记录大小限制" }
                 text.append(chunk); cursor = part.optString("cursor").takeUnless { it.isEmpty() || it == "null" }
+                check(cursor == null || seen.add(cursor)) { "记录分页已失效，请重试" }
             } while (cursor != null)
             JSONObject(text.toString()).also { original ->
                 val output = recordCache.startWrite()
@@ -416,47 +529,63 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
                 catch (e: Exception) { recordCache.failWrite(output); throw e }
             }
         }
-        item.put("value", original); item.remove("full_message_error")
+        item.put("value", original).put("full_message_record_id", id); item.remove("full_message_error")
     }
-    private fun retryCompleteMessage(item: JSONObject) {
+    private fun retryCompleteMessage(item: JSONObject, automatic: Boolean = false) {
+        val value = item.optJSONObject("value") ?: return
+        if (closed || !value.optBoolean("partial") || item.optString("kind") !in setOf("assistant", "user", "interaction")) return
+        val record = value.optString("record_id"); if (record.isBlank()) return
+        val key = "message:$record"
+        if (automatic && recordErrors.containsKey(key)) return
+        if (pendingRecords.size >= 64 || !pendingRecords.add(key)) return
+        recordErrors.remove(key)
         val copy = JSONObject(item.toString()); val target = session; val version = epoch; val historyVersion = generation
-        worker.execute { try {
-            completeMessage(copy, target)
+        recordWorker.execute { try {
+            check(!closed && epoch == version && generation == historyVersion) { "对话已变化" }
+            completeMessage(copy, target, version, historyVersion)
             ui.post { if (!closed && epoch == version && generation == historyVersion) {
-                items[copy.getString("id")] = copy; render(false); save()
+                pendingRecords.remove(key)
+                if (items[copy.getString("id")]?.optJSONObject("value")?.optString("record_id") != record) return@post
+                items[copy.getString("id")] = copy; historyDirty = true; render(false); save()
+                details?.takeIf { it.itemId == copy.getString("id") }?.update(copy)
             } }
-        } catch (e: Exception) { ui.post { if (!closed && epoch == version) feedback("完整消息加载失败：${e.message}") } } }
+        } catch (e: Exception) { ui.post { if (!closed && epoch == version && generation == historyVersion) {
+            pendingRecords.remove(key); recordErrors[key] = e.message.orEmpty()
+            if (!automatic) feedback("完整消息加载失败：${e.message}")
+        } } } }
     }
     private fun showDetails(item: JSONObject) {
         details?.close(); save(); stopVoice()
         (activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(body.windowToken, 0)
         draft.clearFocus(); body.visibility = View.INVISIBLE; visible = false
         details = ToolDetailsPage(activity, body.parent as FrameLayout, item, { id, callback ->
-            val version = epoch; val target = session
-            worker.execute {
-                val result = runCatching { readToolRecord(id, target) }
-                ui.post { if (!closed && version == epoch) callback(result) }
+            val version = epoch; val target = session; val historyVersion = generation
+            recordWorker.execute {
+                val result = runCatching { readToolRecord(id, target, version, historyVersion) }
+                // ToolDetailsPage owns its revision and must always retire a started read.
+                ui.post { callback(if (!closed && version == epoch && historyVersion == generation) result
+                    else Result.failure(IllegalStateException("连接已变化，记录可重试"))) }
             }
-        }, { closeDetails() })
+        }, { closeDetails() }, { !closed && valid() })
     }
     fun closeDetails(): Boolean {
         val page = details ?: return false
         page.close(); details = null; body.visibility = View.VISIBLE; visible = true
         return true
     }
-    private fun readToolRecord(id: String, target: String): ToolRecord {
-        var next: String? = null; val text = StringBuilder(); val bytes = java.io.ByteArrayOutputStream(); var size = 0
+    private fun readToolRecord(id: String, target: String, version: Int, historyVersion: Long?): ToolRecord {
+        var next: String? = null; val text = StringBuilder(); val bytes = java.io.ByteArrayOutputStream(); var size = 0; val seen = mutableSetOf<String>()
         do {
-            check(!closed) { "会话已关闭" }
             val command = JSONObject().put("action", "record").put("record_id", id).put("part", "body")
             next?.let { command.put("cursor", it) }
-            val result = rpc(target, command)
+            val result = readRpc(target, command, version, historyVersion)
             if (result.optString("encoding") == "base64url") {
                 val chunk = android.util.Base64.decode(result.getString("body"), android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING)
                 size += chunk.size; bytes.write(chunk)
             } else { val chunk = result.getString("body"); size += chunk.toByteArray(Charsets.UTF_8).size; text.append(chunk) }
             check(size <= 4 * 1024 * 1024) { "记录超过大小限制" }
             next = result.optString("cursor").takeUnless { it.isEmpty() || it == "null" }
+            check(next == null || seen.add(next)) { "记录分页已失效，请重试" }
         } while (next != null)
         return ToolRecord(text.toString(), if (bytes.size() > 0) bytes.toByteArray() else null)
     }
@@ -474,17 +603,35 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
         if (globalId != null && conversationTitle.text == "新会话") all.firstOrNull { it.optString("kind") == "user" }?.let {
             conversationTitle.text = AgentTimeline.text(it).take(48).ifEmpty { "新会话" }
         }
-        fun addMessage(text: String, owner: String, container: LinearLayout) {
-            container.addView(label(owner, 12f, Palette.muted))
+        fun addMessage(text: String, owner: String, container: LinearLayout, time: Long = 0, streaming: Boolean = false) {
+            container.addView(row().apply {
+                setPadding(0, 0, 0, dp(6))
+                addView(ImageView(activity).apply {
+                    setImageResource(if (owner == "你") R.drawable.ic_user_round else R.drawable.ic_cpu)
+                    imageTintList = android.content.res.ColorStateList.valueOf(if (owner == "你") Palette.secondary else Palette.accent)
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }, LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginEnd = dp(7) })
+                addView(label(owner, 11f, Palette.secondary).apply { setTypeface(typeface, android.graphics.Typeface.BOLD) })
+                if (streaming) addView(label("  ·  正在回复", 11f, Palette.accent))
+                else if (time > 0) addView(label("  ·  " + android.text.format.DateFormat.format("HH:mm", time), 11f, Palette.muted))
+            })
             container.addView(markdown.view(text))
         }
+        if (all.isEmpty() && liveText.isBlank()) messages.addView(column(20).apply {
+            tag = "chat-empty"; gravity = android.view.Gravity.CENTER_HORIZONTAL
+            addView(label("从一个想法开始", 21f, Palette.text).apply { setTypeface(typeface, android.graphics.Typeface.BOLD) })
+            addView(label("描述任务，或把问题留在这里。", 14f, Palette.muted))
+        }, 0)
         for (item in all) {
             val kind = item.optString("kind"); val value = item.optJSONObject("value") ?: JSONObject()
-            val block = column().apply { tag = item.optString("id") }
-            if (kind == "interaction") {
+            val block = ChatMessageColumn(activity).apply { tag = item.optString("id") }
+            if (AgentTimeline.interrupted(item)) {
+                addMessage(AgentTimeline.text(item), "aTerminal", block, item.optLong("created_at"))
+                block.addView(label("回复中断 · 已保留收到的内容", 12f, Palette.warning).apply { tag = "interrupted-reply" })
+            } else if (kind == "interaction") {
                 // Assistant narration is a message, even when the same turn invokes tools.
                 value.optString("text").takeIf { it.isNotBlank() }?.let { text ->
-                    addMessage(text, "aTerminal", block)
+                    addMessage(text, "aTerminal", block, item.optLong("created_at"))
                 }
                 block.addView(row().apply {
                     background = shape(Palette.surface, true); setPadding(dp(10), dp(4), dp(2), dp(4))
@@ -494,7 +641,7 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
                     setOnClickListener { showDetails(item) }
                 })
             } else if (kind == "user" || kind == "assistant") {
-                addMessage(AgentTimeline.text(item), if (kind == "user") "你" else "aTerminal", block)
+                addMessage(AgentTimeline.text(item), if (kind == "user") "你" else "aTerminal", block, item.optLong("created_at"))
             } else {
                 block.addView(row().apply {
                     fill(label(AgentTimeline.text(item), 12f, Palette.muted).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END })
@@ -509,17 +656,21 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
                 val holder = column(); block.addView(holder)
                 val cached = drafts.file("record-$id")
                 if (cached.exists()) holder.addView(pictureView(cached) { showImage(cached) })
-                else { holder.addView(actionButton("加载图片") { record(id, holder) }); record(id, holder) }
+                else {
+                    holder.addView(actionButton(if (recordErrors.containsKey("image:$id")) "图片读取失败 · 重试" else "加载图片") { record(id, manual = true) }.apply { isEnabled = valid() })
+                    record(id)
+                }
             } }
-            block.background = shape(if (kind == "user") Palette.control else android.graphics.Color.TRANSPARENT, kind == "user")
-            block.setPadding(dp(12), dp(6), dp(8), dp(6))
+            block.background = shape(if (kind == "user") 0xff17334b.toInt() else Palette.surface, true).apply { cornerRadius = dp(16).toFloat() }
+            block.setPadding(dp(14), dp(10), dp(14), dp(12))
             messages.addView(block, messages.indexOfChild(authorization.cards).takeIf { it >= 0 } ?: messages.childCount, LinearLayout.LayoutParams(if (kind == "user") -2 else -1, -2).apply {
-                gravity = android.view.Gravity.END; bottomMargin = dp(12); if (kind == "user") marginStart = dp(24)
+                gravity = if (kind == "user") android.view.Gravity.END else android.view.Gravity.START
+                bottomMargin = dp(16); if (kind == "user") marginStart = dp(32) else marginEnd = dp(16)
             })
         }
         if (liveText.isNotBlank() && !hasPersistedLive()) {
-            val live = column(12).apply { tag = "live"; background = shape(Palette.surface) }
-            addMessage(liveText, "aTerminal", live)
+            val live = ChatMessageColumn(activity).apply { tag = "live"; setPadding(dp(14), dp(10), dp(14), dp(12)); background = shape(Palette.surface, true) }
+            addMessage(liveText, "aTerminal", live, streaming = true)
             messages.addView(live, messages.indexOfChild(authorization.cards).takeIf { it >= 0 } ?: messages.childCount)
         }
         if (authorization.cards.parent == null) messages.addView(authorization.cards)
@@ -543,14 +694,35 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
         observer.addOnPreDrawListener(positioned)
     } }
     private fun renderAttachments() { with(activity) {
-        preview.removeAllViews(); preview.visibility = if (attachments.isEmpty()) View.GONE else View.VISIBLE
+        preview.removeAllViews(); preview.visibility = if (attachments.isEmpty() || compactComposer) View.GONE else View.VISIBLE
         attachments.toList().forEach { picture ->
             val file = drafts.file(picture.getString("file"))
             preview.addView(column().apply {
                 addView(pictureView(file) { showImage(file) }, LinearLayout.LayoutParams(dp(64), dp(60)))
-                addView(iconButton(R.drawable.ic_x, "移除图片") { if (!submitting) { attachments.remove(picture); file.delete(); requestId = UUID.randomUUID().toString(); saveComposer(); renderAttachments(); updateButton() } })
+                addView(iconButton(R.drawable.ic_x, "移除图片") { removeAttachment(picture) })
             })
         }
+    } }
+    private fun removeAttachment(picture: JSONObject) {
+        attachments.remove(picture); requestId = UUID.randomUUID().toString(); saveComposer()
+        drafts.deleteIfUnreferenced(picture.getString("file")); renderAttachments(); updateButton()
+    }
+    private fun showSelectedImages() { with(activity) {
+        val content = column(12)
+        fun renderSelected() {
+            content.removeAllViews()
+            attachments.toList().forEachIndexed { index, picture ->
+                val file = drafts.file(picture.getString("file"))
+                content.addView(row().apply {
+                    addView(pictureView(file) { showImage(file) }, LinearLayout.LayoutParams(dp(64), dp(60)))
+                    fill(label("图片 ${index + 1}", 14f).apply { setPadding(dp(12), 0, 0, 0) })
+                    addView(iconButton(R.drawable.ic_x, "移除图片 ${index + 1}") { removeAttachment(picture); renderSelected() })
+                })
+            }
+            if (attachments.isEmpty()) content.addView(label("没有已选图片", 14f, Palette.muted))
+        }
+        renderSelected()
+        AlertDialog.Builder(activity).setTitle("已选图片").setView(scroll(content)).setPositiveButton("关闭", null).show()
     } }
     private fun pictureView(file: java.io.File, click: () -> Unit) = ImageView(activity).apply {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }; BitmapFactory.decodeFile(file.path, bounds)
@@ -560,11 +732,11 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
     }
     private fun showImage(file: java.io.File) { AlertDialog.Builder(activity).setTitle("图片预览").setView(activity.scroll(pictureView(file) {})).setPositiveButton("关闭", null).show() }
     private fun importImages(uris: List<Uri>, target: String = session) {
-        if (closed || uris.isEmpty() || target in importing || target in sending) return
+        if (closed || uris.isEmpty() || target in importing) return
         importing.add(target); feedback("正在读取图片…"); updateButton()
         save()
-        worker.execute { val imported = mutableListOf<JSONObject>(); try {
-            val saved = drafts.read(target); val pictures = saved.optJSONArray("images") ?: JSONArray()
+        localWorker.execute { val imported = mutableListOf<JSONObject>(); try {
+            val saved = drafts.readComposer(target); val pictures = saved.optJSONArray("images") ?: JSONArray()
             check(pictures.length() + uris.size <= 4) { "每条消息最多 4 张图片" }
             var total = (0 until pictures.length()).sumOf { drafts.file(pictures.getJSONObject(it).getString("file")).length() }
             for (uri in uris) {
@@ -582,23 +754,29 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
             ui.post { if (!closed) {
                 importing.remove(target)
                 if (target == session) { syncDraft(); attachments.addAll(imported); requestId = UUID.randomUUID().toString(); saveComposer(); renderAttachments(); feedback("") }
-                else { val current = drafts.read(target); val array = current.optJSONArray("images") ?: JSONArray(); imported.forEach { array.put(it) }; drafts.save(target, current.put("images", array).put("request_id", UUID.randomUUID().toString())) }
+                else { val current = drafts.readComposer(target); val array = current.optJSONArray("images") ?: JSONArray(); imported.forEach { array.put(it) }; drafts.saveComposer(target, current.put("images", array).put("request_id", UUID.randomUUID().toString())) }
                 updateButton()
             } else {
-                val current = drafts.read(target); val array = current.optJSONArray("images") ?: JSONArray(); imported.forEach { array.put(it) }; drafts.save(target, current.put("images", array).put("request_id", UUID.randomUUID().toString()))
+                val current = drafts.readComposer(target); val array = current.optJSONArray("images") ?: JSONArray(); imported.forEach { array.put(it) }; drafts.saveComposer(target, current.put("images", array).put("request_id", UUID.randomUUID().toString()))
             } }
         } catch (e: Exception) { imported.forEach { drafts.file(it.getString("file")).delete() }; ui.post { importing.remove(target); if (!closed) { feedback(errorText(e)); updateButton() } } } }
     }
-    private fun record(id: String, holder: LinearLayout) {
-        val version = epoch; val target = session
-        worker.execute { try {
-            val result = readToolRecord(id, target)
+    private fun record(id: String, manual: Boolean = false) {
+        val key = "image:$id"
+        if (closed || !valid() || (!manual && recordErrors.containsKey(key)) || pendingRecords.size >= 64 || !pendingRecords.add(key)) return
+        recordErrors.remove(key)
+        val version = epoch; val target = session; val historyVersion = generation
+        recordWorker.execute { try {
+            val result = readToolRecord(id, target, version, historyVersion)
             val bytes = checkNotNull(result.image) { "图片记录不可用" }
-            val file = drafts.file("record-$id").apply { writeBytes(bytes) }
-            ui.post { if (version == epoch && !closed) {
-                holder.removeAllViews(); holder.addView(pictureView(file) { showImage(file) })
+            val file = android.util.AtomicFile(drafts.file("record-$id")); val output = file.startWrite()
+            try { output.write(bytes); file.finishWrite(output) } catch (error: Exception) { file.failWrite(output); throw error }
+            ui.post { if (version == epoch && !closed && generation == historyVersion) {
+                pendingRecords.remove(key); render(false)
             } }
-        } catch (e: Exception) { ui.post { if (!closed && version == epoch) feedback("图片不可用：${e.message}") } } }
+        } catch (e: Exception) { ui.post { if (!closed && version == epoch && generation == historyVersion) {
+            pendingRecords.remove(key); recordErrors[key] = e.message.orEmpty(); render(false)
+        } } } }
     }
     private fun startVoice() {
         if (!SpeechRecognizer.isRecognitionAvailable(activity)) { feedback("此设备未提供语音识别服务"); return }

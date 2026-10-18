@@ -68,7 +68,9 @@ class AgentAuthorizationPanel(
     private fun rpc(command: JSONObject, mutation: Boolean = false): JSONObject {
         check(!closed && valid()) { "连接或对话已变化，请回到原对话重试" }
         if (mutation) check(canSend) { "当前设备操作权限尚未确认或仅可查看" }
-        val result = request(command)
+        val revision = connectionRevision
+        val result = if (mutation) request(command) else AgentReadRetry.run(command.getString("action"),
+            { !closed && valid() && revision == connectionRevision }) { request(JSONObject(command.toString())) }
         check(!closed && valid()) { "连接或对话已变化，请刷新确认结果" }
         if (result.has("error") && !result.isNull("error") && result.optString("error").isNotBlank()) error(result.optString("error"))
         return result
@@ -235,12 +237,12 @@ class AgentAuthorizationPanel(
                     tag = "answer:$id"; isSingleLine = false; maxLines = 5
                     inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
                     imeOptions = android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI
-                    setText(prefs.getString("answer:$id", "")); isEnabled = reason == null
+                    setText(prefs.getString("answer:$id", "")); isEnabled = !mutating
                 }
                 item.optJSONArray("options")?.let { options -> for (i in 0 until options.length()) {
                     val option = options.get(i)
                     val title = if (option is JSONObject) option.optString("label", option.optString("title")) else option.toString()
-                    card.addView(button(title, "option:$id:$i", reason == null) { input.setText(title) })
+                    card.addView(button(title, "option:$id:$i", !mutating) { input.setText(title) })
                 } }
                 input.addTextChangedListener(watcher { prefs.edit().putString("answer:$id", input.text.toString()).apply() })
                 card.addView(input)

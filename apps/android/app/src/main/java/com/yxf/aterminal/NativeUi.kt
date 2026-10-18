@@ -67,6 +67,16 @@ fun LinearLayout.fill(view: View) { addView(view, LinearLayout.LayoutParams(0, -
 fun LinearLayout.grow(view: View) { addView(view, LinearLayout.LayoutParams(-1, 0, 1f)) }
 fun Context.scroll(view: View) = ScrollView(this).apply { isFillViewport = true; addView(view) }
 
+/** Keep chat text readable on landscape/tablet screens without changing the surrounding page. */
+class ChatMessageColumn(context: Context) : LinearLayout(context) {
+    init { orientation = VERTICAL }
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val width = View.MeasureSpec.getSize(widthMeasureSpec)
+        val bounded = if (width > context.dp(760)) View.MeasureSpec.makeMeasureSpec(context.dp(760), View.MeasureSpec.getMode(widthMeasureSpec)) else widthMeasureSpec
+        super.onMeasure(bounded, heightMeasureSpec)
+    }
+}
+
 /** Settings-specific rows; chat controls retain their compact touch targets. */
 fun Context.settingsRow(title: String, subtitle: String, icon: Int? = null, action: (() -> Unit)? = null) = row().apply {
     minimumHeight = dp(80); setPadding(dp(12), dp(12), dp(12), dp(12)); background = shape(Palette.surface)
