@@ -19,6 +19,37 @@ jobs:
       - run: python3 scripts/check-ios-authorization.py
       - run: python3 scripts/check-ios-settings.py
       - run: python3 scripts/check-ios-reconnect.py
+      - run: python3 scripts/check-ios-chat-delivery.py
+
+  ios-ui:
+    name: iOS conversation and authorization UI
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
+      - name: Build isolated native UI fixtures
+        run: |
+          python3 scripts/build-mobile.py ios
+          python3 scripts/build-mobile.py ios --simulator
+          python3 scripts/prepare-bindings.py
+          python3 - <<'PY'
+          import platform, subprocess
+          target = 'aarch64-apple-ios-sim' if platform.machine() == 'arm64' else 'x86_64-apple-ios'
+          subprocess.run(['python3', 'scripts/package-ios.py', '--simulator-target', target, '--replace'], check=True)
+          PY
+      - name: Run native iOS regressions
+        run: python3 scripts/run-ios-conversation-ui.py
+      - name: Preserve iOS test results and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conversation-ios-${{ github.sha }}-${{ github.run_attempt }}
+          path: build/reconnect-evidence/ios-conversation.xcresult
+          if-no-files-found: warn
+          retention-days: 14
 
   android-ui:
     name: Android approval and reconnect UI
@@ -41,7 +72,7 @@ jobs:
         run: |
           python3 scripts/build-mobile.py android --android-abi x86_64 --ndk "$ANDROID_HOME/ndk/28.2.13676358"
           python3 scripts/prepare-bindings.py
-          ./apps/android/gradlew -p apps/android -PauthorizationUiFixture=true :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
+          ./apps/android/gradlew -p apps/android -PauthorizationUiFixture=true :app:assembleDebug :app:assembleDebugAndroidTest :app:testDebugUnitTest --no-daemon
       - name: Enable emulator acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -62,6 +93,7 @@ jobs:
           path: |
             apps/android/app/build/reports/androidTests
             apps/android/app/build/outputs/androidTest-results
+            apps/android/app/build/reports/tests
             build/reconnect-evidence
           if-no-files-found: warn
           retention-days: 14
