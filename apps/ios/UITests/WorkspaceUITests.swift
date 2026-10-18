@@ -683,6 +683,11 @@ final class ChatDeliveryUITests: XCTestCase {
         button.tap()
         XCTAssertTrue(app.staticTexts["chat.delivery.status"].waitForExistence(timeout: 5))
     }
+    private func assertMinimumTouchDimension(_ value: CGFloat, file: StaticString = #filePath, line: UInt = #line) {
+        // AX frame subtraction may return 43.99999999999997 for a 44 pt control.
+        // This tolerance only removes floating-point arithmetic noise; it is not a layout allowance.
+        XCTAssertGreaterThanOrEqual(value + 0.000_001, 44, file: file, line: line)
+    }
     func testInFlightSendPreservesNewDraftAndKeyboard() {
         let app = open(), editor = app.textViews["chat.draft"]
         UITestInput.replace(editor, with: "original", app: app)
@@ -762,12 +767,12 @@ final class ChatDeliveryUITests: XCTestCase {
             XCTAssertGreaterThanOrEqual(timeline.frame.minY, headerContent.maxY, "Panel controls overlapped the conversation")
             XCTAssertLessThanOrEqual(timeline.frame.minY - headerContent.maxY, 128, "Header and toolbar spacing displaced the conversation")
             let stop = app.buttons["chat.stop"]
-            XCTAssertGreaterThanOrEqual(stop.frame.width, 44)
-            XCTAssertGreaterThanOrEqual(stop.frame.height, 44)
+            assertMinimumTouchDimension(stop.frame.width)
+            assertMinimumTouchDimension(stop.frame.height)
             XCTAssertLessThanOrEqual(stop.frame.height, 48, "Stop wrapped onto multiple lines")
             let copy = app.buttons["chat.message.copy"].firstMatch
-            XCTAssertGreaterThanOrEqual(copy.frame.width, 44)
-            XCTAssertGreaterThanOrEqual(copy.frame.height, 44)
+            assertMinimumTouchDimension(copy.frame.width)
+            assertMinimumTouchDimension(copy.frame.height)
             if large { XCTAssertGreaterThan(body.frame.height, normalBodyHeight * 1.5, "Conversation body lost accessibility Dynamic Type") }
             else { normalBodyHeight = body.frame.height }
             let editor = app.textViews["chat.draft"]
@@ -777,7 +782,7 @@ final class ChatDeliveryUITests: XCTestCase {
             focused.name = large ? "chat-accessibility-keyboard" : "chat-normal-keyboard"; focused.lifetime = .keepAlways; add(focused)
             XCTAssertGreaterThanOrEqual(timeline.frame.height, 80, "Keyboard and chrome left no useful conversation viewport")
             XCTAssertTrue(app.buttons["chat.send"].isHittable && app.buttons["chat.draft.clear"].isHittable)
-            XCTAssertGreaterThanOrEqual(app.buttons["chat.draft.clear"].frame.height, 44)
+            assertMinimumTouchDimension(app.buttons["chat.draft.clear"].frame.height)
             let hint = app.staticTexts["chat.composer.hint"]
             XCTAssertTrue(hint.exists && hint.isHittable)
             XCTAssertEqual(editor.value as? String, "Local draft")
@@ -809,7 +814,7 @@ final class AuthorizationUITests: XCTestCase {
         XCTAssertTrue(button.waitForExistence(timeout: 10), id)
         var previousAbove = false
         for _ in 0..<20 {
-            if button.exists && button.isHittable && button.isEnabled { break }
+            if button.exists && button.isHittable { break }
             let timeline = app.scrollViews["chat.timeline"]
             let scroll = timeline.exists ? timeline : app.scrollViews.firstMatch
             let exists = button.exists
@@ -824,6 +829,9 @@ final class AuthorizationUITests: XCTestCase {
                 start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
             }
         }
+        // Permission polling may briefly disable an already visible action.
+        // Wait for its current state instead of scrolling it out of view again.
+        wait { button.exists && button.isHittable && button.isEnabled }
         XCTAssertTrue(button.exists && button.isHittable && button.isEnabled, id); button.tap()
     }
     private func wait(_ condition: @escaping () -> Bool) {

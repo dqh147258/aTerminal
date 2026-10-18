@@ -91,6 +91,8 @@ PR 的 `Approval and Reconnect Regression` 增加 Android 新的 13 项 conversa
 | `65729ce`：[Verify Terminal（PR）](https://github.com/dqh147258/aTerminal/actions/runs/39100168275) 与 [Verify Terminal（push）](https://github.com/dqh147258/aTerminal/actions/runs/39100166423) | 两条运行全部 10/10 jobs 通过，包括 Linux/macOS/Windows 测试与 Clippy、真实 PTY、移动端原生构建、WebRTC 检查 |
 | `9ade08a`：[原生回归第三轮](https://github.com/dqh147258/aTerminal/actions/runs/39102839108) | Android 49/50 通过，重连坐标和详情前景检查通过，唯一失败为截图初始滚动位置裁掉首卡顶部 8 px；iOS 15/17 通过，输入同步回归已通过，失败为页头 AX 测量与一次授权 UI 查询超时；iOS state 四套脚本通过 |
 | `9ade08a`：[Verify Terminal（PR）](https://github.com/dqh147258/aTerminal/actions/runs/39102839015) 与 [Verify Terminal（push）](https://github.com/dqh147258/aTerminal/actions/runs/39102835484) | 两条运行全部 10/10 jobs 通过；同提交图标及 Linux amd64/arm64 构建也通过 |
+| `1084fc5`：[原生回归第四轮](https://github.com/dqh147258/aTerminal/actions/runs/39110741137) | Android 原生 50/50、JVM 23/23 通过，8 张原生截图验收通过，首卡完整、断线前后消息及输入坐标一致。iOS state 四套脚本通过；iOS 原生 14/17 通过，两项授权滚动后挂起，另一项为 44 pt 的浮点表示导致几何断言误差 |
+| `1084fc5`：[Verify Terminal（PR）](https://github.com/dqh147258/aTerminal/actions/runs/39110741358) 与 [Verify Terminal（push）](https://github.com/dqh147258/aTerminal/actions/runs/39110737665) | 两条运行全部 10/10 jobs 通过，图标与 Linux amd64/arm64 构建也通过；该提交全部 19 项检查中 17 成功、1 项 iOS UI 失败、1 项发布按条件跳过 |
 
 后续 Review 的具体修正：
 
@@ -101,5 +103,10 @@ PR 的 `Approval and Reconnect Regression` 增加 Android 新的 13 项 conversa
 5. **输入事件提交不等于 AX 已更新。** 第二轮 iOS 失败发生在首次输入 `original`、发送前。xcresult 显示合成调用返回后仍在交付原生按键事件，首次 AX 快照值为 `or` 且保持焦点；同一原始录屏随后显示完整 `original`。测试只增加最多 5 秒的只读完整值等待，输入仍仅一次；清空也用相同严格等待。不改生产自动纠正、不重打字符、不接受前缀。
 6. **已有错误和读取取消也不能造成重连闪动。** Android 已显示连接读取错误时，共享状态出现后保留该行原空间，只隐藏内容；原先隐藏的行不会新增。iOS 授权读取的 `CancellationError` 与真实协议/授权失败分别处理：仍使旧权限失效、保留已读详情，但不短暂插入通用取消错误提示。对应坐标与 Foundation 回归验证这些边界，实际错误继续显示。
 7. **视觉验收必须测量正确的区域。** 第三轮 Android 失败截图证实列表初始追随末尾，首卡顶部被裁掉；截图测试现在等首帧后显式滚到起点，仍要求每张卡完整可见、像素正确、断线前后位置相同，不压缩生产 UI 间距。iOS 原始录屏中普通字号页头实际约 56 pt，而新增 AX 分组将约 59 pt 顶部安全区域计入 115 pt，并继承父页面模态语义成为 Alert。移除该多余分组，保留整个页面的模态语义及独立可访问按钮；测试改测标题、副标题和关闭按钮的实际联合范围及阅读区位置，保留原高度限制。授权查询超时与误识别弹窗同时出现，是否完全消除以跟进原生回归为准。
+8. **浮点数值误差不能混同真实尺寸问题。** 第四轮普通字号的页头范围、阅读区间距和停止按钮检查已通过，复制按钮高度被 AX 表示为 `43.99999999999997`，与 44 pt 相差约 `2.84e-14` pt。五项最小触摸尺寸断言统一采用 `1e-6` pt 数值容差，远小于一个像素；生产 44 pt 尺寸、最大高度、正文缩放和键盘视口要求保持不变。该失败发生在第一张 `chat-normal-text` 之后，另外三张大字号/键盘截图尚未执行，不能算已验收。
+9. **滚动定位与等待按钮可用应独立。** 第四轮的详细 AX 记录显示，“拒绝”按钮已滚到可见位置（`isHittable=true`）时会因权限轮询暂时 disabled；测试 helper 原先把它当作尚未到位，额外反向拖动。现在目标存在且具有可命中的触摸位置即停止滚动，然后最多 10 秒只读等待可用，保留严格点击及最终拒绝效果断言。永久授权用例在第一次必要拖动即挂起，不能由此测试修正解释；两项挂起仍是未解决的原生验收阻碍，已在 Issue #10 记录。
+10. **缺少主线程栈时先补取证。** 删除页头多余 AX 容器后授权挂起仍可复现，旧相关性不足以确定原因；xcresult 的远程 spindump 返回不支持。下一次原生 CI 将被动、限量采样本次专用模拟器中的 aTerminal 进程，保留实际调用栈与原始 xcresult，不自动重试用例、不更改失败退出码，再依据栈信息修正生产路径。
+
+诊断入口经独立 Review，使用内核短进程名筛选候选，再通过 `proc_pidpath` 核对真实可执行文件属于本次模拟器安装容器；不依赖可变化的 `argv[0]`。每 PID 最多两次、全轮最多 12 次，每次采样 3 秒，探测及取消均有界。Linux 上的受控验证覆盖外部容器拒绝、路径别名、采样上限、子进程取消，以及 xcodebuild 只执行一次并保留原失败退出码；实际 macOS 采样能力仍由下一轮 CI 验证。
 
 本轮 UI 修改和输入/帧同步修正均已交叉审查。新增原生测试的结果及最终截图以 [PR #13 检查页](https://github.com/dqh147258/aTerminal/pull/13/checks) 对应最终提交为准，PR 描述同步记录最新验收结果。

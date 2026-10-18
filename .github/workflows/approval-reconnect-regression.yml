@@ -47,7 +47,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: conversation-ios-${{ github.sha }}-${{ github.run_attempt }}
-          path: build/reconnect-evidence/ios-conversation.xcresult
+          path: |
+            build/reconnect-evidence/ios-conversation.xcresult
+            build/reconnect-evidence/ios-hang-diagnostics
           if-no-files-found: warn
           retention-days: 14
 
