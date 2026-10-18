@@ -31,7 +31,7 @@ class GlobalConversationPanel(private val activity: Activity, private val body: 
         body.setBackgroundColor(Palette.background)
         (body.getChildAt(0) as LinearLayout).apply {
             removeAllViews(); addView(iconButton(R.drawable.ic_arrow_left, "返回首页", back).apply { background = null })
-            fill(heading("全局AI助手").apply { setPadding(dp(16), 0, 0, 0) }); addView(add.apply { background = shape(Palette.surface, true) })
+            fill(ConnectionStatusSlot(activity, heading("全局AI助手").apply { setPadding(dp(16), 0, 0, 0) })); addView(add.apply { background = shape(Palette.surface, true) })
         }
         body.grow(scroll)
         body.addView(status.apply { setPadding(dp(16), dp(8), dp(16), dp(8)) })
@@ -83,7 +83,8 @@ class GlobalConversationPanel(private val activity: Activity, private val body: 
             do {
                 check(revision == connectionRevision && valid()) { "连接已变化" }
                 val command = JSONObject().put("version", 1).put("action", "global_list"); cursor?.let { command.put("cursor", it) }
-                val page = JSONObject(request(command.toString())); val array = page.getJSONArray("conversations")
+                val page = AgentReadRetry.run("global_list", { !closed && revision == connectionRevision && valid() }) { JSONObject(request(command.toString())) }
+                val array = page.getJSONArray("conversations")
                 for (i in 0 until array.length()) rows.add(array.getJSONObject(i))
                 cursor = if (page.isNull("cursor")) null else page.getLong("cursor")
             } while (cursor != null && !closed)
@@ -108,7 +109,7 @@ class GlobalConversationPanel(private val activity: Activity, private val body: 
     fun connectionInterrupted() {
         if (closed) return
         connectionRevision++; busy = false; creating = false; confirmed = false
-        status.text = "连接暂时中断 · 已保留会话列表"
+        if ((activity as? MainActivity)?.showingConnectionStatus != true) status.text = "连接暂时中断 · 已保留会话列表"
         render()
     }
     fun connectionRestored() {

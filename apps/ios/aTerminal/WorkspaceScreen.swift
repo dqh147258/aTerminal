@@ -68,13 +68,13 @@ struct WorkspaceScreen: View {
                     Color.black.opacity(0.08).ignoresSafeArea().onTapGesture { self.panel = nil }.accessibilityHidden(true)
                     panelContent(panel, height: height).frame(maxWidth: .infinity)
                         .frame(height: height)
-                        .background(WorkspaceStyle.surface.opacity(min(100, max(0, opacity)) / 100))
+                        .background(WorkspaceStyle.surface.opacity([.chat, .globalList, .chatHistory].contains(panel) ? 1 : min(100, max(0, opacity)) / 100))
                         .overlay(RoundedRectangle(cornerRadius: 8).stroke(WorkspaceStyle.line))
                         .cornerRadius(0).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                         .accessibilityAddTraits(.isModal)
                 }
             }.frame(width: geometry.size.width, height: geometry.size.height)
-                .safeAreaInset(edge: .top, spacing: 0) {
+                .overlay(alignment: .top) {
                     if model.reconnecting || model.authenticationRequired { connectionBanner }
                 }
                 .onAppear { updateOrientation() }
@@ -157,7 +157,7 @@ struct WorkspaceScreen: View {
         HStack(spacing: 10) {
             if model.busy { ProgressView().scaleEffect(0.8) }
             Image(systemName: model.authenticationRequired ? "lock.shield" : "wifi.slash")
-            Text(model.authenticationRequired ? "连接授权失效，请检查账号与设备" : "连接中断 · 页面和草稿已保留，正在重连")
+            Text(model.authenticationRequired ? "连接授权失效" : "正在重连…")
                 .font(.caption).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
             Button(model.authenticationRequired ? "账号与设备" : "重试") {
@@ -165,6 +165,8 @@ struct WorkspaceScreen: View {
                 else { model.retryConnection() }
             }.font(.caption).disabled(model.busy).accessibilityIdentifier("workspace.reconnect.retry")
         }.padding(.horizontal, 12).padding(.vertical, 8).background(WorkspaceStyle.surface)
+            .overlay(Capsule().stroke(WorkspaceStyle.line)).clipShape(Capsule())
+            .frame(maxWidth: 280).padding(.top, 6).padding(.horizontal, 12)
             .accessibilityElement(children: .contain).accessibilityIdentifier("workspace.reconnect")
     }
 
@@ -367,11 +369,11 @@ struct WorkspaceScreen: View {
     @ViewBuilder private func panelContent(_ value: WorkspacePanel, height: CGFloat) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Image(systemName: panelSymbol(value)).foregroundColor(WorkspaceStyle.accent)
+                Image(systemName: panelSymbol(value)).font(.system(size: 20)).foregroundColor(WorkspaceStyle.accent).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(panelTitle(value)).font(.system(size: 20, weight: .semibold)).accessibilityIdentifier(value == .chat && assistant.global ? "global.title" : "panel.title")
+                    Text(panelTitle(value)).font(.system(size: 20, weight: .semibold)).lineLimit(2).accessibilityIdentifier(value == .chat && assistant.global ? "global.title" : "panel.title")
                     if value == .chat && height < 400 { Text(model.fixture ? "本地 UI 验证 · 未连接模型" : assistant.status).font(.caption2).foregroundColor(WorkspaceStyle.muted).lineLimit(1).accessibilityIdentifier("chat.status") }
-                    else if verticalSizeClass != .compact && height >= 350 { Text(panelSubtitle(value)).font(.caption).foregroundColor(WorkspaceStyle.muted).lineLimit(2) }
+                    else if verticalSizeClass != .compact && height >= (value == .chat ? 500 : 350) { Text(panelSubtitle(value)).font(.caption).foregroundColor(WorkspaceStyle.muted).lineLimit(2).accessibilityIdentifier("panel.subtitle") }
                 }
                 Spacer(minLength: 4)
                 ToolButton(symbol: value == .chat && assistant.global ? "arrow.left" : "xmark", label: value == .chat && assistant.global ? "返回全局会话列表" : "关闭\(panelTitle(value))") {
@@ -380,7 +382,8 @@ struct WorkspaceScreen: View {
                     else if accountFromSettings && value == .devices { accountFromSettings = false; panel = .settings }
                     else { panel = nil }
                 }.accessibilityIdentifier(value == .remoteScreens ? "screens.close" : value == .settings ? "settings.close" : value == .globalList || value == .chat && assistant.global ? "global.back" : "panel.close")
-            }.padding(.leading, 16).padding(.trailing, 4).padding(.vertical, height < 350 ? 0 : 6).background(WorkspaceStyle.surface)
+            }.dynamicTypeSize(...([.chat, .globalList, .chatHistory].contains(value) ? DynamicTypeSize.xxxLarge : .accessibility5))
+                .padding(.leading, 16).padding(.trailing, 4).padding(.vertical, height < (value == .chat ? 500 : 350) ? 0 : 6).background(WorkspaceStyle.surface)
             Divider().overlay(WorkspaceStyle.line)
             switch value {
             case .settings: settingsPanel

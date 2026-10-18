@@ -16,7 +16,6 @@ import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 import uniffi.ai_terminal_mobile.*
-import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.TimeUnit
@@ -33,14 +32,23 @@ class ReconnectUiTest {
     private fun frame(value: String = "x", revision: ULong = 5uL) = RenderFrame(2u, 4u, revision,
         List(8) { RenderCell(value, 1u, 0xeeeeeeu, 0x101014u, 0u) }, 0u, 0u, true, 1u)
     private fun scenario() = ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("isolated_ui", true))
-    private fun screenshot(name: String) {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        instrumentation.waitForIdleSync()
-        val bitmap = instrumentation.uiAutomation.takeScreenshot()
-        assertNotNull("Native screen capture unavailable", bitmap)
-        val directory = File(context.filesDir, "reconnect-evidence").apply { mkdirs() }
-        File(directory, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        bitmap.recycle()
+    private fun screenshot(scenario: ActivityScenario<MainActivity>, name: String, expectedStatus: String) {
+        lateinit var activity: MainActivity
+        scenario.onActivity { activity = it }
+        NativeUiEvidence.capture(activity, "reconnect-evidence/$name.png", {
+            val banner = get(activity, "reconnectBanner") as TextView
+            assertEquals(expectedStatus, banner.text.toString())
+            NativeUiEvidence.assertFullyVisible(banner)
+            assertEquals("The whole status must be readable", 0, banner.layout.getEllipsisCount(0))
+            val body = get(activity, "overlayPanel") as View
+            assertEquals(Palette.background, (body.background as android.graphics.drawable.ColorDrawable).color)
+            val draft = all(body).filterIsInstance<EditText>().first { it.contentDescription == "发送任务或追加消息" }
+            NativeUiEvidence.assertFullyVisible(draft)
+            assertTrue(draft.isEnabled); assertEquals("保留的草稿，不可自动发送", draft.text.toString())
+            assertFalse(all(body).filterIsInstance<TextView>().any { it.isShown && it.text.contains("已保留待办") })
+            NativeUiEvidence.assertFullyVisible(all(body).first { it.contentDescription == "关闭AI Agent" })
+            NativeUiEvidence.assertFullyVisible(all(body).first { it.tag == "agent-permissions" })
+        })
     }
 
     @Test fun transientOutageKeepsAgentDraftTerminalAndNavigationAndRejectsOfflineInput() {
@@ -83,7 +91,7 @@ class ReconnectUiTest {
             assertEquals(false, enqueue.invoke(activity, { sent++; Unit }))
             assertEquals(0, sent)
         }
-        screenshot("transient-agent-draft")
+        screenshot(scenario, "transient-agent-draft", "重连中 · 本地操作可用")
         scenario.onActivity { activity ->
             val reconnect = get(activity, "reconnect") as WorkspaceReconnect
             val panel = get(activity, "agentPanel")
@@ -95,7 +103,7 @@ class ReconnectUiTest {
             assertSame(panel, get(activity, "agentPanel"))
             assertEquals("保留的草稿，不可自动发送", draft.text.toString())
         }
-        screenshot("authentication-preserves-chat")
+        screenshot(scenario, "authentication-preserves-chat", "登录已失效 · 点此登录")
         }
     }
 

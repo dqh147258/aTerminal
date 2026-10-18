@@ -194,6 +194,74 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
         var acknowledged: [String: Any] = [:]
         for command in server.commands { if command["action"] as? String == "resolve" { acknowledged = command } }
         check(acknowledged["details_ack"] as? Bool == true && acknowledged["fingerprint"] as? String == "fp-long", "Resolve did not acknowledge exact details")
+        // Offline reading keeps the full detail body, but verification belongs
+        // to the connection and must be renewed before approving that body.
+        let detailsModel = AgentAuthorization(), detailsServer = Server()
+        let completeDetail: [String: Any] = ["pending_id": "long", "fingerprint": "fp-long", "text": "complete cached detail", "cursor": NSNull(), "has_more": false, "truncated": false]
+        detailsServer.rows = [longRow]; detailsServer.detailPages = [completeDetail]
+        detailsModel.bind(context: "details-1", scopeKey: "details-scope-a", writable: true, transport: detailsServer.request)
+        await detailsModel.refresh()
+        let detailItem = detailsModel.pending[0]
+        check(detailsModel.canApprove(detailItem), "Initial complete details were not verified")
+        detailsModel.bind(context: "details-offline", scopeKey: "details-scope-a", writable: false, transport: nil)
+        check(detailsModel.detailText["long"] == "complete cached detail" && detailsModel.canReadDetails(detailItem), "Reconnect replaced the full detail body with its preview")
+        check(!detailsModel.canAct && !detailsModel.canApprove(detailItem), "Cached details retained connection authority")
+        let detailCommands = detailsServer.commands.count
+        await detailsModel.resolve(detailItem, decision: "once")
+        check(detailsServer.commands.count == detailCommands, "Offline cached detail authorized an action")
+        var detailReply: CheckedContinuation<[String: Any], Error>?
+        detailsModel.bind(context: "details-2", scopeKey: "details-scope-a", writable: true, transport: { command in
+            if command["action"] as? String == "approval_details" { return try await withCheckedThrowingContinuation { detailReply = $0 } }
+            return try await detailsServer.request(command)
+        })
+        let detailsRefresh = Task { await detailsModel.refresh() }
+        while detailReply == nil { await Task.yield() }
+        check(detailsModel.detailText["long"] == "complete cached detail" && !detailsModel.canApprove(detailItem), "Detail refetch removed readable content or accepted stale verification")
+        detailReply?.resume(returning: completeDetail); await detailsRefresh.value
+        check(detailsModel.canAct && detailsModel.canApprove(detailItem), "Reconnect did not verify exact complete detail again")
+        detailsServer.detailPages = [["pending_id": "long", "fingerprint": "different", "text": "wrong", "cursor": NSNull(), "has_more": false, "truncated": false]]
+        detailsModel.bind(context: "details-3", scopeKey: "details-scope-a", writable: true, transport: detailsServer.request)
+        await detailsModel.refresh()
+        check(detailsModel.detailText["long"] == "complete cached detail" && detailsModel.canReadDetails(detailItem) && !detailsModel.canApprove(detailItem), "Failed detail validation destroyed the readable cache or allowed approval")
+        check(detailsModel.detailErrors["long"] != nil, "A real detail validation error was hidden")
+        detailsModel.bind(context: "details-other-account", scopeKey: "details-scope-b", writable: false, transport: nil)
+        check(detailsModel.detailText.isEmpty && !detailsModel.canReadDetails(detailItem), "Full detail text crossed account scope")
+        // The transport may retire before SwiftUI rebinds the authorization
+        // generation. Cancellation must not insert a generic error row or leave
+        // that still-current generation able to submit live operations.
+        let cancelling = AgentAuthorization(), cancellationServer = Server()
+        cancellationServer.rows = [longRow]; cancellationServer.detailPages = [completeDetail]
+        var cancelAction = ""
+        let cancellingTransport: AgentAuthorization.Transport = { command in
+            if command["action"] as? String == cancelAction { throw CancellationError() }
+            return try await cancellationServer.request(command)
+        }
+        cancelling.bind(context: "cancellation-1", scopeKey: "cancellation-scope", writable: true, transport: cancellingTransport)
+        await cancelling.refresh(includeRules: true)
+        let cachedApproval = cancelling.pending[0]
+        check(cancelling.canAct && cancelling.canApprove(cachedApproval), "Cancellation fixture did not establish its cached authority")
+        var publishedErrors: [String] = []
+        cancelling.changed = { publishedErrors.append(cancelling.error) }
+        cancelAction = "permissions"
+        await cancelling.refresh()
+        check(cancelling.permissions == nil && !cancelling.canAct && !cancelling.loading, "Same-generation cancellation retained live authorization")
+        check(cancelling.error.isEmpty && publishedErrors.allSatisfy { $0.isEmpty }, "Cancellation inserted a second connection error row")
+        check(cancelling.pending.count == 1 && cancelling.rules.count == 1 && cancelling.detailText["long"] == "complete cached detail", "Cancellation discarded visible pending, rules or full details")
+        var cancellationCommands = cancellationServer.commands.count
+        await cancelling.setPermissions(full: true); await cancelling.resolve(cachedApproval, decision: "once")
+        check(cancellationServer.commands.count == cancellationCommands, "Cancelled refresh transmitted a live mutation")
+        // On a replacement connection, cached text stays readable while its
+        // verification is renewed. Cancelling that detail read must also unwind
+        // the permission snapshot fetched earlier in the same refresh.
+        cancelAction = "approval_details"
+        cancelling.bind(context: "cancellation-2", scopeKey: "cancellation-scope", writable: true, transport: cancellingTransport)
+        await cancelling.refresh()
+        check(cancelling.permissions == nil && !cancelling.canAct && !cancelling.canApprove(cachedApproval), "Cancelled details finished refresh with old approval authority")
+        check(cancelling.error.isEmpty && cancelling.detailErrors.isEmpty && publishedErrors.allSatisfy { $0.isEmpty }, "Cancelled details published a generic or per-card error")
+        check(cancelling.detailText["long"] == "complete cached detail" && cancelling.canReadDetails(cachedApproval), "Cancelled details replaced the readable cache")
+        cancellationCommands = cancellationServer.commands.count
+        await cancelling.setPermissions(full: true); await cancelling.resolve(cachedApproval, decision: "once")
+        check(cancellationServer.commands.count == cancellationCommands, "Cancelled detail refresh transmitted a live mutation")
         // Lost response, transport replacement, and explicit retry keep the same
         // account/device/agent idempotency key. Recovery itself sends only reads.
         let resumed = AgentAuthorization(), resumedServer = Server()
@@ -236,6 +304,37 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
         resumed.bind(context: "next-transport", scopeKey: "account-b/desktop-a/session-a", writable: true, transport: resumedServer.request)
         await delayedTap.value
         check(resumedServer.commands.count == beforeDelayedTap, "Queued authorization tap crossed the connection epoch")
+        // Permission polling and offline recovery must not disable local edits.
+        let answerModel = AgentAuthorization(), answerServer = Server()
+        var pausePermissions = false
+        var permissionReply: CheckedContinuation<[String: Any], Error>?
+        answerModel.bind(context: "editable-1", scopeKey: "editable-scope", writable: true, transport: { command in
+            if pausePermissions && command["action"] as? String == "permissions" {
+                return try await withCheckedThrowingContinuation { permissionReply = $0 }
+            }
+            return try await answerServer.request(command)
+        })
+        await answerModel.refresh()
+        let editableQuestion = answerModel.pending.first { $0.kind == "question" }!
+        check(answerModel.canEditAnswer(editableQuestion), "Confirmed writable question cannot be edited")
+        pausePermissions = true
+        let permissionPoll = Task { await answerModel.refresh() }
+        while permissionReply == nil { await Task.yield() }
+        check(answerModel.loading && !answerModel.canAct && answerModel.canEditAnswer(editableQuestion), "Permission poll blocked local answer input")
+        permissionReply?.resume(returning: ["revision": 1, "permission_mode": "ask", "full_authorization": false, "can_mutate": true])
+        await permissionPoll.value
+        let beforeOffline = answerServer.commands.count
+        answerModel.bind(context: "editable-offline", scopeKey: "editable-scope", writable: false, transport: nil)
+        check(answerModel.canEditAnswer(editableQuestion) && !answerModel.canAct, "Reconnect blocked editing or granted submission")
+        await answerModel.resolve(editableQuestion, answer: "Offline draft")
+        check(answerServer.commands.count == beforeOffline, "Local offline answer was sent")
+        answerModel.bind(context: "other-account", scopeKey: "other-account-scope", writable: true, transport: answerServer.request)
+        check(!answerModel.canEditAnswer(editableQuestion), "Question editor crossed account scope")
+        answerServer.canMutate = false
+        await answerModel.refresh()
+        check(!answerModel.canEditAnswer(answerModel.pending.first { $0.kind == "question" }!), "Read-only device enabled answer editing")
+        answerModel.bind(context: "readonly-offline", scopeKey: "other-account-scope", writable: false, transport: nil)
+        check(!answerModel.canEditAnswer(editableQuestion), "Reconnect changed a known read-only grant")
         print("PASS: scoped presentation/draft lifetime, consumption and stale-editor fences; authorization recovery, CAS, idempotency, grants, detail ACK and legacy fail-closed")
     }
 }

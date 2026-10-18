@@ -112,6 +112,115 @@ async fn cancellation_prevents_even_opening_a_request() {
     assert_eq!(result.err().unwrap().to_string(), "cancelled");
 }
 
+#[tokio::test]
+async fn actual_http_errors_are_sanitized_and_collect_keeps_one_attempt() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let received = calls.clone();
+    let app = Router::new().route(
+        "/{status}/chat/completions",
+        post(
+            move |axum::extract::Path(status): axum::extract::Path<u16>| {
+                let received = received.clone();
+                async move {
+                    received.fetch_add(1, Ordering::AcqRel);
+                    (
+                        axum::http::StatusCode::from_u16(status).unwrap(),
+                        [("retry-after", "10")],
+                        "secret provider response: https://private.invalid/?api_key=do-not-display",
+                    )
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    for status in [401, 429, 503] {
+        let model = connect(
+            &Connection {
+                protocol: Protocol::OpenaiChat,
+                endpoint: format!("http://{address}/{status}"),
+                api_version: None,
+            },
+            "test",
+            "fake-secret",
+        )
+        .unwrap();
+        let (_tx, rx) = watch::channel(false);
+        let error = collect(
+            model.as_ref(),
+            builder().build(&[entry()], None).unwrap(),
+            rx,
+            Duration::from_secs(2),
+            |_| {},
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(error.to_string(), format!("model_provider_http_{status}"));
+    }
+    assert_eq!(
+        calls.load(Ordering::Acquire),
+        3,
+        "Only Host may schedule a retry"
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn actual_token_limit_and_truncated_streams_never_report_success() {
+    let partial = "data: {\"id\":\"response-1\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"partial\"},\"finish_reason\":null}]}\n\n";
+    let capped = format!(
+        "{partial}data: {{\"id\":\"response-1\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"test-model\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"length\"}}]}}\n\ndata: [DONE]\n\n"
+    );
+    let app = Router::new()
+        .route(
+            "/truncated/chat/completions",
+            post(move || async move { ([("content-type", "text/event-stream")], partial) }),
+        )
+        .route(
+            "/capped/chat/completions",
+            post(move || {
+                let capped = capped.clone();
+                async move { ([("content-type", "text/event-stream")], capped) }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    for (path, expected) in [
+        ("truncated", "model_stream_truncated"),
+        ("capped", "model_output_token_limit"),
+    ] {
+        let model = connect(
+            &Connection {
+                protocol: Protocol::OpenaiChat,
+                endpoint: format!("http://{address}/{path}"),
+                api_version: None,
+            },
+            "test",
+            "fake",
+        )
+        .unwrap();
+        let (_tx, rx) = watch::channel(false);
+        let mut text = String::new();
+        let error = collect(
+            model.as_ref(),
+            builder().build(&[entry()], None).unwrap(),
+            rx,
+            Duration::from_secs(2),
+            |delta| text.push_str(delta),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(error.to_string(), expected);
+        assert_eq!(text, "partial");
+    }
+    server.abort();
+}
+
 async fn capture_error(
     State(calls): State<Arc<Mutex<Vec<Value>>>>,
     Json(body): Json<Value>,

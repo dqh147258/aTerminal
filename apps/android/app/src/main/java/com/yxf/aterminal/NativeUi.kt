@@ -67,6 +67,37 @@ fun LinearLayout.fill(view: View) { addView(view, LinearLayout.LayoutParams(0, -
 fun LinearLayout.grow(view: View) { addView(view, LinearLayout.LayoutParams(-1, 0, 1f)) }
 fun Context.scroll(view: View) = ScrollView(this).apply { isFillViewport = true; addView(view) }
 
+/** A connection notice replaces an existing caption without moving the reader below it. */
+class ConnectionStatusSlot(context: Context, private val caption: View) : FrameLayout(context) {
+    init { addView(caption, LayoutParams(-1, -2)) }
+    fun show(notice: TextView) {
+        if (notice.parent === this) return
+        (notice.parent as? ConnectionStatusSlot)?.clear(notice)
+        (notice.parent as? android.view.ViewGroup)?.removeView(notice)
+        (caption as? TextView)?.let {
+            val maximum = android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP, 12f, resources.displayMetrics)
+            notice.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, minOf(it.textSize, maximum))
+            notice.includeFontPadding = it.includeFontPadding
+        }
+        caption.visibility = View.INVISIBLE
+        addView(notice, LayoutParams(-1, -1))
+    }
+    fun clear(notice: TextView) {
+        removeView(notice)
+        caption.visibility = View.VISIBLE
+    }
+}
+
+/** Keep chat text readable on landscape/tablet screens without changing the surrounding page. */
+class ChatMessageColumn(context: Context) : LinearLayout(context) {
+    init { orientation = VERTICAL }
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val width = View.MeasureSpec.getSize(widthMeasureSpec)
+        val bounded = if (width > context.dp(760)) View.MeasureSpec.makeMeasureSpec(context.dp(760), View.MeasureSpec.getMode(widthMeasureSpec)) else widthMeasureSpec
+        super.onMeasure(bounded, heightMeasureSpec)
+    }
+}
+
 /** Settings-specific rows; chat controls retain their compact touch targets. */
 fun Context.settingsRow(title: String, subtitle: String, icon: Int? = null, action: (() -> Unit)? = null) = row().apply {
     minimumHeight = dp(80); setPadding(dp(12), dp(12), dp(12), dp(12)); background = shape(Palette.surface)

@@ -19,6 +19,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Native UI behavior against isolated, deterministic RPCs. No accounts, PTYs or models. */
 class AgentAuthorizationUiTest {
@@ -391,8 +392,12 @@ class AgentAuthorizationUiTest {
     @Test fun truncatedApprovalNeedsCompleteMatchingDetailsBeforeApproval() {
         pending.add(approval("long").put("requires_details", true).put("arguments_truncated", true).put("fingerprint", "fp-long"))
         val failTail = AtomicBoolean(true)
+        val tailAttempts = AtomicInteger()
         intercept = { command -> if (command.optString("action") == "approval_details") {
-            if (command.has("cursor") && failTail.getAndSet(false)) error("tail offline")
+            if (command.has("cursor")) {
+                tailAttempts.incrementAndGet()
+                if (failTail.get()) error("tail offline")
+            }
             JSONObject().put("pending_id", "long").put("fingerprint", "fp-long").put("truncated", false)
                 .put("text", if (command.has("cursor")) "dangerous-target.txt" else "{\"command\":\"")
                 .put("cursor", if (command.has("cursor")) JSONObject.NULL else "tail").put("has_more", !command.has("cursor"))
@@ -400,8 +405,10 @@ class AgentAuthorizationUiTest {
         launch()
         main { assertFalse(tagged("once:long").isEnabled); assertFalse(tagged("always:long").isEnabled); assertTrue(tagged("deny:long").isEnabled); tagged("details:long").performClick() }
         waitFor("failed detail keeps approval disabled") { main { views().filterIsInstance<TextView>().any { it.text.contains("tail offline") } && !tagged("once:long").isEnabled && tagged("deny:long").isEnabled } }
-        main { tagged("details:long").performClick() }
+        assertEquals("The failed tail must stop after the bounded read attempts", 3, tailAttempts.get())
+        main { failTail.set(false); tagged("details:long").performClick() }
         waitFor("full detail allows exact approval") { main { views().any { it.tag == "approval-details:long" && (it as TextView).text.contains("dangerous-target.txt") } && tagged("once:long").isEnabled } }
+        assertEquals("Only the explicit retry may read the tail again", 4, tailAttempts.get())
         main { tagged("once:long").performClick() }
         waitFor("detail ack sent") { calls.any { it.optString("action") == "resolve" } }
         val result = calls.last { it.optString("action") == "resolve" }

@@ -4,6 +4,8 @@ import org.json.JSONObject
 
 /** Presentation-only compaction: original Desktop events and page cursors stay intact. */
 object AgentTimeline {
+    fun interrupted(item: JSONObject): Boolean = item.optString("kind") == "interaction" &&
+        item.optJSONObject("value")?.optString("source") == "model_interrupted"
     fun text(item: JSONObject): String {
         val value = item.optJSONObject("value") ?: JSONObject()
         val kind = item.optString("kind")

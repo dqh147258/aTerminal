@@ -82,7 +82,7 @@ class WorkspaceReviewRegressionTest {
             waitFor("initial full interaction") { main{item().optJSONObject("value")?.optJSONArray("updates")!=null} }
             phase.set(1)
             main {AgentPanel::class.java.getDeclaredMethod("refresh").apply{isAccessible=true}.invoke(chat)}
-            waitFor("new history version applied") { main{item().optInt("created_at")==2} }
+            waitFor("new history version completed") { main{item().optInt("created_at")==2 && item().optJSONObject("value")?.optJSONArray("updates")!=null} }
             val observed=main{item().getJSONObject("value").getJSONArray("updates").getJSONObject(0).getString("state")}
             assertEquals("finished",observed);assertEquals(2,records.get())
         } finally {main{chat?.close();activity.finish()}}

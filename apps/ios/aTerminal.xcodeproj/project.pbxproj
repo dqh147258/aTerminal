@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        AC1018000000000000000001 /* AgentChatDelivery.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC1018000000000000000002; };
 		AC1007000000000000000005 /* RemoteScreenFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC1007000000000000000006 /* RemoteScreenFixture.swift */; };
 		AC1007000000000000000003 /* RemoteScreensPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC1007000000000000000004 /* RemoteScreensPanel.swift */; };
 		AC1007000000000000000001 /* RemoteScreenModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC1007000000000000000002 /* RemoteScreenModel.swift */; };
@@ -36,6 +37,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+        AC1018000000000000000002 /* AgentChatDelivery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentChatDelivery.swift; sourceTree = "<group>"; };
 		AC1007000000000000000006 /* RemoteScreenFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteScreenFixture.swift; sourceTree = "<group>"; };
 		AC1007000000000000000004 /* RemoteScreensPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteScreensPanel.swift; sourceTree = "<group>"; };
 		AC1007000000000000000002 /* RemoteScreenModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteScreenModel.swift; sourceTree = "<group>"; };
@@ -115,6 +117,7 @@
 				E61A9D47D7F9A3E562878563 /* aTerminalApp.swift */,
 				AABBCCDD0000000000000021 /* ChatStore.swift */,
 				AABBCCDD0000000000000022 /* AssistantModel.swift */,
+                AC1018000000000000000002 /* AgentChatDelivery.swift */,
 				AABBCCDD0000000000000023 /* SpeechDraft.swift */,
 				AABBCCDD0000000000000024 /* WorkspaceStyle.swift */,
 				AABBCCDD0000000000000025 /* LoginScreen.swift */,
@@ -245,6 +248,7 @@
 				AC1007000000000000000003 /* RemoteScreensPanel.swift in Sources */,
 				AC1007000000000000000001 /* RemoteScreenModel.swift in Sources */,
 				AABBCCDD0000000000000017 /* ChatPanel.swift in Sources */,
+                AC1018000000000000000001 /* AgentChatDelivery.swift in Sources */,
                 AC0210000000000000000001 /* AgentAuthorization.swift in Sources */,
                 AC0710000000000000000001 /* WorkspaceRecovery.swift in Sources */,
                 AC0210000000000000000003 /* AgentAuthorizationView.swift in Sources */,

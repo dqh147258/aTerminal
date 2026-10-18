@@ -20,6 +20,7 @@ class AgentAuthorizationPanel(
     private val request: (JSONObject) -> JSONObject,
     private val changed: () -> Unit,
     private val resolved: () -> Unit = {},
+    private val sharedConnectionStatus: () -> Boolean = { false },
 ) {
     private val ui = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
@@ -37,6 +38,7 @@ class AgentAuthorizationPanel(
     private var ruleRows: List<JSONObject>? = null
     private var rulesLoading = false
     private var error = ""
+    private var connectionNotice = ""
     private var actionError = ""
     private var uncertainPendingId: String? = null
     // An acknowledgement is not an execution result. Retire it only after an
@@ -68,7 +70,9 @@ class AgentAuthorizationPanel(
     private fun rpc(command: JSONObject, mutation: Boolean = false): JSONObject {
         check(!closed && valid()) { "连接或对话已变化，请回到原对话重试" }
         if (mutation) check(canSend) { "当前设备操作权限尚未确认或仅可查看" }
-        val result = request(command)
+        val revision = connectionRevision
+        val result = if (mutation) request(command) else AgentReadRetry.run(command.getString("action"),
+            { !closed && valid() && revision == connectionRevision }) { request(JSONObject(command.toString())) }
         check(!closed && valid()) { "连接或对话已变化，请刷新确认结果" }
         if (result.has("error") && !result.isNull("error") && result.optString("error").isNotBlank()) error(result.optString("error"))
         return result
@@ -111,14 +115,14 @@ class AgentAuthorizationPanel(
         rulesLoading = false
         detailsLoading.clear()
         permissionsFresh = false
-        error = "连接暂时中断 · 待办和回答已保留"
+        connectionNotice = "连接暂时中断 · 待办和回答已保留"
         renderStatus(); renderPending(); renderDialog(); changed()
     }
 
     fun refresh() {
         if (closed) return
         if (!valid()) {
-            permissionsFresh = false; error = "Desktop 未连接 · 已保留待办"
+            permissionsFresh = false; connectionNotice = "Desktop 未连接 · 已保留待办"
             renderStatus(); renderPending(); changed(); return
         }
         if (refreshing || mutating) return
@@ -130,6 +134,7 @@ class AgentAuthorizationPanel(
             ui.post {
                 if (closed || revision != connectionRevision) return@post
                 refreshing = false
+                connectionNotice = ""
                 permissionsFresh = permissionResult.isSuccess && valid()
                 permissionResult.getOrNull()?.let { permissions = it }
                 // Only a complete successful page replaces cards. Failed reads retain them.
@@ -170,7 +175,8 @@ class AgentAuthorizationPanel(
             permissions?.optBoolean("full_authorization") == true -> "权限 · 完全授权"
             else -> "权限 · 按需询问"
         }
-        notice.text = listOf(actionReceipt?.message.orEmpty(), actionError, error).filter { it.isNotBlank() }.joinToString("\n")
+        notice.text = listOf(actionReceipt?.message.orEmpty(), actionError, error,
+            connectionNotice.takeUnless { sharedConnectionStatus() }.orEmpty()).filter { it.isNotBlank() }.joinToString("\n")
         notice.visibility = if (notice.text.isBlank()) View.GONE else View.VISIBLE
     }
     private fun button(text: String, tag: String, enabled: Boolean = true, action: () -> Unit) = activity.actionButton(text, action = action).apply {
@@ -235,12 +241,12 @@ class AgentAuthorizationPanel(
                     tag = "answer:$id"; isSingleLine = false; maxLines = 5
                     inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
                     imeOptions = android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI
-                    setText(prefs.getString("answer:$id", "")); isEnabled = reason == null
+                    setText(prefs.getString("answer:$id", "")); isEnabled = !mutating
                 }
                 item.optJSONArray("options")?.let { options -> for (i in 0 until options.length()) {
                     val option = options.get(i)
                     val title = if (option is JSONObject) option.optString("label", option.optString("title")) else option.toString()
-                    card.addView(button(title, "option:$id:$i", reason == null) { input.setText(title) })
+                    card.addView(button(title, "option:$id:$i", !mutating) { input.setText(title) })
                 } }
                 input.addTextChangedListener(watcher { prefs.edit().putString("answer:$id", input.text.toString()).apply() })
                 card.addView(input)
@@ -250,7 +256,7 @@ class AgentAuthorizationPanel(
                 input.addTextChangedListener(watcher { answerButton.isEnabled = blocked() == null && input.text.isNotBlank(); answerButton.alpha = if (answerButton.isEnabled) 1f else .45f })
                 card.addView(answerButton)
             }
-            reason?.let { card.addView(label(it, 12f, Palette.warning)) }
+            reason?.takeUnless { !valid() && sharedConnectionStatus() }?.let { card.addView(label(it, 12f, Palette.warning)) }
             rows.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
         }
         if (focusedTag != null) (rows.findViewWithTag<View>(focusedTag) as? EditText)?.takeIf { it.isEnabled }?.let { input ->

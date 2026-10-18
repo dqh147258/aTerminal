@@ -19,13 +19,22 @@ data class ToolRecord(val text: String, val image: ByteArray? = null)
 /** A full-page reader. Every record expands in place; leaving discards late UI callbacks. */
 class ToolDetailsPage(private val activity: Activity, private val hostContainer: FrameLayout,
     initial: JSONObject, private val load: (String, (Result<ToolRecord>) -> Unit) -> Unit,
-    private val back: () -> Unit) {
+    private val back: () -> Unit, private val connected: () -> Boolean = { true },
+    private val sharedConnectionStatus: () -> Boolean = { false }) {
     private val page = activity.column().apply { setBackgroundColor(Palette.background); isClickable = true; isFocusableInTouchMode = true }
     private val content = activity.column(16)
     private val viewport = activity.scroll(content)
+    private val connectionStatus = activity.label("连接暂时中断 · 已保留当前页面", 12f, Palette.muted).apply {
+        setPadding(activity.dp(16), activity.dp(6), activity.dp(16), activity.dp(6))
+        visibility = if (connected() || sharedConnectionStatus()) View.GONE else View.VISIBLE
+        accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+    }
     private val markdown = ChatMarkdown(activity)
     private var item = initial
     private var closed = false
+    private var revision = 0
+    private var unavailable = false
+    private var retainedScroll: Int? = null
     private val expanded = mutableSetOf<String>()
     private val loading = mutableSetOf<String>()
     private val records = mutableMapOf<String, ToolRecord>()
@@ -36,18 +45,47 @@ class ToolDetailsPage(private val activity: Activity, private val hostContainer:
         page.addView(row().apply {
             setPadding(dp(8), dp(8), dp(16), dp(8)); setBackgroundColor(Palette.surface)
             addView(iconButton(R.drawable.ic_arrow_left, "返回对话", back).apply { background = null })
-            fill(heading(if (item.optString("kind") == "interaction") "工具操作详情" else "状态详情").apply { setPadding(dp(8), 0, 0, 0) })
+            fill(ConnectionStatusSlot(activity, heading(if (item.optString("kind") == "interaction") "工具操作详情" else "状态详情").apply { setPadding(dp(8), 0, 0, 0) }))
         })
         page.addView(line())
+        page.addView(connectionStatus)
         page.grow(viewport)
         hostContainer.addView(page, FrameLayout.LayoutParams(-1, -1))
         render(); page.requestFocus()
     } }
 
     fun update(next: JSONObject) {
-        if (!closed && next.toString() != item.toString()) { item = next; render() }
+        if (!closed && (unavailable || next.toString() != item.toString())) {
+            unavailable = false; item = next
+            connectionStatus.visibility = if (connected() || sharedConnectionStatus()) View.GONE else View.VISIBLE
+            render()
+            retainedScroll?.let { y -> viewport.post { if (!closed) viewport.scrollTo(0, y) } }; retainedScroll = null
+        }
     }
-    fun close() { if (!closed) { closed = true; hostContainer.removeView(page) } }
+    fun close() { if (!closed) { closed = true; revision++; hostContainer.removeView(page) } }
+    fun connectionInterrupted() {
+        if (closed) return
+        revision++
+        connectionStatus.visibility = if (sharedConnectionStatus()) View.GONE else View.VISIBLE
+        loading.forEach { errors[it] = "连接暂时中断，恢复后可继续读取" }; loading.clear()
+        render()
+    }
+    fun connectionRestored() {
+        if (closed) return
+        connectionStatus.visibility = View.GONE
+        if (unavailable) return
+        revision++; loading.clear()
+        expanded.filter { it != "raw" && it !in records }.forEach { errors.remove(it) }
+        render()
+    }
+    fun historyChanged() {
+        if (closed) return
+        retainedScroll = viewport.scrollY
+        revision++; unavailable = true; loading.clear(); records.clear(); errors.clear()
+        content.removeAllViews()
+        content.addView(activity.label("历史已更新，正在确认这条记录。也可以返回对话后重新打开。", 14f, Palette.muted))
+        content.addView(activity.actionButton("返回对话", action = back))
+    }
     private fun line() = View(activity).apply { setBackgroundColor(Palette.line); layoutParams = LinearLayout.LayoutParams(-1, activity.dp(1)) }
     private fun icon(resource: Int, color: Int = Palette.accent) = ImageView(activity).apply {
         setImageResource(resource); imageTintList = ColorStateList.valueOf(color)
@@ -72,7 +110,7 @@ class ToolDetailsPage(private val activity: Activity, private val hostContainer:
             else -> "操作记录" to Palette.muted
         }
     }
-    private fun render() { if (closed) return; with(activity) {
+    private fun render() { if (closed || unavailable) return; with(activity) {
         val y = viewport.scrollY
         content.removeAllViews()
         val value = item.optJSONObject("value") ?: JSONObject()
@@ -111,8 +149,9 @@ class ToolDetailsPage(private val activity: Activity, private val hostContainer:
                     record != null -> recordView(holder, record, recordLabel)
                     errors.containsKey(entry.id) -> {
                         holder.addView(label("读取失败：${errors[entry.id]}", 13f, Palette.danger).apply { setTextIsSelectable(true) })
-                        holder.addView(actionButton("重新读取") { errors.remove(entry.id); fetch(entry.id); render() })
+                        holder.addView(actionButton("重新读取") { errors.remove(entry.id); fetch(entry.id); render() }.apply { isEnabled = connected() })
                     }
+                    !connected() -> holder.addView(label("连接恢复后可读取；已加载的内容仍可查看。", 12f, Palette.muted))
                     else -> {
                         holder.addView(row().apply {
                             addView(ProgressBar(activity).apply { indeterminateTintList = ColorStateList.valueOf(Palette.accent) }, LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginEnd = dp(8) })
@@ -155,9 +194,10 @@ class ToolDetailsPage(private val activity: Activity, private val hostContainer:
         })
     } }
     private fun fetch(id: String) {
-        if (closed || !loading.add(id)) return
+        if (closed || unavailable || !connected() || !loading.add(id)) return
+        val version = revision
         load(id) { result ->
-            if (!closed) {
+            if (!closed && !unavailable && revision == version) {
                 loading.remove(id)
                 result.onSuccess { records[id] = it }.onFailure { errors[id] = it.message ?: "记录不可用" }
                 render()

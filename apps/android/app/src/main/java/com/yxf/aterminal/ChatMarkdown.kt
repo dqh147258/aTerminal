@@ -32,6 +32,7 @@ class ChatMarkdown(private val context: Context) {
 
     fun view(source: String): TextView = context.label("", 16f).apply {
         tag = "markdown-message"
+        setLineSpacing(context.dp(3).toFloat(), 1.08f)
         setTextIsSelectable(true)
         renderer.setMarkdown(this, source)
     }
