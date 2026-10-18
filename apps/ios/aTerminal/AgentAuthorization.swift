@@ -81,6 +81,7 @@ enum AuthorizationFailure: LocalizedError {
     private(set) var detailText: [String: String] = [:]
     private(set) var detailErrors: [String: String] = [:]
     private var detailFingerprints: [String: String] = [:]
+    private var verifiedDetailIDs = Set<String>()
     private(set) var error = ""
     private(set) var busy = false
     private(set) var loading = false
@@ -92,7 +93,13 @@ enum AuthorizationFailure: LocalizedError {
     private var transport: Transport?
     // Keep the idempotency key for a retry after an uncertain network response.
     private var requestIDs: [String: String] = [:]
+    private var allowsAnswerDraft = false
     var canAct: Bool { writable && permissions?.canMutate == true && !busy && !loading }
+    /// Editing a local answer is independent of a transport/permission refresh.
+    /// A consumed question or an answer currently being submitted stays fenced.
+    func canEditAnswer(_ item: AgentPending) -> Bool {
+        !busy && allowsAnswerDraft && item.kind == "question" && pending.contains { $0.id == item.id && $0.kind == "question" && $0.actionable && $0.fingerprint == item.fingerprint }
+    }
     var mode: String { permissions?.mode ?? "ask" }
     var full: Bool { permissions?.full ?? false }
     func bind(context: String, scopeKey: String? = nil, writable: Bool, transport: Transport?) {
@@ -101,8 +108,13 @@ enum AuthorizationFailure: LocalizedError {
         generation += 1; self.context = context; self.scopeKey = scopeKey; self.writable = writable; self.transport = transport
         // Keep uncertain delivery IDs and visible cards across transport replacement.
         // New permissions and exact details must still be fetched before any action.
-        if !sameScope { pending = []; rules = []; requestIDs = [:] }
-        permissions = nil; detailText = [:]; detailErrors = [:]; detailFingerprints = [:]
+        if !sameScope {
+            pending = []; rules = []; requestIDs = [:]; allowsAnswerDraft = false
+            detailText = [:]; detailErrors = [:]; detailFingerprints = [:]
+        }
+        // Cached detail text is still useful to read while offline. Its previous
+        // connection's verification never authorizes an action after reconnect.
+        permissions = nil; verifiedDetailIDs = []
         error = ""; busy = false; loading = false; changed?()
     }
     /// Capture the action context synchronously at the tap, before Swift schedules
@@ -127,13 +139,14 @@ enum AuthorizationFailure: LocalizedError {
             let value = try await call(["action": "permissions"], using: transport)
             guard token == generation else { return }
             permissions = try AgentPermissions(value)
+            allowsAnswerDraft = permissions?.canMutate == true
             let rows = try await list("pending", key: "items", transport: transport, token: token)
             guard token == generation else { return }
             pending = rows.compactMap(AgentPending.init)
             changed?()
             var retained = Set<String>()
             for item in pending { if detailFingerprints[item.id] == item.fingerprint { retained.insert(item.id) } }
-            for id in Array(detailText.keys) where !retained.contains(id) { detailText[id] = nil; detailFingerprints[id] = nil }
+            for id in Array(detailText.keys) where !retained.contains(id) { detailText[id] = nil; detailFingerprints[id] = nil; verifiedDetailIDs.remove(id) }
             for item in pending where item.kind == "approval" && item.actionable && item.requiresDetails && !canApprove(item) {
                 await fetchDetails(item, transport: transport, token: token)
                 guard token == generation else { return }
@@ -174,8 +187,11 @@ enum AuthorizationFailure: LocalizedError {
         } while cursor != nil
         return rows
     }
-    func canApprove(_ item: AgentPending) -> Bool {
+    func canReadDetails(_ item: AgentPending) -> Bool {
         !item.requiresDetails || (!item.fingerprint.isEmpty && detailFingerprints[item.id] == item.fingerprint && detailText[item.id] != nil)
+    }
+    func canApprove(_ item: AgentPending) -> Bool {
+        !item.requiresDetails || (canReadDetails(item) && verifiedDetailIDs.contains(item.id))
     }
     private func fetchDetails(_ item: AgentPending, transport: Transport, token: Int) async {
         do {
@@ -196,7 +212,7 @@ enum AuthorizationFailure: LocalizedError {
                 if let cursor, !seen.insert(cursor).inserted { throw AuthorizationFailure.message("详情返回重复游标") }
             } while cursor != nil
             guard token == generation else { return }
-            detailText[item.id] = text; detailFingerprints[item.id] = item.fingerprint; detailErrors[item.id] = nil
+            detailText[item.id] = text; detailFingerprints[item.id] = item.fingerprint; verifiedDetailIDs.insert(item.id); detailErrors[item.id] = nil
             changed?()
         } catch {
             guard token == generation else { return }

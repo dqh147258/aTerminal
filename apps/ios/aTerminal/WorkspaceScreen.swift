@@ -74,7 +74,7 @@ struct WorkspaceScreen: View {
                         .accessibilityAddTraits(.isModal)
                 }
             }.frame(width: geometry.size.width, height: geometry.size.height)
-                .safeAreaInset(edge: .top, spacing: 0) {
+                .overlay(alignment: .top) {
                     if model.reconnecting || model.authenticationRequired { connectionBanner }
                 }
                 .onAppear { updateOrientation() }
@@ -157,7 +157,7 @@ struct WorkspaceScreen: View {
         HStack(spacing: 10) {
             if model.busy { ProgressView().scaleEffect(0.8) }
             Image(systemName: model.authenticationRequired ? "lock.shield" : "wifi.slash")
-            Text(model.authenticationRequired ? "连接授权失效，请检查账号与设备" : "连接中断 · 页面和草稿已保留，正在重连")
+            Text(model.authenticationRequired ? "连接授权失效" : "正在重连…")
                 .font(.caption).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
             Button(model.authenticationRequired ? "账号与设备" : "重试") {
@@ -165,6 +165,8 @@ struct WorkspaceScreen: View {
                 else { model.retryConnection() }
             }.font(.caption).disabled(model.busy).accessibilityIdentifier("workspace.reconnect.retry")
         }.padding(.horizontal, 12).padding(.vertical, 8).background(WorkspaceStyle.surface)
+            .overlay(Capsule().stroke(WorkspaceStyle.line)).clipShape(Capsule())
+            .frame(maxWidth: 280).padding(.top, 6).padding(.horizontal, 12)
             .accessibilityElement(children: .contain).accessibilityIdentifier("workspace.reconnect")
     }
 

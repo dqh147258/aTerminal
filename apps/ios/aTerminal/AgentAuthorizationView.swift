@@ -14,7 +14,7 @@ struct AgentPendingCard: View {
                 Text(item.tool + " · " + item.cwd).font(.caption).textSelection(.enabled)
                 Text(item.arguments).font(.system(.callout, design: .monospaced)).lineLimit(8).textSelection(.enabled)
                 Button("查看完整操作详情") { model.openApprovalDetails(item, destination: destination) }.accessibilityIdentifier("authorization.details.open")
-                    .disabled(item.requiresDetails && !model.authorization.canApprove(item))
+                    .disabled(!model.authorization.canReadDetails(item))
                 if item.requiresDetails && !model.authorization.canApprove(item) {
                     Text(model.authorization.detailErrors[item.id] ?? "正在取齐完整操作详情，取齐后可以授权；也可以直接拒绝。")
                         .font(.caption).foregroundColor(WorkspaceStyle.muted).accessibilityIdentifier("authorization.details.status")
@@ -31,7 +31,7 @@ struct AgentPendingCard: View {
             } else {
                 Text(item.question).textSelection(.enabled)
                 if item.actionable {
-                    Button("回答") { model.openQuestion(item, destination: destination) }.buttonStyle(.borderedProminent).disabled(!canRespond)
+                    Button("回答") { model.openQuestion(item, destination: destination) }.buttonStyle(.borderedProminent).disabled(!model.authorization.canEditAnswer(item))
                         .accessibilityIdentifier("authorization.question.open")
                 }
             }
@@ -59,6 +59,7 @@ struct AgentQuestionView: View {
     @Environment(\.dismiss) private var dismiss
     @FocusState private var answering: Bool
     private var current: Bool { model.target?.key == presentation.scopeKey && model.interactions.isCurrent(presentation) && model.authorization.pending.contains(where: { $0.id == item.id && $0.actionable }) }
+    private var canEdit: Bool { current && model.authorization.canEditAnswer(item) }
     private var canSubmit: Bool { current && model.authorization.canAct && model.agentConnectionReason == nil && !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var body: some View {
         NavigationView {
@@ -71,15 +72,15 @@ struct AgentQuestionView: View {
                     Section(header: Text("选择或补充")) {
                         ForEach(Array(item.options.enumerated()), id: \.offset) { index, option in
                             Button(option) { answer = option }.accessibilityIdentifier("authorization.option.\(index)")
-                                .disabled(!current || !model.authorization.canAct)
+                                .disabled(!canEdit)
                         }
                     }
                 }
                 Section(header: Text("自由答复")) {
                     TextField("输入或补充答复", text: Binding(get: { answer }, set: { answer = $0 })).focused($answering).submitLabel(.send)
                         .onSubmit { if canSubmit { submit() } }.accessibilityIdentifier("authorization.answer")
-                        .disabled(!current || !model.authorization.canAct)
-                    Button("清空答复") { answer = "" }.accessibilityIdentifier("authorization.answer.clear.form")
+                        .disabled(!canEdit)
+                    Button("清空答复") { answer = "" }.disabled(!canEdit).accessibilityIdentifier("authorization.answer.clear.form")
                     Button("发送答复") { submit() }.disabled(!canSubmit).accessibilityIdentifier("authorization.answer.send")
                 }
                 if !model.authorization.error.isEmpty { Text(model.authorization.error).foregroundColor(WorkspaceStyle.danger) }
@@ -88,7 +89,7 @@ struct AgentQuestionView: View {
                 ToolbarItemGroup(placement: .keyboard) {
                     Button("发送答复") { submit() }.disabled(!canSubmit).accessibilityIdentifier("authorization.answer.keyboard")
                     Spacer()
-                    Button("清空") { answer = "" }.accessibilityIdentifier("authorization.answer.clear")
+                    Button("清空") { answer = "" }.disabled(!canEdit).accessibilityIdentifier("authorization.answer.clear")
                     Button("完成") { answering = false }
                 }
             }

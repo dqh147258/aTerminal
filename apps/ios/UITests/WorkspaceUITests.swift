@@ -208,19 +208,30 @@ final class WorkspaceUITests: XCTestCase {
         XCTAssertFalse(app.buttons["session.history.fixture-offline"].exists)
         replaceText(app.textFields["workspace.search"], with: "")
         for session in ["fixture-closed", "fixture-offline"] {
+            let historyRow = app.buttons["session.select." + session]
+            XCTAssertTrue(historyRow.label.contains(session == "fixture-closed" ? "已关闭 · 只读" : "离线 · 只读"))
             app.buttons["session.history." + session].tap()
             XCTAssertTrue(element(app, "chat.session").waitForExistence(timeout: 5))
-            XCTAssertTrue(app.staticTexts[session == "fixture-closed" ? "会话已关闭 · 只读" : "设备离线 · 只读缓存"].exists)
-            replaceText(app.textFields["chat.draft"], with: session + "-draft")
+            if session == "fixture-offline" { XCTAssertTrue(app.staticTexts["设备离线 · 只读缓存"].exists) }
+            else { XCTAssertTrue(app.staticTexts["正文专有词 星河缓存检索 cedar-body-only-731"].waitForExistence(timeout: 5)) }
+            replaceText(app.textViews["chat.draft"], with: session + "-draft")
+            XCTAssertTrue(app.textViews["chat.draft"].isEnabled)
             XCTAssertFalse(app.buttons["chat.send"].isEnabled)
             XCTAssertFalse(app.buttons["chat.stop"].isEnabled)
-            XCTAssertFalse(app.switches["允许操作终端与扩展"].isEnabled)
+            let authorization = app.buttons["authorization.open"]
+            XCTAssertTrue(authorization.waitForExistence(timeout: 5) && authorization.isEnabled)
+            authorization.tap()
+            let fullAuthorization = app.switches["authorization.full"]
+            XCTAssertTrue(fullAuthorization.waitForExistence(timeout: 5))
+            XCTAssertFalse(fullAuthorization.isEnabled, "Read-only history enabled a live authorization change")
+            app.buttons["authorization.close"].tap()
+            XCTAssertEqual(app.textViews["chat.draft"].value as? String, session + "-draft", "Browsing authorization discarded the offline draft")
             capture("fixture-17-" + session + "-read-only")
             app.buttons["panel.close"].tap(); app.buttons["workspace.drawer"].tap()
         }
         app.buttons["workspace.close"].tap(); app.buttons["workspace.chat"].tap()
-        XCTAssertTrue(app.textFields["chat.draft"].waitForExistence(timeout: 5))
-        XCTAssertFalse(["fixture-closed-draft", "fixture-offline-draft"].contains(app.textFields["chat.draft"].value as? String ?? ""))
+        XCTAssertTrue(app.textViews["chat.draft"].waitForExistence(timeout: 5))
+        XCTAssertFalse(["fixture-closed-draft", "fixture-offline-draft"].contains(app.textViews["chat.draft"].value as? String ?? ""))
     }
     func testAzureConditionAndValidationPreserveDraft() {
         let app = settingsFixture(); addProvider(app)
@@ -389,27 +400,27 @@ final class WorkspaceUITests: XCTestCase {
         app.buttons["workspace.global"].tap()
         XCTAssertTrue(app.buttons["global.select.fixture-global"].waitForExistence(timeout: 5)); app.buttons["global.select.fixture-global"].tap()
         XCTAssertTrue(element(app, "chat.global").waitForExistence(timeout: 5))
-        replaceText(app.textFields["chat.draft"], with: "global-only-draft")
+        replaceText(app.textViews["chat.draft"], with: "global-only-draft")
         app.buttons["global.back"].tap()
         XCTAssertTrue(element(app, "global.list").waitForExistence(timeout: 5)); app.buttons["global.back"].tap()
         app.buttons["workspace.chat"].tap()
         XCTAssertTrue(element(app, "chat.session").waitForExistence(timeout: 5))
-        XCTAssertFalse(app.textFields["chat.draft"].value as? String == "global-only-draft")
-        replaceText(app.textFields["chat.draft"], with: "session-only-draft")
+        XCTAssertFalse(app.textViews["chat.draft"].value as? String == "global-only-draft")
+        replaceText(app.textViews["chat.draft"], with: "session-only-draft")
         XCTAssertFalse(app.segmentedControls.buttons["全局"].exists)
         capture("fixture-18-session-chat")
         app.buttons["panel.close"].tap(); app.buttons["workspace.global"].tap()
         XCTAssertTrue(app.buttons["global.select.fixture-global"].waitForExistence(timeout: 5)); app.buttons["global.select.fixture-global"].tap()
-        XCTAssertTrue(app.textFields["chat.draft"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.textFields["chat.draft"].value as? String == "global-only-draft")
+        XCTAssertTrue(app.textViews["chat.draft"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.textViews["chat.draft"].value as? String == "global-only-draft")
         capture("fixture-20-global-draft-isolation")
         app.buttons["global.back"].tap(); app.buttons["global.create"].tap()
         XCTAssertTrue(element(app, "chat.global").waitForExistence(timeout: 5))
-        XCTAssertFalse(app.textFields["chat.draft"].value as? String == "global-only-draft")
-        replaceText(app.textFields["chat.draft"], with: "second-global-draft")
+        XCTAssertFalse(app.textViews["chat.draft"].value as? String == "global-only-draft")
+        replaceText(app.textViews["chat.draft"], with: "second-global-draft")
         app.buttons["global.back"].tap()
         XCTAssertTrue(app.buttons["global.select.fixture-global"].waitForExistence(timeout: 5)); app.buttons["global.select.fixture-global"].tap()
-        XCTAssertTrue(app.textFields["chat.draft"].value as? String == "global-only-draft")
+        XCTAssertTrue(app.textViews["chat.draft"].value as? String == "global-only-draft")
     }
     func testFixtureMcpImportDeleteConfirmationAndSkillEdit() {
         let app = settingsFixture(); app.buttons["settings.mcp"].tap()
@@ -632,12 +643,89 @@ final class LiveServiceUITests: XCTestCase {
     }
 }
 
+final class ChatDeliveryUITests: XCTestCase {
+    override func setUp() { continueAfterFailure = false }
+    private func open(_ extra: [String] = []) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--workspace-fixture", "--settings-fixture", "--authorization-fixture", "--authorization-fixture-id=" + UUID().uuidString, "--show-chat", "--chat-delivery-fixture"] + extra
+        app.launch()
+        XCTAssertTrue(app.textViews["chat.draft"].waitForExistence(timeout: 10))
+        return app
+    }
+    private func wait(_ condition: @escaping () -> Bool) {
+        let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in condition() }, object: nil)], timeout: 20)
+        XCTAssertEqual(result, .completed)
+    }
+    private func send(_ app: XCUIApplication) {
+        wait { app.buttons["chat.send"].isEnabled }
+        let button = app.buttons["chat.send.keyboard"].exists ? app.buttons["chat.send.keyboard"] : app.buttons["chat.send"]
+        button.tap()
+        XCTAssertTrue(app.staticTexts["chat.delivery.status"].waitForExistence(timeout: 5))
+    }
+    func testInFlightSendPreservesNewDraftAndKeyboard() {
+        let app = open(), editor = app.textViews["chat.draft"]
+        UITestInput.replace(editor, with: "original", app: app)
+        send(app)
+        XCTAssertTrue(editor.isEnabled)
+        app.buttons["chat.draft.clear"].tap()
+        editor.typeText("next draft")
+        XCTAssertTrue(app.keyboards.firstMatch.exists)
+        wait { !app.staticTexts["chat.delivery.status"].exists }
+        XCTAssertEqual(editor.value as? String, "next draft", "Old ACK erased text entered during send")
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "Send acknowledgement dismissed the keyboard")
+    }
+    func testUnconfirmedMessageCanRetryWithoutOverwritingNewDraft() {
+        let app = open(["--chat-send-failure-fixture"]), editor = app.textViews["chat.draft"]
+        UITestInput.replace(editor, with: "original retry", app: app)
+        send(app)
+        app.buttons["chat.draft.clear"].tap(); editor.typeText("new draft")
+        wait { app.buttons["chat.delivery.retry"].exists }
+        XCTAssertEqual(app.staticTexts["chat.delivery.message"].label, "original retry")
+        XCTAssertEqual(editor.value as? String, "new draft")
+        wait { app.buttons["chat.delivery.retry"].isEnabled }
+        app.buttons["chat.delivery.retry"].tap()
+        XCTAssertTrue(editor.isEnabled)
+        wait { !app.staticTexts["chat.delivery.status"].exists }
+        XCTAssertEqual(editor.value as? String, "new draft")
+    }
+    func testInterruptedReplyIsSeparateFromToolRecords() {
+        let app = open(["--chat-interrupted-fixture"])
+        let label = app.staticTexts["chat.interrupted"].firstMatch
+        XCTAssertTrue(label.waitForExistence(timeout: 10))
+        XCTAssertEqual(label.label, "回复中断")
+        XCTAssertFalse(app.staticTexts["操作与证据"].exists)
+        let capture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        capture.name = "chat-interrupted-reply"; capture.lifetime = .keepAlways; add(capture)
+    }
+    func testCompletedReplyStaysVisibleWhileHistoryIsDelayed() {
+        let app = open(["--chat-handoff-fixture"])
+        let retained = app.staticTexts["chat.live.status"]
+        wait { retained.exists && retained.label.contains("已收到的回复") }
+        XCTAssertTrue(app.staticTexts["这段已收到的回复在历史加载完成前仍可阅读。"].firstMatch.exists, "Empty state.live_text removed the visible reply before history arrived")
+        XCTAssertTrue(app.textViews["chat.draft"].isEnabled)
+        wait { !retained.exists && app.staticTexts["chat.message.role"].firstMatch.exists }
+        XCTAssertTrue(app.staticTexts["这段已收到的回复在历史加载完成前仍可阅读。"].firstMatch.exists, "Durable history did not replace the retained live reply")
+    }
+    func testStateGenerationRejectsAnOlderHistoryAlreadyInFlight() {
+        let app = open(["--chat-handoff-fixture", "--chat-stale-history-fixture"])
+        wait { app.staticTexts["chat.live.status"].label.contains("已收到的回复") }
+        for _ in 0..<12 {
+            XCTAssertFalse(app.staticTexts["这条过期历史不能重新出现。"].firstMatch.exists, "Late history from an older generation was published")
+            XCTAssertTrue(app.staticTexts["这段已收到的回复在历史加载完成前仍可阅读。"].firstMatch.exists, "Rejected history removed the current live reply")
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        wait { app.staticTexts["chat.message.role"].firstMatch.exists }
+        XCTAssertFalse(app.staticTexts["这条过期历史不能重新出现。"].firstMatch.exists)
+    }
+}
+
 final class AuthorizationUITests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
-    private func open(_ scenario: String = "", large: Bool = false) -> XCUIApplication {
+    private func open(_ scenario: String = "", large: Bool = false, extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--workspace-fixture", "--settings-fixture", "--authorization-fixture", "--authorization-scenario=" + scenario, "--authorization-fixture-id=" + UUID().uuidString]
         app.launchArguments += ["-UIPreferredContentSizeCategoryName", large ? "UICTContentSizeCategoryAccessibilityXXXL" : "UICTContentSizeCategoryL"]
+        app.launchArguments += extra
         app.launch()
         app.buttons["workspace.global"].tap()
         let row = app.buttons["global.select.fixture-global"]
@@ -704,6 +792,20 @@ final class AuthorizationUITests: XCTestCase {
         else { tap("authorization.answer.send", app) }
         wait { app.staticTexts["Fixture result: Custom output"].exists }
         XCTAssertFalse(app.textFields["authorization.answer"].exists)
+    }
+    func testQuestionEditingRemainsAvailableDuringSlowPermissionPolling() {
+        let app = open(extra: ["--chat-slow-permissions-fixture"])
+        tap("authorization.question.open", app)
+        let answer = app.textFields["authorization.answer"]
+        UITestInput.replace(answer, with: "draft", app: app)
+        for _ in 0..<6 {
+            Thread.sleep(forTimeInterval: 0.6)
+            XCTAssertTrue(answer.isEnabled, "Permission polling disabled local input")
+            answer.typeText("x")
+            XCTAssertTrue(app.keyboards.firstMatch.exists)
+            XCTAssertTrue(app.buttons["authorization.question.close"].exists)
+        }
+        XCTAssertEqual(answer.value as? String, "draftxxxxxx")
     }
     func testNonPermanentDenyAndStopAtLargeText() {
         let app = open("nonpermanent", large: true)
@@ -814,10 +916,10 @@ final class AuthorizationRpcUITests: XCTestCase {
         let text = "AUTH_REVIEW:" + String(decoding: try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), as: UTF8.self)
         let clear = app.buttons["chat.draft.clear"]
         if clear.exists { clear.tap() }
-        UITestInput.replace(app.textFields["chat.draft"], with: text, app: app)
+        UITestInput.replace(app.textViews["chat.draft"], with: text, app: app)
         wait { app.buttons["chat.send"].isEnabled }
         if app.buttons["chat.send.keyboard"].exists { tap("chat.send.keyboard", app) }
-        else { app.keyboards.buttons["Send"].tap() }
+        else { tap("chat.send", app) }
         return id
     }
     private func done(_ id: String, _ app: XCUIApplication) {
