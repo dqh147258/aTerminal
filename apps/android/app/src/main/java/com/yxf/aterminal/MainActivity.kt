@@ -119,6 +119,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private var reconnectControl = false
     private var displayReady = false
     private lateinit var reconnectBanner: TextView
+    internal val showingConnectionStatus get() = reconnect.pending
     private val retryConnection = Runnable { reconnectWorkspace() }
     private var aiBusy = false
     private var sessionRefreshBusy = false
@@ -173,9 +174,10 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         root.addView(entryScreen, FrameLayout.LayoutParams(-1, -1))
         reconnectBanner = label("", 12f, Palette.text).apply {
             tag = "workspace.reconnect"
-            gravity = Gravity.CENTER
-            background = shape(Palette.surface, true)
-            setPadding(dp(12), dp(8), dp(12), dp(8))
+            gravity = Gravity.CENTER_VERTICAL
+            maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            setTextColor(Palette.warning)
+            setPadding(0, 0, 0, 0)
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
             visibility = View.GONE
             setOnClickListener {
@@ -185,6 +187,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         }
         placeReconnectBanner()
         setContentView(root)
+        root.viewTreeObserver.addOnGlobalLayoutListener { if (reconnect.pending) placeReconnectBanner() }
         applyWorkspaceLayout()
         if (BuildConfig.TERMINAL_DEBUG && intent.getBooleanExtra("render_fixture", false)) {
             (loginBox.parent as View).visibility = View.GONE; workspace.visibility = View.VISIBLE
@@ -358,7 +361,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         connection = label("未连接", 12f, Palette.muted)
         header.addView(row().apply {
             addView(iconButton(R.drawable.ic_panel_left, "打开工作空间") { openDrawer() })
-            fill(column(8).apply { addView(sessionTitle); addView(sessionMeta) })
+            fill(column(8).apply { addView(sessionTitle); addView(ConnectionStatusSlot(this@MainActivity, sessionMeta)) })
             addView(iconButton(R.drawable.ic_user_round, "账号与设备") { accountPanel() })
         })
         headerLine = divider()
@@ -406,7 +409,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         workspaceFooter = footer
         status = label("登录后选择 Desktop", 12f, Palette.muted).apply { accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
         dimensions = label("UTF-8", 12f, Palette.muted)
-        footer.addView(row().apply { fill(status); addView(connection) })
+        footer.addView(row().apply { fill(ConnectionStatusSlot(this@MainActivity, status)); addView(connection) })
         aiStatus = label("", 12f, Palette.accent).apply { visibility = View.GONE; setOnClickListener { openChat() } }
         footer.addView(row().apply { fill(aiStatus); addView(dimensions) })
         workspace.addView(footer)
@@ -911,7 +914,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         header.removeAllViews()
         header.apply {
             setPadding(dp(20), dp(16), dp(12), dp(12))
-            fill(column().apply { addView(heading("工作空间").apply { textSize = 20f }); addView(count) })
+            fill(column().apply { addView(heading("工作空间").apply { textSize = 20f }); addView(ConnectionStatusSlot(this@MainActivity, count)) })
             addView(add); addView(iconButton(R.drawable.ic_x, "关闭工作空间") { closeOverlay() }.apply { background = null })
         }
         body.removeViewAt(1)
@@ -1183,7 +1186,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         val body = column().apply { background = shape(if (drawer) Palette.surface else panelColor(), floating).apply { if (!floating) cornerRadius = 0f }; isClickable = true; clipToOutline = floating }
         body.addView(row().apply {
             setPadding(dp(16), dp(10), dp(12), dp(10)); setBackgroundColor(Palette.surface)
-            fill(heading(title)); addView(iconButton(R.drawable.ic_x, "关闭$title") { closeOverlay(hideIme = !special) })
+            fill(ConnectionStatusSlot(this@MainActivity, heading(title).apply { tag = "panel-title" })); addView(iconButton(R.drawable.ic_x, "关闭$title") { closeOverlay(hideIme = !special) })
         }); body.addView(divider())
         fun layoutPanel(width: Int, height: Int) = FrameLayout.LayoutParams(
             if (special) (width - dp(24)).coerceAtMost(dp(232)) else if (drawer) (width * .92f).toInt().coerceAtMost(dp(420)) else if (floating) (width - dp(24)).coerceAtMost(dp(520)) else -1,
@@ -1287,7 +1290,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
         }, selected.orEmpty(), { callback ->
             skillPicker=callback
             startActivityForResult(android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT_TREE),830)
-        }, page, { heading -> (header.getChildAt(1) as TextView).text = heading })
+        }, page, { heading -> header.findViewWithTag<TextView>("panel-title").text = heading })
         if (reconnect.pending) settingsEditor?.connectionInterrupted()
     }
 
@@ -1338,23 +1341,51 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
 
     private fun updateReconnectBanner() {
         reconnectBanner.text = when (reconnect.blocked) {
-            WorkspaceReconnect.Blocked.AUTHENTICATION -> "登录已失效 · 点此到账号页重新登录"
-            WorkspaceReconnect.Blocked.ACCESS -> "设备访问已变化 · 点此检查账号与设备"
-            WorkspaceReconnect.Blocked.LEGACY_PAIRING -> "连接已断开 · 点此重新配对"
-            null -> "连接暂时中断，正在后台重连 · 可继续查看"
+            WorkspaceReconnect.Blocked.AUTHENTICATION -> "登录已失效 · 点此登录"
+            WorkspaceReconnect.Blocked.ACCESS -> "设备访问已变化 · 点此检查"
+            WorkspaceReconnect.Blocked.LEGACY_PAIRING -> "连接已断开 · 点此配对"
+            null -> "重连中 · 本地操作可用"
         }
+        reconnectBanner.contentDescription = reconnectBanner.text
         reconnectBanner.visibility = if (reconnect.pending) View.VISIBLE else View.GONE
+        connection.visibility = if (reconnect.pending) View.INVISIBLE else View.VISIBLE
         placeReconnectBanner()
     }
 
     private fun placeReconnectBanner() {
-        // A real inline row leaves back/close controls and the composer reachable during outages.
-        val parent = overlayPanel as? LinearLayout ?: workspace
-        if (reconnectBanner.parent === parent) return
-        (reconnectBanner.parent as? android.view.ViewGroup)?.removeView(reconnectBanner)
-        parent.addView(reconnectBanner, if (parent === workspace) 2 else 1, LinearLayout.LayoutParams(-1, -2).apply {
-            setMargins(dp(12), dp(4), dp(12), dp(4))
-        })
+        if (!reconnect.pending) {
+            (reconnectBanner.parent as? ConnectionStatusSlot)?.clear(reconnectBanner)
+            (reconnectBanner.parent as? android.view.ViewGroup)?.removeView(reconnectBanner)
+            return
+        }
+        fun slot(view: View): ConnectionStatusSlot? {
+            if (!view.isShown) return null
+            if (view is ConnectionStatusSlot) return view.takeIf { it.width > 0 && it.height > 0 }
+            if (view is android.view.ViewGroup) {
+                val children = (0 until view.childCount).map { view.getChildAt(it) }
+                // A details page is drawn above the chat page in the same FrameLayout.
+                val ordered = if (view is FrameLayout) children.asReversed().sortedByDescending { it.z } else children
+                ordered.forEach { child -> slot(child)?.let { return it } }
+            }
+            return null
+        }
+        val target = if (overlay?.isShown == true) slot(overlay!!) else slot(workspace)
+        if (target != null) {
+            reconnectBanner.background = null
+            target.show(reconnectBanner)
+        } else {
+            // Full-screen terminal mode can hide both bars. A small overlay keeps its viewport
+            // fixed, with the workspace/account edge controls still clear.
+            (reconnectBanner.parent as? ConnectionStatusSlot)?.clear(reconnectBanner)
+            if (reconnectBanner.parent !== root) {
+                (reconnectBanner.parent as? android.view.ViewGroup)?.removeView(reconnectBanner)
+                reconnectBanner.background = shape(Palette.surface, true)
+                root.addView(reconnectBanner, FrameLayout.LayoutParams(-1, dp(28), Gravity.TOP).apply {
+                    setMargins(dp(56), dp(4), dp(56), 0)
+                })
+            }
+            if (root.indexOfChild(reconnectBanner) != root.childCount - 1) reconnectBanner.bringToFront()
+        }
     }
 
     private fun scheduleReconnect(delayMillis: Long) {
@@ -1477,7 +1508,7 @@ class MainActivity : Activity(), Choreographer.FrameCallback {
     private fun disconnect() {
         remoteScreensPanel?.connectionInterrupted("设备连接已断开，请重新连接 Desktop")
         reconnect.cancel(); ui.removeCallbacks(retryConnection)
-        if (::reconnectBanner.isInitialized) reconnectBanner.visibility = View.GONE
+        if (::reconnectBanner.isInitialized) updateReconnectBanner()
         displayReady = false
         createDialog?.dismiss()
         terminalScrollback?.live(); terminalScrollback = null

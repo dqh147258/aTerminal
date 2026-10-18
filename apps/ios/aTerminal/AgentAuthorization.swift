@@ -148,7 +148,7 @@ enum AuthorizationFailure: LocalizedError {
             for item in pending { if detailFingerprints[item.id] == item.fingerprint { retained.insert(item.id) } }
             for id in Array(detailText.keys) where !retained.contains(id) { detailText[id] = nil; detailFingerprints[id] = nil; verifiedDetailIDs.remove(id) }
             for item in pending where item.kind == "approval" && item.actionable && item.requiresDetails && !canApprove(item) {
-                await fetchDetails(item, transport: transport, token: token)
+                try await fetchDetails(item, transport: transport, token: token)
                 guard token == generation else { return }
             }
             if includeRules {
@@ -166,6 +166,10 @@ enum AuthorizationFailure: LocalizedError {
             guard token == generation else { return }
             // Never offer stale authorization controls after a failed refresh.
             permissions = nil
+            // Transport retirement can arrive before the view rebinds this
+            // context. Keep the existing page instead of flashing a second
+            // connection error underneath the workspace reconnect indicator.
+            guard !(error is CancellationError) else { return }
             let message = error.localizedDescription
             self.error = message.lowercased().contains("unsupported") ? "Desktop 缺少新版授权功能，请升级 Desktop：" + message : "授权状态不可用：" + message
         }
@@ -193,7 +197,7 @@ enum AuthorizationFailure: LocalizedError {
     func canApprove(_ item: AgentPending) -> Bool {
         !item.requiresDetails || (canReadDetails(item) && verifiedDetailIDs.contains(item.id))
     }
-    private func fetchDetails(_ item: AgentPending, transport: Transport, token: Int) async {
+    private func fetchDetails(_ item: AgentPending, transport: Transport, token: Int) async throws {
         do {
             guard !item.fingerprint.isEmpty else { throw AuthorizationFailure.message("详情缺少动作指纹") }
             var text = ""; var cursor: String?; var seen = Set<String>()
@@ -216,6 +220,9 @@ enum AuthorizationFailure: LocalizedError {
             changed?()
         } catch {
             guard token == generation else { return }
+            // Let refresh invalidate permissions too. A cancelled detail read
+            // cannot finish a refresh as writable or replace its readable cache.
+            if error is CancellationError { throw error }
             detailErrors[item.id] = "无法取齐详情：" + error.localizedDescription
             changed?()
         }

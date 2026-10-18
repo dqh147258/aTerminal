@@ -19,13 +19,14 @@ data class ToolRecord(val text: String, val image: ByteArray? = null)
 /** A full-page reader. Every record expands in place; leaving discards late UI callbacks. */
 class ToolDetailsPage(private val activity: Activity, private val hostContainer: FrameLayout,
     initial: JSONObject, private val load: (String, (Result<ToolRecord>) -> Unit) -> Unit,
-    private val back: () -> Unit, private val connected: () -> Boolean = { true }) {
+    private val back: () -> Unit, private val connected: () -> Boolean = { true },
+    private val sharedConnectionStatus: () -> Boolean = { false }) {
     private val page = activity.column().apply { setBackgroundColor(Palette.background); isClickable = true; isFocusableInTouchMode = true }
     private val content = activity.column(16)
     private val viewport = activity.scroll(content)
     private val connectionStatus = activity.label("连接暂时中断 · 已保留当前页面", 12f, Palette.muted).apply {
         setPadding(activity.dp(16), activity.dp(6), activity.dp(16), activity.dp(6))
-        visibility = if (connected()) View.GONE else View.VISIBLE
+        visibility = if (connected() || sharedConnectionStatus()) View.GONE else View.VISIBLE
         accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
     }
     private val markdown = ChatMarkdown(activity)
@@ -44,7 +45,7 @@ class ToolDetailsPage(private val activity: Activity, private val hostContainer:
         page.addView(row().apply {
             setPadding(dp(8), dp(8), dp(16), dp(8)); setBackgroundColor(Palette.surface)
             addView(iconButton(R.drawable.ic_arrow_left, "返回对话", back).apply { background = null })
-            fill(heading(if (item.optString("kind") == "interaction") "工具操作详情" else "状态详情").apply { setPadding(dp(8), 0, 0, 0) })
+            fill(ConnectionStatusSlot(activity, heading(if (item.optString("kind") == "interaction") "工具操作详情" else "状态详情").apply { setPadding(dp(8), 0, 0, 0) }))
         })
         page.addView(line())
         page.addView(connectionStatus)
@@ -56,7 +57,7 @@ class ToolDetailsPage(private val activity: Activity, private val hostContainer:
     fun update(next: JSONObject) {
         if (!closed && (unavailable || next.toString() != item.toString())) {
             unavailable = false; item = next
-            connectionStatus.visibility = if (connected()) View.GONE else View.VISIBLE
+            connectionStatus.visibility = if (connected() || sharedConnectionStatus()) View.GONE else View.VISIBLE
             render()
             retainedScroll?.let { y -> viewport.post { if (!closed) viewport.scrollTo(0, y) } }; retainedScroll = null
         }
@@ -65,7 +66,7 @@ class ToolDetailsPage(private val activity: Activity, private val hostContainer:
     fun connectionInterrupted() {
         if (closed) return
         revision++
-        connectionStatus.visibility = View.VISIBLE
+        connectionStatus.visibility = if (sharedConnectionStatus()) View.GONE else View.VISIBLE
         loading.forEach { errors[it] = "连接暂时中断，恢复后可继续读取" }; loading.clear()
         render()
     }

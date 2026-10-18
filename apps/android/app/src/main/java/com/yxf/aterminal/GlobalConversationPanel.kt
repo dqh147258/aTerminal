@@ -31,7 +31,7 @@ class GlobalConversationPanel(private val activity: Activity, private val body: 
         body.setBackgroundColor(Palette.background)
         (body.getChildAt(0) as LinearLayout).apply {
             removeAllViews(); addView(iconButton(R.drawable.ic_arrow_left, "返回首页", back).apply { background = null })
-            fill(heading("全局AI助手").apply { setPadding(dp(16), 0, 0, 0) }); addView(add.apply { background = shape(Palette.surface, true) })
+            fill(ConnectionStatusSlot(activity, heading("全局AI助手").apply { setPadding(dp(16), 0, 0, 0) })); addView(add.apply { background = shape(Palette.surface, true) })
         }
         body.grow(scroll)
         body.addView(status.apply { setPadding(dp(16), dp(8), dp(16), dp(8)) })
@@ -109,7 +109,7 @@ class GlobalConversationPanel(private val activity: Activity, private val body: 
     fun connectionInterrupted() {
         if (closed) return
         connectionRevision++; busy = false; creating = false; confirmed = false
-        status.text = "连接暂时中断 · 已保留会话列表"
+        if ((activity as? MainActivity)?.showingConnectionStatus != true) status.text = "连接暂时中断 · 已保留会话列表"
         render()
     }
     fun connectionRestored() {

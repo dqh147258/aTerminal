@@ -20,6 +20,7 @@ class AgentAuthorizationPanel(
     private val request: (JSONObject) -> JSONObject,
     private val changed: () -> Unit,
     private val resolved: () -> Unit = {},
+    private val sharedConnectionStatus: () -> Boolean = { false },
 ) {
     private val ui = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
@@ -37,6 +38,7 @@ class AgentAuthorizationPanel(
     private var ruleRows: List<JSONObject>? = null
     private var rulesLoading = false
     private var error = ""
+    private var connectionNotice = ""
     private var actionError = ""
     private var uncertainPendingId: String? = null
     // An acknowledgement is not an execution result. Retire it only after an
@@ -113,14 +115,14 @@ class AgentAuthorizationPanel(
         rulesLoading = false
         detailsLoading.clear()
         permissionsFresh = false
-        error = "连接暂时中断 · 待办和回答已保留"
+        connectionNotice = "连接暂时中断 · 待办和回答已保留"
         renderStatus(); renderPending(); renderDialog(); changed()
     }
 
     fun refresh() {
         if (closed) return
         if (!valid()) {
-            permissionsFresh = false; error = "Desktop 未连接 · 已保留待办"
+            permissionsFresh = false; connectionNotice = "Desktop 未连接 · 已保留待办"
             renderStatus(); renderPending(); changed(); return
         }
         if (refreshing || mutating) return
@@ -132,6 +134,7 @@ class AgentAuthorizationPanel(
             ui.post {
                 if (closed || revision != connectionRevision) return@post
                 refreshing = false
+                connectionNotice = ""
                 permissionsFresh = permissionResult.isSuccess && valid()
                 permissionResult.getOrNull()?.let { permissions = it }
                 // Only a complete successful page replaces cards. Failed reads retain them.
@@ -172,7 +175,8 @@ class AgentAuthorizationPanel(
             permissions?.optBoolean("full_authorization") == true -> "权限 · 完全授权"
             else -> "权限 · 按需询问"
         }
-        notice.text = listOf(actionReceipt?.message.orEmpty(), actionError, error).filter { it.isNotBlank() }.joinToString("\n")
+        notice.text = listOf(actionReceipt?.message.orEmpty(), actionError, error,
+            connectionNotice.takeUnless { sharedConnectionStatus() }.orEmpty()).filter { it.isNotBlank() }.joinToString("\n")
         notice.visibility = if (notice.text.isBlank()) View.GONE else View.VISIBLE
     }
     private fun button(text: String, tag: String, enabled: Boolean = true, action: () -> Unit) = activity.actionButton(text, action = action).apply {
@@ -252,7 +256,7 @@ class AgentAuthorizationPanel(
                 input.addTextChangedListener(watcher { answerButton.isEnabled = blocked() == null && input.text.isNotBlank(); answerButton.alpha = if (answerButton.isEnabled) 1f else .45f })
                 card.addView(answerButton)
             }
-            reason?.let { card.addView(label(it, 12f, Palette.warning)) }
+            reason?.takeUnless { !valid() && sharedConnectionStatus() }?.let { card.addView(label(it, 12f, Palette.warning)) }
             rows.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
         }
         if (focusedTag != null) (rows.findViewWithTag<View>(focusedTag) as? EditText)?.takeIf { it.isEnabled }?.let { input ->

@@ -223,8 +223,45 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
         detailsModel.bind(context: "details-3", scopeKey: "details-scope-a", writable: true, transport: detailsServer.request)
         await detailsModel.refresh()
         check(detailsModel.detailText["long"] == "complete cached detail" && detailsModel.canReadDetails(detailItem) && !detailsModel.canApprove(detailItem), "Failed detail validation destroyed the readable cache or allowed approval")
+        check(detailsModel.detailErrors["long"] != nil, "A real detail validation error was hidden")
         detailsModel.bind(context: "details-other-account", scopeKey: "details-scope-b", writable: false, transport: nil)
         check(detailsModel.detailText.isEmpty && !detailsModel.canReadDetails(detailItem), "Full detail text crossed account scope")
+        // The transport may retire before SwiftUI rebinds the authorization
+        // generation. Cancellation must not insert a generic error row or leave
+        // that still-current generation able to submit live operations.
+        let cancelling = AgentAuthorization(), cancellationServer = Server()
+        cancellationServer.rows = [longRow]; cancellationServer.detailPages = [completeDetail]
+        var cancelAction = ""
+        let cancellingTransport: AgentAuthorization.Transport = { command in
+            if command["action"] as? String == cancelAction { throw CancellationError() }
+            return try await cancellationServer.request(command)
+        }
+        cancelling.bind(context: "cancellation-1", scopeKey: "cancellation-scope", writable: true, transport: cancellingTransport)
+        await cancelling.refresh(includeRules: true)
+        let cachedApproval = cancelling.pending[0]
+        check(cancelling.canAct && cancelling.canApprove(cachedApproval), "Cancellation fixture did not establish its cached authority")
+        var publishedErrors: [String] = []
+        cancelling.changed = { publishedErrors.append(cancelling.error) }
+        cancelAction = "permissions"
+        await cancelling.refresh()
+        check(cancelling.permissions == nil && !cancelling.canAct && !cancelling.loading, "Same-generation cancellation retained live authorization")
+        check(cancelling.error.isEmpty && publishedErrors.allSatisfy { $0.isEmpty }, "Cancellation inserted a second connection error row")
+        check(cancelling.pending.count == 1 && cancelling.rules.count == 1 && cancelling.detailText["long"] == "complete cached detail", "Cancellation discarded visible pending, rules or full details")
+        var cancellationCommands = cancellationServer.commands.count
+        await cancelling.setPermissions(full: true); await cancelling.resolve(cachedApproval, decision: "once")
+        check(cancellationServer.commands.count == cancellationCommands, "Cancelled refresh transmitted a live mutation")
+        // On a replacement connection, cached text stays readable while its
+        // verification is renewed. Cancelling that detail read must also unwind
+        // the permission snapshot fetched earlier in the same refresh.
+        cancelAction = "approval_details"
+        cancelling.bind(context: "cancellation-2", scopeKey: "cancellation-scope", writable: true, transport: cancellingTransport)
+        await cancelling.refresh()
+        check(cancelling.permissions == nil && !cancelling.canAct && !cancelling.canApprove(cachedApproval), "Cancelled details finished refresh with old approval authority")
+        check(cancelling.error.isEmpty && cancelling.detailErrors.isEmpty && publishedErrors.allSatisfy { $0.isEmpty }, "Cancelled details published a generic or per-card error")
+        check(cancelling.detailText["long"] == "complete cached detail" && cancelling.canReadDetails(cachedApproval), "Cancelled details replaced the readable cache")
+        cancellationCommands = cancellationServer.commands.count
+        await cancelling.setPermissions(full: true); await cancelling.resolve(cachedApproval, decision: "once")
+        check(cancellationServer.commands.count == cancellationCommands, "Cancelled detail refresh transmitted a live mutation")
         // Lost response, transport replacement, and explicit retry keep the same
         // account/device/agent idempotency key. Recovery itself sends only reads.
         let resumed = AgentAuthorization(), resumedServer = Server()

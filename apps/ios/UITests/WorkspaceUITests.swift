@@ -7,6 +7,7 @@ private enum UITestInput {
         XCTAssertTrue(field.waitForExistence(timeout: 20), "Expected input is unavailable", file: file, line: line)
         field.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Input keyboard is unavailable", file: file, line: line)
+        dismissKeyboardIntroduction(app)
         let existing = field.value as? String ?? ""
         if existing == value { return }
         let hasExistingText = !existing.isEmpty && existing != field.placeholderValue
@@ -24,8 +25,7 @@ private enum UITestInput {
                 field.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
                 field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.utf16.count))
             }
-            let cleared = field.value as? String ?? ""
-            if !cleared.isEmpty && cleared != field.placeholderValue {
+            if !waitForValue(field, "") {
                 let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
                 attachment.name = "fixture-input-clear-failure"; attachment.lifetime = .keepAlways
                 XCTContext.runActivity(named: "Input must be completely cleared") { $0.add(attachment) }
@@ -34,9 +34,25 @@ private enum UITestInput {
         }
         if !value.isEmpty { field.typeText(value) }
         else if hasExistingText { field.typeText(XCUIKeyboardKey.delete.rawValue) }
-        let actual = field.value as? String ?? ""
-        XCTAssertTrue(value.isEmpty ? actual.isEmpty || actual == field.placeholderValue : actual == value,
+        XCTAssertTrue(waitForValue(field, value),
                       "Input replacement did not preserve the requested value", file: file, line: line)
+    }
+    private static func waitForValue(_ field: XCUIElement, _ value: String) -> Bool {
+        // XCUITest can finish synthesizing input or clear actions before native
+        // key events and accessibility snapshots finish updating. Read only:
+        // require the complete value, never accept a prefix or retype on delay.
+        let complete = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let actual = field.value as? String ?? ""
+            return value.isEmpty ? actual.isEmpty || actual == field.placeholderValue : actual == value
+        }, object: nil)
+        return XCTWaiter.wait(for: [complete], timeout: 5) == .completed
+    }
+    static func dismissKeyboardIntroduction(_ app: XCUIApplication) {
+        // A first-use system tutorial can cover the composer on a fresh
+        // simulator. Only dismiss the specifically identified keyboard sheet.
+        let introduction = app.staticTexts["Speed up your typing by sliding your finger across the letters to compose a word."]
+        let continueButton = app.buttons["Continue"]
+        if introduction.exists && continueButton.exists && continueButton.isHittable { continueButton.tap() }
     }
 }
 
@@ -212,7 +228,10 @@ final class WorkspaceUITests: XCTestCase {
             XCTAssertTrue(historyRow.label.contains(session == "fixture-closed" ? "已关闭 · 只读" : "离线 · 只读"))
             app.buttons["session.history." + session].tap()
             XCTAssertTrue(element(app, "chat.session").waitForExistence(timeout: 5))
-            if session == "fixture-offline" { XCTAssertTrue(app.staticTexts["设备离线 · 只读缓存"].exists) }
+            if session == "fixture-offline" {
+                XCTAssertTrue(app.staticTexts["设备离线 · 只读缓存"].exists)
+                XCTAssertEqual(element(app, "chat.connection").value as? String, "离线", "Offline history reported the connected Desktop's status")
+            }
             else { XCTAssertTrue(app.staticTexts["正文专有词 星河缓存检索 cedar-body-only-731"].waitForExistence(timeout: 5)) }
             replaceText(app.textViews["chat.draft"], with: session + "-draft")
             XCTAssertTrue(app.textViews["chat.draft"].isEnabled)
@@ -226,6 +245,7 @@ final class WorkspaceUITests: XCTestCase {
             XCTAssertFalse(fullAuthorization.isEnabled, "Read-only history enabled a live authorization change")
             app.buttons["authorization.close"].tap()
             XCTAssertEqual(app.textViews["chat.draft"].value as? String, session + "-draft", "Browsing authorization discarded the offline draft")
+            UITestInput.dismissKeyboardIntroduction(app)
             capture("fixture-17-" + session + "-read-only")
             app.buttons["panel.close"].tap(); app.buttons["workspace.drawer"].tap()
         }
@@ -647,7 +667,8 @@ final class ChatDeliveryUITests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
     private func open(_ extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["--workspace-fixture", "--settings-fixture", "--authorization-fixture", "--authorization-fixture-id=" + UUID().uuidString, "--show-chat", "--chat-delivery-fixture"] + extra
+        let contentSize = extra.contains("-UIPreferredContentSizeCategoryName") ? [] : ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryL"]
+        app.launchArguments = ["--workspace-fixture", "--settings-fixture", "--authorization-fixture", "--authorization-fixture-id=" + UUID().uuidString, "--show-chat", "--chat-delivery-fixture"] + contentSize + extra
         app.launch()
         XCTAssertTrue(app.textViews["chat.draft"].waitForExistence(timeout: 10))
         return app
@@ -716,6 +737,49 @@ final class ChatDeliveryUITests: XCTestCase {
         }
         wait { app.staticTexts["chat.message.role"].firstMatch.exists }
         XCTAssertFalse(app.staticTexts["这条过期历史不能重新出现。"].firstMatch.exists)
+    }
+    func testConversationChromePreservesBodySizeAndKeyboardSpace() {
+        var normalBodyHeight: CGFloat = 0
+        for large in [false, true] {
+            let extra = large ? ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] : []
+            let app = open(["--chat-handoff-fixture"] + extra)
+            wait { !app.staticTexts["chat.live.status"].exists && app.staticTexts["chat.message.role"].firstMatch.exists }
+            let body = app.staticTexts["这段已收到的回复在历史加载完成前仍可阅读。"].firstMatch
+            XCTAssertTrue(body.exists && body.isHittable)
+            let role = app.staticTexts["chat.message.role"].firstMatch
+            XCTAssertLessThanOrEqual(role.frame.height, 30, "Secondary role text consumed the message viewport")
+            let header = app.descendants(matching: .any).matching(identifier: "panel.header").firstMatch
+            XCTAssertLessThanOrEqual(header.frame.height, 88, "Panel decoration expanded instead of the conversation text")
+            let stop = app.buttons["chat.stop"]
+            XCTAssertGreaterThanOrEqual(stop.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(stop.frame.height, 44)
+            XCTAssertLessThanOrEqual(stop.frame.height, 48, "Stop wrapped onto multiple lines")
+            let copy = app.buttons["chat.message.copy"].firstMatch
+            XCTAssertGreaterThanOrEqual(copy.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(copy.frame.height, 44)
+            if large { XCTAssertGreaterThan(body.frame.height, normalBodyHeight * 1.5, "Conversation body lost accessibility Dynamic Type") }
+            else { normalBodyHeight = body.frame.height }
+            let unfocused = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            unfocused.name = large ? "chat-accessibility-text" : "chat-normal-text"; unfocused.lifetime = .keepAlways; add(unfocused)
+
+            let editor = app.textViews["chat.draft"]
+            UITestInput.replace(editor, with: "Local draft", app: app)
+            let timeline = app.scrollViews["chat.timeline"]
+            wait { app.buttons["chat.actions"].isHittable }
+            XCTAssertGreaterThanOrEqual(timeline.frame.height, 80, "Keyboard and chrome left no useful conversation viewport")
+            XCTAssertTrue(app.buttons["chat.send"].isHittable && app.buttons["chat.draft.clear"].isHittable)
+            XCTAssertGreaterThanOrEqual(app.buttons["chat.draft.clear"].frame.height, 44)
+            let hint = app.staticTexts["chat.composer.hint"]
+            XCTAssertTrue(hint.exists && hint.isHittable)
+            XCTAssertEqual(editor.value as? String, "Local draft")
+            XCTAssertTrue(app.keyboards.firstMatch.exists)
+            XCTAssertTrue(app.buttons["chat.keyboard.dismiss"].isHittable)
+            let focused = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            focused.name = large ? "chat-accessibility-keyboard" : "chat-normal-keyboard"; focused.lifetime = .keepAlways; add(focused)
+            app.buttons["chat.keyboard.dismiss"].tap()
+            XCTAssertEqual(editor.value as? String, "Local draft", "Compact chrome replaced the focused editor")
+            app.terminate()
+        }
     }
 }
 

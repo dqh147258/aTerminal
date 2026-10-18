@@ -73,6 +73,7 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
     private val pendingRecords = mutableSetOf<String>()
     private val recordErrors = mutableMapOf<String, String>()
     private var connectionFeedback = false
+    private var retainedConnectionFeedback = false
     private var compactComposer = false
     private val state = activity.label("", 12f, Palette.muted)
     private val path = activity.label("", 12f, Palette.muted)
@@ -112,7 +113,8 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
     private val voice = activity.iconButton(R.drawable.ic_mic, "语音输入") { if (recognizer == null) startVoice() else stopVoice() }
     private val authorization = AgentAuthorizationPanel(activity, identity + session,
         { !closed && valid() },
-        { command -> rpc(session, command) }, { updateButton() }, { refresh() })
+        { command -> rpc(session, command) }, { updateButton() }, { refresh() }, { sharedConnectionStatus() })
+    private fun sharedConnectionStatus() = (activity as? MainActivity)?.showingConnectionStatus == true
     private val tick = object : Runnable { override fun run() { if (!closed) { updatePath(); markRead(); syncDraft(); refresh(); authorization.refresh(); ui.postDelayed(this, 1500) } } }
     private fun scope(target: String = session) = JSONArray(identity + target).toString()
     private fun rpc(target: String, command: JSONObject): JSONObject {
@@ -136,17 +138,19 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
         globalStore.read(globalId, sequence)
     }
     init { with(activity) {
+        // Chat is a reading surface even when other workspace overlays are translucent.
+        body.setBackgroundColor(Palette.background)
         val header = body.getChildAt(0) as LinearLayout
         val close = header.getChildAt(header.childCount - 1)
         header.removeAllViews()
-        val scopeLabel = label(if (globalId != null) "全局 AI 助手" else "终端对话", 11f, Palette.accent)
+        val scopeLabel = ConnectionStatusSlot(activity,
+            label(if (globalId != null) "全局 AI 助手" else "终端对话", 11f, Palette.accent).apply { maxLines = 1 })
         if (globalId != null) {
-            body.setBackgroundColor(Palette.background)
             header.addView(iconButton(R.drawable.ic_arrow_left, "返回全局AI助手") { back?.invoke() }.apply { background = null })
         }
         header.addView(column().apply {
             addView(scopeLabel)
-            addView(conversationTitle)
+            addView(ConnectionStatusSlot(activity, conversationTitle))
             if (globalId == null) addView(path)
         }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(12) })
         header.addView(authorization.entry)
@@ -231,7 +235,7 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
                 val inset = dp(if (compact) 6 else 12)
                 composerContainer.setPadding(inset, inset, inset, inset)
                 draft.maxLines = if (compact) 2 else 4; draft.maxHeight = dp(if (compact) 64 else 112)
-                state.visibility = if (state.text.isEmpty() || (connectionFeedback && compact)) View.GONE else View.VISIBLE
+                updateFeedbackVisibility()
                 updateButton()
             }
             keepAnswerControlsVisible()
@@ -257,8 +261,20 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
     }
 
     private fun feedback(text: String, connection: Boolean = false) {
+        // A previously measured read notice already owns space in the reader. The shared
+        // status hides its text during recovery without changing that space or line wrapping.
+        retainedConnectionFeedback = connection && text.isNotEmpty() && sharedConnectionStatus() &&
+            (retainedConnectionFeedback || (connectionFeedback && state.visibility == View.VISIBLE && state.height > 0))
         connectionFeedback = connection
-        state.text = text; state.visibility = if (text.isEmpty() || (connection && compactComposer)) View.GONE else View.VISIBLE
+        if (!retainedConnectionFeedback) state.text = text
+        updateFeedbackVisibility()
+    }
+    private fun updateFeedbackVisibility() {
+        state.visibility = when {
+            retainedConnectionFeedback -> View.INVISIBLE
+            state.text.isEmpty() || (connectionFeedback && (compactComposer || sharedConnectionStatus())) -> View.GONE
+            else -> View.VISIBLE
+        }
     }
     private fun clearConnectionFeedback() { if (connectionFeedback) feedback("") }
     private fun latestVisible(show: Boolean) { latest.visibility = if (show) View.VISIBLE else View.GONE }
@@ -336,7 +352,7 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
         // Sending owns a snapshot. Editing a new draft never changes or replays that request.
         draft.isEnabled = true
         sendButton.alpha = if (sendButton.isEnabled) 1f else .4f
-        composerStatus.text = if (reason != null) "草稿已保留 · 可继续编辑" else if (submitting) "正在发送 · 可继续编辑" else retryStatus() ?: "草稿自动保存"
+        composerStatus.text = if (submitting) "正在发送 · 可继续编辑" else (if (reason == null) retryStatus() else null) ?: "草稿自动保存"
         pendingSend.visibility = if (pending != null && !submitting && !compactComposer) View.VISIBLE else View.GONE
         compactPending.visibility = if (pending != null && !submitting && compactComposer) View.VISIBLE else View.GONE
         preview.visibility = if (attachments.isNotEmpty() && !compactComposer) View.VISIBLE else View.GONE
@@ -566,7 +582,7 @@ class AgentPanel(private val activity: Activity, private val body: LinearLayout,
                 ui.post { callback(if (!closed && version == epoch && historyVersion == generation) result
                     else Result.failure(IllegalStateException("连接已变化，记录可重试"))) }
             }
-        }, { closeDetails() }, { !closed && valid() })
+        }, { closeDetails() }, { !closed && valid() }, { sharedConnectionStatus() })
     }
     fun closeDetails(): Boolean {
         val page = details ?: return false

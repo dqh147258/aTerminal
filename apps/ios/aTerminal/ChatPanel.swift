@@ -11,13 +11,13 @@ struct ChatMessages: View {
                     ForEach(messages) { message in
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
-                                Image(systemName: message.role == "assistant" ? "sparkles" : "person")
+                                Image(systemName: message.role == "assistant" ? "sparkles" : "person").font(.system(size: 16))
                                 Text(message.role == "assistant" ? "AI Agent" : "你").fontWeight(.medium)
                                 Spacer()
                                 Text(message.date, style: .time).font(.caption2).foregroundColor(WorkspaceStyle.muted)
-                                Button { UIPasteboard.general.string = message.content } label: { Image(systemName: "doc.on.doc").frame(width: 36, height: 36) }.accessibilityLabel("复制消息")
-                            }.font(.caption).foregroundColor(WorkspaceStyle.accent)
-                            Text(message.content).font(.system(size: 15)).lineSpacing(5).textSelection(.enabled)
+                                Button { UIPasteboard.general.string = message.content } label: { Image(systemName: "doc.on.doc").font(.system(size: 16)).frame(width: 44, height: 44) }.accessibilityLabel("复制消息")
+                            }.font(.caption).foregroundColor(WorkspaceStyle.accent).dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                            Text(message.content).font(.body).lineSpacing(5).textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
                             if let kind = message.eventKind {
                                 Text(kind == "observation" ? "屏幕观察 · revision \(message.revision ?? 0)" : (kind == "input" ? "终端输入事件" : "AI 事件 · \(kind)"))
@@ -39,6 +39,7 @@ struct ChatPanel: View {
     let core: RemoteTerminal
     var fixture = false
     var compact = false
+    @ScaledMetric(relativeTo: .body) private var editorLineHeight: CGFloat = 24
     @FocusState private var composing: Bool
     @State private var importingImages = false
     @State private var imageDestination: ChatScope?
@@ -50,17 +51,28 @@ struct ChatPanel: View {
     @State private var discardingDelivery = false
     @State private var discardCandidate: AgentSendSnapshot?
     var body: some View {
-        VStack(spacing: compact ? 4 : 8) {
+        VStack(spacing: compact || composing ? 4 : 8) {
             if !compact {
             HStack(spacing: 8) {
-                Circle().fill(model.desktopConnected ? WorkspaceStyle.success : WorkspaceStyle.muted).frame(width: 6, height: 6)
+                Circle().fill(model.agentConnectionReason == nil && model.desktopConnected ? WorkspaceStyle.success : WorkspaceStyle.muted).frame(width: 6, height: 6)
+                    .accessibilityElement().accessibilityLabel("Agent 连接状态")
+                    .accessibilityValue(model.agentConnectionReason == nil && model.desktopConnected ? "在线" : "离线")
+                    .accessibilityIdentifier("chat.connection")
                 Text(model.agentConnectionReason ?? model.status).font(.caption).foregroundColor(WorkspaceStyle.muted).lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("chat.connection.status")
                 Spacer()
                 ToolButton(symbol: "slider.horizontal.3", label: "对话设置") { model.settingsVisible = true }
-                Button { pendingNavigationActive = true; model.cancel(core) } label: { Label("停止", systemImage: "stop.circle").font(.caption) }
+                Button { pendingNavigationActive = true; model.cancel(core) } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "stop.circle").font(.system(size: 16))
+                        Text("停止").font(.caption).fixedSize()
+                    }.frame(minWidth: 44, minHeight: 44)
+                }
                     .disabled(!model.canCancel || model.submitting).accessibilityIdentifier("chat.stop")
-            }.padding(.horizontal, 4)
-            Picker("查看", selection: $model.browsing) { Text("对话").tag(false); Text("历史").tag(true) }.pickerStyle(.segmented).onChange(of: model.browsing) { _ in model.reset() }
+            }.dynamicTypeSize(...DynamicTypeSize.xxxLarge).padding(.horizontal, 4)
+            if !composing {
+                Picker("查看", selection: $model.browsing) { Text("对话").tag(false); Text("历史").tag(true) }.pickerStyle(.segmented).onChange(of: model.browsing) { _ in model.reset() }
+            }
             }
             ScrollViewReader { proxy in
             ScrollView {
@@ -73,8 +85,11 @@ struct ChatPanel: View {
                     }
                     if !model.browsing && !model.liveText.isEmpty && model.items.last?.text != model.liveText {
                         VStack(alignment: .leading, spacing: 10) {
-                            Label(model.liveAwaitingHistory ? "AI Agent · 已收到的回复" : "AI Agent · 正在回复", systemImage: "sparkles")
-                                .font(.caption.weight(.semibold)).foregroundColor(WorkspaceStyle.accent).accessibilityIdentifier("chat.live.status")
+                            HStack(spacing: 8) {
+                                Image(systemName: "sparkles").font(.system(size: 16))
+                                Text(model.liveAwaitingHistory ? "AI Agent · 已收到的回复" : "AI Agent · 正在回复")
+                                    .font(.caption.weight(.semibold)).accessibilityIdentifier("chat.live.status")
+                            }.foregroundColor(WorkspaceStyle.accent).dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                             AgentMessageText(text: model.liveText)
                         }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(WorkspaceStyle.surface).cornerRadius(16)
                     }
@@ -89,7 +104,7 @@ struct ChatPanel: View {
                             .onAppear { historyBottomVisible = true }.onDisappear { historyBottomVisible = false }
                     }
                     if model.browsing { Button("返回最新历史") { model.reset() } }
-                }.padding(.vertical, 10).padding(.horizontal, 2)
+                }.padding(.vertical, composing ? 4 : 10).padding(.horizontal, 2)
             }
                 .accessibilityIdentifier("chat.timeline")
                 .onChange(of: model.items.last?.id) { _ in
@@ -126,25 +141,30 @@ struct ChatPanel: View {
             if !model.attachments.isEmpty { attachmentStrip }
             HStack {
                 Button { model.authorizationVisible = true } label: {
-                    Label(model.authorization.permissions == nil ? "授权状态待同步" : model.authorization.full ? "当前对话完全授权" : model.authorization.mode == "read_only" ? "只读模式" : "按需授权", systemImage: model.authorization.full ? "lock.open" : "lock.shield")
-                }.accessibilityIdentifier("authorization.open")
+                    HStack(spacing: 6) {
+                        Image(systemName: model.authorization.full ? "lock.open" : "lock.shield").font(.system(size: 16))
+                        Text(model.authorization.permissions == nil ? "授权状态待同步" : model.authorization.full ? "当前对话完全授权" : model.authorization.mode == "read_only" ? "只读模式" : "按需授权")
+                            .fixedSize(horizontal: false, vertical: true)
+                    }.frame(minHeight: 44)
+                }.accessibilityIdentifier("authorization.open").layoutPriority(1)
                 Spacer()
                 if model.authorization.pending.contains(where: { $0.actionable }) {
-                    Button("待处理请求") { pendingJump += 1 }.accessibilityIdentifier("authorization.pending.jump")
-                    Button("停止") { pendingNavigationActive = true; model.cancel(core) }.disabled(!model.canCancel).accessibilityIdentifier("authorization.stop")
+                    Button { pendingJump += 1 } label: { Text("待处理请求").fixedSize().frame(minHeight: 44) }.accessibilityIdentifier("authorization.pending.jump")
+                    Button { pendingNavigationActive = true; model.cancel(core) } label: { Text("停止").fixedSize().frame(minWidth: 44, minHeight: 44) }.disabled(!model.canCancel).accessibilityIdentifier("authorization.stop")
                 }
-            }.font(.caption)
+            }.font(.caption).dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             if !model.authorization.error.isEmpty {
-                Text(model.authorization.error).font(.caption).foregroundColor(WorkspaceStyle.danger).accessibilityIdentifier("authorization.error")
+                Text(model.authorization.error).font(.caption).foregroundColor(WorkspaceStyle.danger)
+                    .fixedSize(horizontal: false, vertical: true).dynamicTypeSize(...DynamicTypeSize.xxxLarge).accessibilityIdentifier("authorization.error")
             }
             composerView
-        }.padding(compact ? 6 : 12).accessibilityElement(children: .contain).accessibilityIdentifier(model.global ? "chat.global" : "chat.session")
+        }.padding(compact ? 6 : composing ? 8 : 12).accessibilityElement(children: .contain).accessibilityIdentifier(model.global ? "chat.global" : "chat.session")
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 if composing {
-                    Button("发送任务") { model.send(core) }.disabled(!model.canSend).accessibilityIdentifier("chat.send.keyboard")
+                    Button("发送任务") { model.send(core) }.font(.callout).dynamicTypeSize(...DynamicTypeSize.xxxLarge).disabled(!model.canSend).accessibilityIdentifier("chat.send.keyboard")
                     Spacer()
-                    Button("收起键盘") { composing = false }
+                    Button("收起键盘") { composing = false }.font(.callout).dynamicTypeSize(...DynamicTypeSize.xxxLarge).accessibilityIdentifier("chat.keyboard.dismiss")
                 }
             }
         }
@@ -178,27 +198,28 @@ struct ChatPanel: View {
     private var composerView: some View {
         VStack(spacing: 4) {
             ZStack(alignment: .topLeading) {
-                if model.draft.isEmpty {
-                    Text("发送任务或追加消息…").foregroundColor(WorkspaceStyle.muted).padding(.horizontal, 5).padding(.top, 8).allowsHitTesting(false).accessibilityHidden(true)
-                }
                 TextEditor(text: $model.draft).font(.body).lineSpacing(4)
-                    .frame(height: compact ? 52 : composing ? 60 : 88).focused($composing)
+                    .modifier(ChatEditorSurface())
+                    .frame(height: max(compact || composing ? 52 : 88, editorLineHeight + 16)).focused($composing)
                     .accessibilityLabel("任务草稿").accessibilityIdentifier("chat.draft")
+                if model.draft.isEmpty {
+                    Text("发送任务或追加消息…").font(.body).foregroundColor(WorkspaceStyle.muted).padding(.horizontal, 5).padding(.top, 8).allowsHitTesting(false).accessibilityHidden(true)
+                }
             }
             HStack(spacing: 4) {
-                if compact {
+                if compact || composing {
                     Menu {
                         Button("对话") { model.browsing = false; model.reset() }
                         Button("历史") { model.browsing = true; model.reset() }
                         Button("设置") { model.settingsVisible = true }
-                        Button("停止") { pendingNavigationActive = true; model.cancel(core) }.disabled(!model.canCancel || model.submitting).accessibilityIdentifier("chat.stop")
-                    } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("Agent 操作")
+                        Button("停止") { pendingNavigationActive = true; model.cancel(core) }.disabled(!model.canCancel || model.submitting).accessibilityIdentifier(compact ? "chat.stop" : "chat.stop.menu")
+                    } label: { Image(systemName: "ellipsis").font(.system(size: 16)).frame(width: 44, height: 44) }.accessibilityLabel("Agent 操作").accessibilityIdentifier("chat.actions")
                 }
                 ToolButton(symbol: "photo.on.rectangle", label: "添加图片") { imageDestination = model.target; importingImages = true }
-                Text(model.isSendingMessage ? "发送中，可继续编辑" : !model.desktopConnected ? "离线草稿已保留" : model.modelRetryStatus ?? "支持多行输入")
-                    .font(.caption2).foregroundColor(WorkspaceStyle.muted).lineLimit(1)
+                Text(model.isSendingMessage ? "发送中，可继续编辑" : model.agentConnectionReason != nil ? "离线草稿已保留" : model.modelRetryStatus ?? "支持多行输入")
+                    .font(.caption2).foregroundColor(WorkspaceStyle.muted).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("chat.composer.hint")
                 Spacer(minLength: 4)
-                Button { model.draft = "" } label: { Image(systemName: "xmark.circle").frame(width: 44, height: 44) }
+                Button { model.draft = "" } label: { Image(systemName: "xmark.circle").font(.system(size: 18)).frame(width: 44, height: 44) }
                     .disabled(model.draft.isEmpty).accessibilityLabel("清空任务草稿").accessibilityIdentifier("chat.draft.clear")
                 Button { model.send(core) } label: {
                     Image(systemName: "arrow.up").font(.system(size: 18, weight: .semibold)).frame(width: 42, height: 42)
@@ -206,8 +227,8 @@ struct ChatPanel: View {
                         .background(model.canSend ? WorkspaceStyle.accent : WorkspaceStyle.line).clipShape(Circle())
                         .frame(width: 44, height: 44).contentShape(Rectangle())
                 }.buttonStyle(.plain).disabled(!model.canSend).accessibilityLabel("发送").accessibilityIdentifier("chat.send")
-            }
-        }.padding(.horizontal, 12).padding(.vertical, 8).background(WorkspaceStyle.control)
+            }.dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        }.padding(.horizontal, 12).padding(.vertical, compact || composing ? 6 : 8).background(WorkspaceStyle.control)
             .overlay(RoundedRectangle(cornerRadius: 18).stroke(WorkspaceStyle.line)).cornerRadius(18)
     }
 
@@ -248,7 +269,72 @@ struct ChatPanel: View {
                     .font(.caption).lineLimit(2).foregroundColor(WorkspaceStyle.muted).accessibilityIdentifier("chat.delivery.message")
                 if !model.deliveryError.isEmpty && !model.submitting { Text(model.deliveryError).font(.caption2).foregroundColor(WorkspaceStyle.muted) }
             }
-        }.font(.caption).padding(10).background(WorkspaceStyle.control).cornerRadius(12)
+        }.font(.caption).dynamicTypeSize(...DynamicTypeSize.xxxLarge).padding(10).background(WorkspaceStyle.control).cornerRadius(12)
+    }
+}
+
+// The OS branch is stable for the lifetime of the editor. Neither path replaces
+// its UITextView or touches text, selection, or first-responder state.
+private struct ChatEditorSurface: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 16.0, *) {
+            content.scrollContentBackground(.hidden)
+        } else {
+            content.background(ChatEditorBackground())
+        }
+    }
+}
+
+private struct ChatEditorBackground: UIViewRepresentable {
+    func makeUIView(context: Context) -> Probe { Probe() }
+    func updateUIView(_ view: Probe, context: Context) { view.scheduleUpdate() }
+
+    final class Probe: UIView {
+        private weak var editor: UITextView?
+        private var scheduled = false
+
+        init() {
+            super.init(frame: .zero)
+            isUserInteractionEnabled = false
+            isAccessibilityElement = false
+            backgroundColor = .clear
+        }
+        required init?(coder: NSCoder) { return nil }
+        override func didMoveToSuperview() { super.didMoveToSuperview(); scheduleUpdate() }
+        override func didMoveToWindow() { super.didMoveToWindow(); scheduleUpdate() }
+        override func layoutSubviews() { super.layoutSubviews(); scheduleUpdate() }
+
+        func scheduleUpdate() {
+            guard !scheduled else { return }
+            scheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.scheduled = false
+                guard self.window != nil else { return }
+                if self.editor == nil {
+                    // Limit the lookup to the editor's nearby containers and its
+                    // identifier; other text editors never receive this styling.
+                    var container = self.superview
+                    for _ in 0..<6 {
+                        guard let candidate = container else { break }
+                        if let editor = self.findEditor(in: candidate) { self.editor = editor; break }
+                        container = candidate.superview
+                    }
+                }
+                if let editor = self.editor {
+                    if editor.backgroundColor != .clear { editor.backgroundColor = .clear }
+                    if editor.isOpaque { editor.isOpaque = false }
+                }
+            }
+        }
+
+        private func findEditor(in view: UIView) -> UITextView? {
+            if let editor = view as? UITextView, editor.accessibilityIdentifier == "chat.draft" { return editor }
+            for child in view.subviews {
+                if let editor = findEditor(in: child) { return editor }
+            }
+            return nil
+        }
     }
 }
 
@@ -261,12 +347,12 @@ private struct AgentMessageCard: View {
             if isUser { Spacer(minLength: 28) }
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
-                    Image(systemName: item.interrupted ? "exclamationmark.circle" : isUser ? "person.fill" : "sparkles")
+                    Image(systemName: item.interrupted ? "exclamationmark.circle" : isUser ? "person.fill" : "sparkles").font(.system(size: 16))
                     Text(item.kind).font(.caption.weight(.semibold)).accessibilityIdentifier(item.interrupted ? "chat.interrupted" : "chat.message.role")
                     Spacer()
-                    Button { UIPasteboard.general.string = item.text } label: { Image(systemName: "doc.on.doc").frame(width: 44, height: 44) }
-                        .accessibilityLabel("复制消息")
-                }.font(.caption).foregroundColor(item.interrupted ? WorkspaceStyle.danger : WorkspaceStyle.accent)
+                    Button { UIPasteboard.general.string = item.text } label: { Image(systemName: "doc.on.doc").font(.system(size: 16)).frame(width: 44, height: 44) }
+                        .accessibilityLabel("复制消息").accessibilityIdentifier("chat.message.copy")
+                }.font(.caption).foregroundColor(item.interrupted ? WorkspaceStyle.danger : WorkspaceStyle.accent).dynamicTypeSize(...DynamicTypeSize.xxxLarge)
                 AgentMessageText(text: item.text)
                 if item.interrupted { Text("已收到的内容已保留，可继续对话。").font(.caption2).foregroundColor(WorkspaceStyle.muted) }
                 ForEach(item.records, id: \.self) { id in

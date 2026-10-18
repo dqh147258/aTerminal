@@ -64,7 +64,7 @@ class ConversationStabilityUiTest {
                         "send" -> """{"state":"running"}"""
                         else -> error("Unexpected fixture request: ${command.getString("action")}")
                     }
-                }, {})
+                }, {}, workingPath = { "/workspace/aTerminal" })
                 MainActivity::class.java.getDeclaredField("agentPanel").apply { isAccessible = true }.set(host, panel)
             }
         }
@@ -293,23 +293,129 @@ class ConversationStabilityUiTest {
     }
 
     @Test fun interruptedReplyHasItsOwnStatusAndNativeConversationPreview() {
-        val interrupted = message("interrupted", "已完成项目结构检查，接下来", "interaction", 3).apply {
+        val interrupted = message("interrupted", "已保留收到的内容。", "interaction", 3).apply {
             getJSONObject("value").put("source", "model_interrupted").put("interrupted", true).put("state", "interrupted")
         }
-        Fixture(page(0, message("user", "帮我检查这次修改，并说明验证结果。", "user", 1),
-            message("assistant", "### 修改已整理\n\n- 保留对话和本地草稿\n- 重连时继续阅读\n\n`request_id` 用于核对原消息。", sequence = 2), interrupted)).use { f ->
+        // All three complete messages fit the small CI viewport, so the screenshot can prove
+        // both the role styling and interruption status without relying on off-screen Views.
+        Fixture(page(0, message("user", "检查本次修改。", "user", 1),
+            message("assistant", "**修改已验证**，草稿保留。", sequence = 2), interrupted)).use { f ->
             waitFor("interrupted message rendered") { f.main { f.views().any { it.tag == "interrupted-reply" } } }
-            f.main {
+            f.main { f.draft().setText("继续检查界面布局") }
+            fun verify() {
+                val body = MainActivity::class.java.getDeclaredField("overlayPanel").apply { isAccessible = true }.get(f.activity) as View
+                assertEquals(Palette.background, (body.background as android.graphics.drawable.ColorDrawable).color)
+                assertFalse(f.views().any { it.tag == "chat-empty" })
+                listOf("user", "assistant", "interrupted", "interrupted-reply").forEach { tag ->
+                    NativeUiEvidence.assertFullyVisible(f.views().first { it.tag == tag })
+                }
                 val block = f.views().first { it.tag == "interrupted" }
                 assertFalse(all(block).any { it.contentDescription == "查看工具详情" })
-                assertTrue(f.draft().isEnabled)
+                NativeUiEvidence.assertFullyVisible(f.draft()); assertTrue(f.draft().isEnabled)
             }
-            instrumentation.waitForIdleSync()
-            val bitmap = instrumentation.uiAutomation.takeScreenshot()
-            assertNotNull("Native screenshot unavailable", bitmap)
-            val directory = context.filesDir.resolve("reconnect-evidence").apply { mkdirs() }
-            directory.resolve("conversation-stability.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-            bitmap.recycle()
+            fun painted(bitmap: Bitmap) {
+                listOf("user" to 0xff17334b.toInt(), "assistant" to Palette.surface, "interrupted" to Palette.surface).forEach { (tag, color) ->
+                    val rect = NativeUiEvidence.bounds(f.views().first { it.tag == tag })
+                    assertEquals("$tag must actually be painted in this captured frame", color,
+                        bitmap.getPixel(rect.left + f.activity.dp(5), rect.centerY()))
+                }
+            }
+            NativeUiEvidence.capture(f.activity, "reconnect-evidence/conversation-stability.png", ::verify, ::painted)
+            val before = f.main { listOf("user", "assistant", "interrupted").map { tag -> NativeUiEvidence.bounds(f.views().first { it.tag == tag }) } + NativeUiEvidence.bounds(f.draft()) }
+            f.main {
+                f.online.set(false)
+                MainActivity::class.java.getDeclaredMethod("beginReconnect").apply { isAccessible = true }.invoke(f.activity)
+            }
+            NativeUiEvidence.capture(f.activity, "reconnect-evidence/conversation-reconnecting.png", {
+                verify()
+                val banner = f.views().filterIsInstance<TextView>().single { it.tag == "workspace.reconnect" }
+                NativeUiEvidence.assertFullyVisible(banner)
+                assertEquals("重连中 · 本地操作可用", banner.text.toString())
+                assertEquals(before, listOf("user", "assistant", "interrupted").map { tag -> NativeUiEvidence.bounds(f.views().first { it.tag == tag }) } + NativeUiEvidence.bounds(f.draft()))
+                assertFalse(f.send().isEnabled)
+            }, ::painted)
+        }
+    }
+
+    @Test fun reconnectKeepsAMeasuredScrolledReaderAndComposerInPlace() {
+        val messages = (1..12).map { index ->
+            message("message-$index", "保留的消息 $index", if (index == 6) "interaction" else "assistant", index.toLong()).apply {
+                if (index == 6) getJSONObject("value").put("tools", JSONArray().put(JSONObject().put("name", "read_terminal")))
+                    .put("call_record_id", "detail-layout")
+            }
+        }.toTypedArray()
+        Fixture(page(0, *messages)).use { f ->
+            waitFor("history and permissions") { f.main {
+                val permission = AgentPanel::class.java.getDeclaredField("authorization").apply { isAccessible = true }.get(f.panel) as AgentAuthorizationPanel
+                f.text("保留的消息 12") && permission.canSend
+            } }
+            NativeUiEvidence.awaitFrame(f.activity)
+            val scroll = f.main { AgentPanel::class.java.getDeclaredField("scroll").apply { isAccessible = true }.get(f.panel) as android.widget.ScrollView }
+            val readingNotice = f.main { AgentPanel::class.java.getDeclaredField("state").apply { isAccessible = true }.get(f.panel) as TextView }
+            val readingFailure = "同步暂未完成：读取超时，请稍后重试"
+            f.main {
+                f.panel.pause()
+                scroll.scrollTo(0, f.views().first { it.tag == "message-6" }.top)
+                f.draft().setText("断线期间继续编辑")
+                AgentPanel::class.java.getDeclaredMethod("feedback", String::class.java, Boolean::class.javaPrimitiveType)
+                    .apply { isAccessible = true }.invoke(f.panel, readingFailure, true)
+            }
+            NativeUiEvidence.awaitFrame(f.activity) {
+                NativeUiEvidence.assertFullyVisible(f.views().first { it.tag == "message-6" })
+                NativeUiEvidence.assertFullyVisible(readingNotice)
+            }
+            val before = f.main { Triple(NativeUiEvidence.bounds(f.views().first { it.tag == "message-6" }), NativeUiEvidence.bounds(f.draft()), scroll.scrollY) }
+            val readerBefore = f.main { NativeUiEvidence.bounds(scroll) }
+            val noticeBefore = f.main { NativeUiEvidence.bounds(readingNotice) }
+            assertTrue("The fixture must be reading older history", before.third > 0)
+            f.main {
+                f.online.set(false)
+                MainActivity::class.java.getDeclaredMethod("beginReconnect").apply { isAccessible = true }.invoke(f.activity)
+            }
+            NativeUiEvidence.awaitFrame(f.activity) {
+                NativeUiEvidence.assertFullyVisible(f.views().first { it.tag == "message-6" })
+                NativeUiEvidence.assertFullyVisible(f.draft())
+                assertEquals(before, Triple(NativeUiEvidence.bounds(f.views().first { it.tag == "message-6" }), NativeUiEvidence.bounds(f.draft()), scroll.scrollY))
+                assertEquals("A pre-existing read notice must not resize the viewport", readerBefore, NativeUiEvidence.bounds(scroll))
+                assertEquals(View.INVISIBLE, readingNotice.visibility)
+                assertEquals("Keep the old text so its measured line wrapping stays fixed", readingFailure, readingNotice.text.toString())
+                assertEquals(noticeBefore, NativeUiEvidence.bounds(readingNotice))
+                assertEquals("断线期间继续编辑", f.draft().text.toString())
+                assertTrue(f.draft().isEnabled); assertFalse(f.send().isEnabled)
+                assertEquals(1, f.views().filterIsInstance<TextView>().count { it.text.contains("重连中") })
+                assertFalse(f.views().filterIsInstance<TextView>().any { it.text.contains("已保留待办") || it.text.contains("只读缓存") })
+            }
+            f.main {
+                val reconnect = MainActivity::class.java.getDeclaredField("reconnect").apply { isAccessible = true }.get(f.activity) as WorkspaceReconnect
+                assertTrue(reconnect.complete(reconnect.attempt()!!))
+                f.online.set(true)
+                MainActivity::class.java.getDeclaredMethod("updateReconnectBanner").apply { isAccessible = true }.invoke(f.activity)
+                f.panel.connectionRestored()
+            }
+            waitFor("restored permission") { f.main { f.send().isEnabled } }
+            NativeUiEvidence.awaitFrame(f.activity) {
+                assertEquals(before, Triple(NativeUiEvidence.bounds(f.views().first { it.tag == "message-6" }), NativeUiEvidence.bounds(f.draft()), scroll.scrollY))
+                assertEquals(View.GONE, readingNotice.visibility)
+                assertTrue("Successful recovery can reclaim the resolved notice", NativeUiEvidence.bounds(scroll).height() > readerBefore.height())
+            }
+            f.main { f.views().first { it.contentDescription == "查看工具详情" }.performClick() }
+            NativeUiEvidence.awaitFrame(f.activity) { NativeUiEvidence.assertFullyVisible(f.views().first { it.tag == "record-toggle:detail-layout" }) }
+            val detailPosition = f.main { NativeUiEvidence.bounds(f.views().first { it.tag == "record-toggle:detail-layout" }) }
+            f.main {
+                f.online.set(false)
+                MainActivity::class.java.getDeclaredMethod("beginReconnect").apply { isAccessible = true }.invoke(f.activity)
+            }
+            NativeUiEvidence.capture(f.activity, "reconnect-evidence/tool-details-reconnecting.png", {
+                val details = AgentPanel::class.java.getDeclaredField("details").apply { isAccessible = true }.get(f.panel)
+                val page = ToolDetailsPage::class.java.getDeclaredField("page").apply { isAccessible = true }.get(details) as View
+                val banner = f.views().first { it.tag == "workspace.reconnect" }
+                assertTrue("Connection status must belong to the foreground details page", all(page).any { it === banner })
+                NativeUiEvidence.assertFullyVisible(banner)
+                NativeUiEvidence.assertFullyVisible(f.views().first { it.contentDescription == "返回对话" })
+                NativeUiEvidence.assertFullyVisible(f.views().first { it.tag == "record-toggle:detail-layout" })
+                assertEquals(detailPosition, NativeUiEvidence.bounds(f.views().first { it.tag == "record-toggle:detail-layout" }))
+                assertEquals(1, f.views().filterIsInstance<TextView>().count { it.text.contains("重连中") })
+            })
         }
     }
 }

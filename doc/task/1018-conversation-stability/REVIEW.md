@@ -44,7 +44,9 @@ Android 草稿、阅读位置和 pending 消息迁入独立的小型 preferences
 
 Android 与 iOS 保留原生界面。正文按用户、Agent、操作和中断回复区分角色；输入区拆成多行编辑区和操作栏；附件可独立管理；正文与代码采用不同排版，常用复制操作更容易访问。iOS 新正文使用动态字体，新图标按钮提供至少 44 pt 触摸区域。
 
-重连继续使用已有工作区，反馈集中在状态提示；iOS 将会改变布局的顶部 inset 改成小型 overlay。模型自动重试显示尝试次数，不重建对话页面，也不把固定延迟伪装成实时倒计时。原生截图由 UI 回归产生并留在 CI artifact，不以设计稿代替运行结果。
+重连继续使用已有工作区，反馈集中在状态提示；iOS 将会改变布局的顶部 inset 改成小型 overlay，Android 复用当前页头已有的字幕位置，不新增会挤压正文的横幅行。模型自动重试显示尝试次数，不重建对话页面，也不把固定延迟伪装成实时倒计时。原生截图由 UI 回归产生并留在 CI artifact，不以设计稿代替运行结果。
+
+原生截图复核后，两端聊天阅读面改为不透明底色，避免底下的终端和账号页面透入正文；其他浮窗仍保留各自的透明度设置。iOS 隐藏编辑器系统滚动背景，只对页头、角色等次要标签限制最大字号，正文、代码和输入保留完整 Dynamic Type。键盘弹出时收紧装饰间距，将对话/历史切换收进可达的操作菜单，保留原编辑器和焦点。离线指示依据当前对话目标显示。Android 共用一处连接状态，工具详情打开后优先使用前景页头的状态位置，保留独立的业务错误提示。
 
 ## 提交前交叉 Review 及修正
 
@@ -76,4 +78,25 @@ Android 与 iOS 保留原生界面。正文按用户、Agent、操作和中断�
 
 Rust 的 21 个 ignored 来自原有显式账户/RPC fixture、真实模型凭据和图形桌面场景；本次未将它们改成通过。Android 本地验证包括编译及 23 个 JVM 测试，不等同于设备 UI 执行；Linux Swift 测试不等同于 SwiftUI/Xcode 编译或 iOS 模拟器测试。
 
-PR 的 `Approval and Reconnect Regression` 增加 Android 新的 12 项 conversation instrumentation、已有阅读/详情/工作区回归及 JVM 测试，并新增独立 iOS 模拟器 job，执行 conversation、authorization 和相关 workspace UI 测试。`Verify Terminal` 继续执行 Linux/macOS/Windows、移动端原生构建和 WebRTC 检查。CI 的最终状态以对应提交的运行结果为准。
+PR 的 `Approval and Reconnect Regression` 增加 Android 新的 13 项 conversation instrumentation、已有阅读/详情/工作区回归及 JVM 测试，并新增独立 iOS 模拟器 job，执行 conversation、authorization 和相关 workspace UI 测试。两端当前原生选择分别为 50 项和 17 项。`Verify Terminal` 继续执行 Linux/macOS/Windows、移动端原生构建和 WebRTC 检查。CI 的最终状态以对应提交的运行结果为准。
+
+## PR 原生 CI 与截图 Review 跟进
+
+创建 PR 前已完成上述代码交叉 Review 和本地验证；PR 创建后继续检查真实原生 CI 与截图，并在每次后续提交前再次 Review。以下结果明确绑定对应旧提交，不能代替本轮 UI 调整及新增测试的执行结果。
+
+| 提交与运行 | 已核对的实际结果 |
+| --- | --- |
+| `7b1d5de`：[原生回归第一轮](https://github.com/dqh147258/aTerminal/actions/runs/39099028980) | iOS 原生 16/16 通过，iOS state 四套脚本通过。Android 49 项中 48 项通过；旧授权测试只模拟一次全文读取失败，与新只读重试的预期冲突 |
+| `65729ce`：[原生回归第二轮](https://github.com/dqh147258/aTerminal/actions/runs/39100168397) | Android 49/49 通过，原生截图成功导出；iOS state 四套脚本通过。iOS 原生 15/16 通过，唯一失败定位到测试读取输入中间 AX 状态 |
+| `65729ce`：[Verify Terminal（PR）](https://github.com/dqh147258/aTerminal/actions/runs/39100168275) 与 [Verify Terminal（push）](https://github.com/dqh147258/aTerminal/actions/runs/39100166423) | 两条运行全部 10/10 jobs 通过，包括 Linux/macOS/Windows 测试与 Clippy、真实 PTY、移动端原生构建、WebRTC 检查 |
+
+后续 Review 的具体修正：
+
+1. **授权失败场景仍需验证完整重试耗尽。** Android fixture 连续拒绝三次只读全文请求，再由用户显式重试恢复；完整详情、指纹和批准回执断言保持严格。
+2. **截图必须来自实际已提交的原生帧。** AGP 在测试后先卸载 fixture 导致证据丢失，测试命令改为完成固定前缀截图导出后再卸载隔离包。随后截图发现 `waitForIdleSync` 仍可能读到上一帧：新 helper 在可见视口检查和 frame commit 后使用 PixelCopy，检查消息卡实际像素，不以重新绘制 View 生成截图。
+3. **重连提示不能移动阅读区。** Android 原先插入横幅使正文纵向移动约 42 px；改为现有字幕槽，非零滚动位置、消息和输入坐标在断线与恢复后保持一致，工具详情中的状态也必须属于当前前景页面。对话中的重复通用断线提示合并。
+4. **大字号和键盘需要原生画面验证。** iOS 第一轮截图显示透明背景、编辑器黑底和装饰文字无限放大；本轮新增正常字号与 AccessibilityXXXL 的正文缩放、页头上限、44 pt 控件、键盘下正文视口和草稿保持断言，并输出四张明确命名的截图。iOS 15 使用只定位当前编辑器的局部背景适配，不改变文本、选区或 first responder，也不使用全局 UIAppearance；现代模拟器不代表已覆盖 iOS 15 的实际表现。
+5. **输入事件提交不等于 AX 已更新。** 第二轮 iOS 失败发生在首次输入 `original`、发送前。xcresult 显示合成调用返回后仍在交付原生按键事件，首次 AX 快照值为 `or` 且保持焦点；同一原始录屏随后显示完整 `original`。测试只增加最多 5 秒的只读完整值等待，输入仍仅一次；清空也用相同严格等待。不改生产自动纠正、不重打字符、不接受前缀。
+6. **已有错误和读取取消也不能造成重连闪动。** Android 已显示连接读取错误时，共享状态出现后保留该行原空间，只隐藏内容；原先隐藏的行不会新增。iOS 授权读取的 `CancellationError` 与真实协议/授权失败分别处理：仍使旧权限失效、保留已读详情，但不短暂插入通用取消错误提示。对应坐标与 Foundation 回归验证这些边界，实际错误继续显示。
+
+本轮 UI 修改和输入/帧同步修正均已交叉审查。新增原生测试的结果及最终截图以 [PR #13 检查页](https://github.com/dqh147258/aTerminal/pull/13/checks) 对应最终提交为准，PR 描述同步记录最新验收结果。
