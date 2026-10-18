@@ -89,6 +89,8 @@ PR 的 `Approval and Reconnect Regression` 增加 Android 新的 13 项 conversa
 | `7b1d5de`：[原生回归第一轮](https://github.com/dqh147258/aTerminal/actions/runs/39099028980) | iOS 原生 16/16 通过，iOS state 四套脚本通过。Android 49 项中 48 项通过；旧授权测试只模拟一次全文读取失败，与新只读重试的预期冲突 |
 | `65729ce`：[原生回归第二轮](https://github.com/dqh147258/aTerminal/actions/runs/39100168397) | Android 49/49 通过，原生截图成功导出；iOS state 四套脚本通过。iOS 原生 15/16 通过，唯一失败定位到测试读取输入中间 AX 状态 |
 | `65729ce`：[Verify Terminal（PR）](https://github.com/dqh147258/aTerminal/actions/runs/39100168275) 与 [Verify Terminal（push）](https://github.com/dqh147258/aTerminal/actions/runs/39100166423) | 两条运行全部 10/10 jobs 通过，包括 Linux/macOS/Windows 测试与 Clippy、真实 PTY、移动端原生构建、WebRTC 检查 |
+| `9ade08a`：[原生回归第三轮](https://github.com/dqh147258/aTerminal/actions/runs/39102839108) | Android 49/50 通过，重连坐标和详情前景检查通过，唯一失败为截图初始滚动位置裁掉首卡顶部 8 px；iOS 15/17 通过，输入同步回归已通过，失败为页头 AX 测量与一次授权 UI 查询超时；iOS state 四套脚本通过 |
+| `9ade08a`：[Verify Terminal（PR）](https://github.com/dqh147258/aTerminal/actions/runs/39102839015) 与 [Verify Terminal（push）](https://github.com/dqh147258/aTerminal/actions/runs/39102835484) | 两条运行全部 10/10 jobs 通过；同提交图标及 Linux amd64/arm64 构建也通过 |
 
 后续 Review 的具体修正：
 
@@ -98,5 +100,6 @@ PR 的 `Approval and Reconnect Regression` 增加 Android 新的 13 项 conversa
 4. **大字号和键盘需要原生画面验证。** iOS 第一轮截图显示透明背景、编辑器黑底和装饰文字无限放大；本轮新增正常字号与 AccessibilityXXXL 的正文缩放、页头上限、44 pt 控件、键盘下正文视口和草稿保持断言，并输出四张明确命名的截图。iOS 15 使用只定位当前编辑器的局部背景适配，不改变文本、选区或 first responder，也不使用全局 UIAppearance；现代模拟器不代表已覆盖 iOS 15 的实际表现。
 5. **输入事件提交不等于 AX 已更新。** 第二轮 iOS 失败发生在首次输入 `original`、发送前。xcresult 显示合成调用返回后仍在交付原生按键事件，首次 AX 快照值为 `or` 且保持焦点；同一原始录屏随后显示完整 `original`。测试只增加最多 5 秒的只读完整值等待，输入仍仅一次；清空也用相同严格等待。不改生产自动纠正、不重打字符、不接受前缀。
 6. **已有错误和读取取消也不能造成重连闪动。** Android 已显示连接读取错误时，共享状态出现后保留该行原空间，只隐藏内容；原先隐藏的行不会新增。iOS 授权读取的 `CancellationError` 与真实协议/授权失败分别处理：仍使旧权限失效、保留已读详情，但不短暂插入通用取消错误提示。对应坐标与 Foundation 回归验证这些边界，实际错误继续显示。
+7. **视觉验收必须测量正确的区域。** 第三轮 Android 失败截图证实列表初始追随末尾，首卡顶部被裁掉；截图测试现在等首帧后显式滚到起点，仍要求每张卡完整可见、像素正确、断线前后位置相同，不压缩生产 UI 间距。iOS 原始录屏中普通字号页头实际约 56 pt，而新增 AX 分组将约 59 pt 顶部安全区域计入 115 pt，并继承父页面模态语义成为 Alert。移除该多余分组，保留整个页面的模态语义及独立可访问按钮；测试改测标题、副标题和关闭按钮的实际联合范围及阅读区位置，保留原高度限制。授权查询超时与误识别弹窗同时出现，是否完全消除以跟进原生回归为准。
 
 本轮 UI 修改和输入/帧同步修正均已交叉审查。新增原生测试的结果及最终截图以 [PR #13 检查页](https://github.com/dqh147258/aTerminal/pull/13/checks) 对应最终提交为准，PR 描述同步记录最新验收结果。

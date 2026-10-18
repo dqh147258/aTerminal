@@ -744,12 +744,23 @@ final class ChatDeliveryUITests: XCTestCase {
             let extra = large ? ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] : []
             let app = open(["--chat-handoff-fixture"] + extra)
             wait { !app.staticTexts["chat.live.status"].exists && app.staticTexts["chat.message.role"].firstMatch.exists }
+            let unfocused = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            unfocused.name = large ? "chat-accessibility-text" : "chat-normal-text"; unfocused.lifetime = .keepAlways; add(unfocused)
             let body = app.staticTexts["这段已收到的回复在历史加载完成前仍可阅读。"].firstMatch
             XCTAssertTrue(body.exists && body.isHittable)
             let role = app.staticTexts["chat.message.role"].firstMatch
             XCTAssertLessThanOrEqual(role.frame.height, 30, "Secondary role text consumed the message viewport")
-            let header = app.descendants(matching: .any).matching(identifier: "panel.header").firstMatch
-            XCTAssertLessThanOrEqual(header.frame.height, 88, "Panel decoration expanded instead of the conversation text")
+            let title = app.staticTexts["panel.title"]
+            let subtitle = app.staticTexts["panel.subtitle"]
+            let close = app.buttons["panel.close"]
+            XCTAssertTrue(title.exists && subtitle.exists && close.exists && close.isHittable)
+            // Measure the visible controls, excluding background extended into the status-bar safe area.
+            // Grouping the header solely for measurement would inherit the panel's modal trait.
+            let headerContent = title.frame.union(subtitle.frame).union(close.frame)
+            XCTAssertLessThanOrEqual(headerContent.height, 88, "Panel decoration expanded instead of the conversation text")
+            let timeline = app.scrollViews["chat.timeline"]
+            XCTAssertGreaterThanOrEqual(timeline.frame.minY, headerContent.maxY, "Panel controls overlapped the conversation")
+            XCTAssertLessThanOrEqual(timeline.frame.minY - headerContent.maxY, 128, "Header and toolbar spacing displaced the conversation")
             let stop = app.buttons["chat.stop"]
             XCTAssertGreaterThanOrEqual(stop.frame.width, 44)
             XCTAssertGreaterThanOrEqual(stop.frame.height, 44)
@@ -759,13 +770,11 @@ final class ChatDeliveryUITests: XCTestCase {
             XCTAssertGreaterThanOrEqual(copy.frame.height, 44)
             if large { XCTAssertGreaterThan(body.frame.height, normalBodyHeight * 1.5, "Conversation body lost accessibility Dynamic Type") }
             else { normalBodyHeight = body.frame.height }
-            let unfocused = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-            unfocused.name = large ? "chat-accessibility-text" : "chat-normal-text"; unfocused.lifetime = .keepAlways; add(unfocused)
-
             let editor = app.textViews["chat.draft"]
             UITestInput.replace(editor, with: "Local draft", app: app)
-            let timeline = app.scrollViews["chat.timeline"]
             wait { app.buttons["chat.actions"].isHittable }
+            let focused = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            focused.name = large ? "chat-accessibility-keyboard" : "chat-normal-keyboard"; focused.lifetime = .keepAlways; add(focused)
             XCTAssertGreaterThanOrEqual(timeline.frame.height, 80, "Keyboard and chrome left no useful conversation viewport")
             XCTAssertTrue(app.buttons["chat.send"].isHittable && app.buttons["chat.draft.clear"].isHittable)
             XCTAssertGreaterThanOrEqual(app.buttons["chat.draft.clear"].frame.height, 44)
@@ -774,8 +783,6 @@ final class ChatDeliveryUITests: XCTestCase {
             XCTAssertEqual(editor.value as? String, "Local draft")
             XCTAssertTrue(app.keyboards.firstMatch.exists)
             XCTAssertTrue(app.buttons["chat.keyboard.dismiss"].isHittable)
-            let focused = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-            focused.name = large ? "chat-accessibility-keyboard" : "chat-normal-keyboard"; focused.lifetime = .keepAlways; add(focused)
             app.buttons["chat.keyboard.dismiss"].tap()
             XCTAssertEqual(editor.value as? String, "Local draft", "Compact chrome replaced the focused editor")
             app.terminate()

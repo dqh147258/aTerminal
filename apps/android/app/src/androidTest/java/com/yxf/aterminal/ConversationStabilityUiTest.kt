@@ -302,7 +302,15 @@ class ConversationStabilityUiTest {
             message("assistant", "**修改已验证**，草稿保留。", sequence = 2), interrupted)).use { f ->
             waitFor("interrupted message rendered") { f.main { f.views().any { it.tag == "interrupted-reply" } } }
             f.main { f.draft().setText("继续检查界面布局") }
+            // Let the initial follow-latest frame finish before choosing this fixture's
+            // reading position. Its trailing spacing can scroll part of the first card away.
+            NativeUiEvidence.awaitFrame(f.activity)
+            val scroll = f.main {
+                (AgentPanel::class.java.getDeclaredField("scroll").apply { isAccessible = true }.get(f.panel) as android.widget.ScrollView)
+                    .apply { scrollTo(0, 0) }
+            }
             fun verify() {
+                assertEquals("The preview must keep its explicit reading position", 0, scroll.scrollY)
                 val body = MainActivity::class.java.getDeclaredField("overlayPanel").apply { isAccessible = true }.get(f.activity) as View
                 assertEquals(Palette.background, (body.background as android.graphics.drawable.ColorDrawable).color)
                 assertFalse(f.views().any { it.tag == "chat-empty" })

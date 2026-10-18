@@ -373,7 +373,7 @@ struct WorkspaceScreen: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(panelTitle(value)).font(.system(size: 20, weight: .semibold)).lineLimit(2).accessibilityIdentifier(value == .chat && assistant.global ? "global.title" : "panel.title")
                     if value == .chat && height < 400 { Text(model.fixture ? "本地 UI 验证 · 未连接模型" : assistant.status).font(.caption2).foregroundColor(WorkspaceStyle.muted).lineLimit(1).accessibilityIdentifier("chat.status") }
-                    else if verticalSizeClass != .compact && height >= (value == .chat ? 500 : 350) { Text(panelSubtitle(value)).font(.caption).foregroundColor(WorkspaceStyle.muted).lineLimit(2) }
+                    else if verticalSizeClass != .compact && height >= (value == .chat ? 500 : 350) { Text(panelSubtitle(value)).font(.caption).foregroundColor(WorkspaceStyle.muted).lineLimit(2).accessibilityIdentifier("panel.subtitle") }
                 }
                 Spacer(minLength: 4)
                 ToolButton(symbol: value == .chat && assistant.global ? "arrow.left" : "xmark", label: value == .chat && assistant.global ? "返回全局会话列表" : "关闭\(panelTitle(value))") {
@@ -384,7 +384,6 @@ struct WorkspaceScreen: View {
                 }.accessibilityIdentifier(value == .remoteScreens ? "screens.close" : value == .settings ? "settings.close" : value == .globalList || value == .chat && assistant.global ? "global.back" : "panel.close")
             }.dynamicTypeSize(...([.chat, .globalList, .chatHistory].contains(value) ? DynamicTypeSize.xxxLarge : .accessibility5))
                 .padding(.leading, 16).padding(.trailing, 4).padding(.vertical, height < (value == .chat ? 500 : 350) ? 0 : 6).background(WorkspaceStyle.surface)
-                .accessibilityElement(children: .contain).accessibilityIdentifier("panel.header")
             Divider().overlay(WorkspaceStyle.line)
             switch value {
             case .settings: settingsPanel
