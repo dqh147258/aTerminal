@@ -10,6 +10,34 @@ use serde_json::{Value, json};
 use std::{path::Path, sync::Mutex};
 use uuid::Uuid;
 
+/// Host messages plus up to 16 bounded interaction updates and 1,024 short record
+/// references must fit the existing 4 MiB full-history record/read budget. Reserve
+/// 1 MiB for the Host's bounded metadata and fixed kind/source fields.
+pub(crate) const MAX_HISTORY_EVENT_BYTES: usize = 3 * 1024 * 1024;
+const MAX_HISTORY_RECORD_BYTES: usize = 4 * 1024 * 1024;
+/// The configured context is bounded at 4,000,000 bytes by Host, but the checkpoint also
+/// includes the latest model output, provider replay blocks and normalized entry metadata.
+/// Keep an explicit ceiling without rejecting otherwise valid replies at the old 1 MiB cap.
+const MAX_CHECKPOINT_BYTES: usize = 16 * 1024 * 1024;
+
+fn message_event_limit(kind: &str) -> usize {
+    if matches!(kind, "assistant" | "interaction") {
+        MAX_HISTORY_EVENT_BYTES
+    } else {
+        24 * 1024
+    }
+}
+
+/// Bound the encoded preview as well as its UTF-8 bytes (control characters can
+/// expand sixfold in JSON). Full text remains available through the record cursor.
+fn preview_string(value: &str, json_budget: usize) -> Result<&str> {
+    let mut end = value.floor_char_boundary(value.len().min(json_budget.saturating_sub(2)));
+    while serde_json::to_string(&value[..end])?.len() > json_budget {
+        end = value.floor_char_boundary(end * 3 / 4);
+    }
+    Ok(&value[..end])
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Scope {
@@ -1195,7 +1223,7 @@ impl Store {
                 kind,
                 root,
                 now(),
-                bounded_json(&value, 24 * 1024)?
+                bounded_json(&value, message_event_limit(kind))?
             ],
         )?;
         let sequence = db.last_insert_rowid();
@@ -1278,7 +1306,13 @@ impl Store {
         let db = self.db.lock().unwrap();
         let key = scope.key()?;
         ensure_scope(&db, &key)?;
-        insert_event(&db, &key, kind, root, &bounded_json(&value, 24 * 1024)?)
+        insert_event(
+            &db,
+            &key,
+            kind,
+            root,
+            &bounded_json(&value, message_event_limit(kind))?,
+        )
     }
     pub fn model_usage(
         &self,
@@ -1738,11 +1772,25 @@ impl Store {
                     .or_else(|| item.value["message"].as_str())
                     .or_else(|| item.value["summary"].as_str())
                     .unwrap_or("Large history item; open the original record for details.");
-                let mut end = text.len().min(8000);
-                while !text.is_char_boundary(end) {
-                    end -= 1;
+                let mut preview = json!({"text":preview_string(text, 8000)?,"record_id":record_id,"partial":true});
+                // `partial` describes pagination, not whether a model reply completed.
+                // Preserve bounded semantic markers while the original record is loading.
+                for (field, limit) in [
+                    ("source", 128),
+                    ("state", 64),
+                    ("run_id", 128),
+                    ("error", 2048),
+                ] {
+                    if let Some(value) = item.value[field].as_str() {
+                        preview[field] = json!(preview_string(value, limit)?);
+                    }
                 }
-                item.value = json!({"text":&text[..end],"record_id":record_id,"partial":true});
+                for field in ["interrupted", "text_truncated"] {
+                    if let Some(value) = item.value[field].as_bool() {
+                        preview[field] = json!(value);
+                    }
+                }
+                item.value = preview;
             }
         }
         let next = if has_more {
@@ -1781,7 +1829,7 @@ impl Store {
         value: &Value,
     ) -> Result<()> {
         let db = self.db.lock().unwrap();
-        db.execute("INSERT INTO projections VALUES(?1,?2,?3,?4) ON CONFLICT(scope) DO UPDATE SET generation=excluded.generation,covered=excluded.covered,value=excluded.value",params![scope.key()?,generation,covered,bounded_json(value,1024*1024)?])?;
+        db.execute("INSERT INTO projections VALUES(?1,?2,?3,?4) ON CONFLICT(scope) DO UPDATE SET generation=excluded.generation,covered=excluded.covered,value=excluded.value",params![scope.key()?,generation,covered,bounded_json(value,MAX_CHECKPOINT_BYTES)?])?;
         Ok(())
     }
 
@@ -2101,7 +2149,7 @@ fn history_snapshot(db: &Connection, scope: &str, item: &HistoryItem) -> Result<
     if let Some(id) = existing {
         return Ok(id);
     }
-    let body = bounded_json(&item.value, 4 * 1024 * 1024)?;
+    let body = bounded_json(&item.value, MAX_HISTORY_RECORD_BYTES)?;
     let hash = blake3::hash(body.as_bytes()).to_hex().to_string();
     let record_id = id();
     let tx = db.unchecked_transaction()?;

@@ -273,6 +273,14 @@ struct JobState {
     queue: VecDeque<Mail>,
     live: String,
     error: Option<String>,
+    model_retry: Option<ModelRetry>,
+}
+#[derive(Clone, Serialize)]
+struct ModelRetry {
+    attempt: u32,
+    max_attempts: u32,
+    delay_ms: u64,
+    reason: String,
 }
 struct Job {
     scope: Scope,
@@ -471,6 +479,7 @@ impl AgentHost {
                 }]),
                 live: String::new(),
                 error: None,
+                model_retry: None,
             }),
         });
         jobs.insert(scope.agent.clone(), job.clone());
@@ -570,6 +579,7 @@ impl AgentHost {
                     }]),
                     live: String::new(),
                     error: None,
+                    model_retry: None,
                 }),
             });
             jobs.insert(scope.agent.clone(), job.clone());
@@ -615,7 +625,7 @@ impl AgentHost {
             ensure!(job.scope == *scope, "agent_scope_mismatch");
             let state = job.state.lock().unwrap();
             return Ok(
-                json!({"agent_id":scope.agent,"run_id":job.run,"root_user_message_id":job.root,"state":state.state,"live_text":state.live,"error":state.error,"queued_messages":state.queue.len(),"config_revision":job.snapshot.revision,"permissions":self.store.permissions(scope)?,"pending":self.store.pending(scope,None)?}),
+                json!({"agent_id":scope.agent,"run_id":job.run,"root_user_message_id":job.root,"state":state.state,"live_text":state.live,"error":state.error,"model_retry":state.model_retry,"queued_messages":state.queue.len(),"config_revision":job.snapshot.revision,"permissions":self.store.permissions(scope)?,"pending":self.store.pending(scope,None)?}),
             );
         }
         let last = self.store.latest_run(scope)?;
@@ -840,6 +850,7 @@ impl AgentHost {
             .or(error)
             .or_else(|| persisted.as_ref().err().map(|e| e.to_string()));
         status.live.clear();
+        status.model_retry = None;
         if job.scope.agent != job.budget.root_scope.agent {
             let mut report = persisted.unwrap_or_else(|_|json!({"task_id":job.run,"agent_id":job.scope.agent,"session_id":job.scope.session,"state":status.state}));
             let (error, truncated) = task_error(status.error.as_deref());
@@ -1145,24 +1156,66 @@ impl AgentHost {
             bytes + job.snapshot.builder.settings.max_tokens < job.snapshot.context_window,
             "context_budget"
         );
-        job.budget
-            .reserve(bytes + job.snapshot.builder.settings.max_tokens)?;
         if visible {
             job.state.lock().unwrap().live.clear();
         }
-        let response = model::collect(
-            job.snapshot.model.as_ref(),
-            request,
-            cancel,
-            job.budget.remaining()?,
-            |text| {
-                let mut state = job.state.lock().unwrap();
-                if visible && state.live.len() + text.len() <= 16000 {
-                    state.live.push_str(text);
+        let mut attempt = 0;
+        let response = loop {
+            ensure!(!*cancel.borrow(), "cancelled");
+            job.snapshot.backend.authorize(false).await?;
+            // Every actual generation, including retries, consumes the shared Run budget.
+            job.budget
+                .reserve(bytes + job.snapshot.builder.settings.max_tokens)?;
+            attempt += 1;
+            job.state.lock().unwrap().model_retry = None;
+            let result = model::collect(
+                job.snapshot.model.as_ref(),
+                request.clone(),
+                cancel.clone(),
+                job.budget.remaining()?,
+                |text| {
+                    if visible {
+                        let mut state = job.state.lock().unwrap();
+                        let end = text.floor_char_boundary(
+                            16000usize.saturating_sub(state.live.len()).min(text.len()),
+                        );
+                        state.live.push_str(&text[..end]);
+                    }
+                },
+            )
+            .await;
+            match result {
+                Ok(response) => break response,
+                Err(error) => {
+                    let delay = error
+                        .downcast_ref::<model::ModelFailure>()
+                        .and_then(|failure| failure.retry_delay(attempt, &job.run));
+                    let delay = delay.filter(|delay| {
+                        job.budget
+                            .remaining()
+                            .is_ok_and(|remaining| *delay < remaining)
+                    });
+                    let Some(delay) = delay else {
+                        if visible {
+                            self.preserve_interrupted_reply(job, &error)?;
+                        }
+                        return Err(error);
+                    };
+                    job.state.lock().unwrap().model_retry = Some(ModelRetry {
+                        attempt: attempt + 1,
+                        max_attempts: model::MAX_REQUEST_ATTEMPTS,
+                        delay_ms: delay.as_millis().min(u128::from(u64::MAX)) as u64,
+                        reason: error.to_string(),
+                    });
+                    let mut waiting = cancel.clone();
+                    tokio::select! {
+                        biased;
+                        _ = waiting.wait_for(|value| *value) => bail!("cancelled"),
+                        _ = tokio::time::sleep(delay) => {},
+                    }
                 }
-            },
-        )
-        .await?;
+            }
+        };
         self.store.model_usage(
             &job.scope,
             &job.run,
@@ -1175,6 +1228,30 @@ impl AgentHost {
             serde_json::to_value(response.response.as_ref().map(|r| &r.usage))?,
         )?;
         Ok(response)
+    }
+    fn preserve_interrupted_reply(&self, job: &Job, error: &anyhow::Error) -> Result<()> {
+        let text = job.state.lock().unwrap().live.clone();
+        if text.is_empty() {
+            return Ok(());
+        }
+        let mut value = json!({"source":"model_interrupted","state":"interrupted","interrupted":true,
+            "run_id":job.run,"text":text,"error":error.to_string()});
+        // Escapes and diagnostics count toward the history event JSON budget.
+        while serde_json::to_vec(&value)?.len() > crate::store::MAX_HISTORY_EVENT_BYTES {
+            let text = value["text"].as_str().unwrap();
+            let end = text.floor_char_boundary(text.len().saturating_sub(1024));
+            value["text"] = json!(&text[..end]);
+            value["text_truncated"] = json!(true);
+        }
+        self.store.append_identified(
+            &job.scope,
+            "interaction",
+            &job.root,
+            &id(),
+            value,
+            Some(&job.run),
+        )?;
+        Ok(())
     }
     async fn run_loop(&self, job: &Arc<Job>, cancel: watch::Receiver<bool>) -> Result<()> {
         let (mut entries, mut projection) = self.restore(job)?;
@@ -2241,6 +2318,421 @@ mod runtime_contracts {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("agent did not settle");
+    }
+
+    struct FlakyModel {
+        requests: Mutex<Vec<Value>>,
+        failures: usize,
+        status: u16,
+        retry_after: Option<&'static str>,
+    }
+    impl Model for FlakyModel {
+        fn stream(
+            &self,
+            request: rig_core::completion::CompletionRequest,
+        ) -> BackendFuture<'_, StreamingCompletionResponse> {
+            Box::pin(async move {
+                let attempt = {
+                    let mut requests = self.requests.lock().unwrap();
+                    requests.push(serde_json::to_value(request).unwrap());
+                    requests.len()
+                };
+                if attempt <= self.failures {
+                    let mut headers = rig_core::http_client::HeaderMap::new();
+                    if let Some(value) = self.retry_after {
+                        headers.insert(
+                            "retry-after",
+                            rig_core::http_client::HeaderValue::from_static(value),
+                        );
+                    }
+                    return Err(rig_core::completion::CompletionError::HttpError(
+                        rig_core::http_client::Error::InvalidStatusCodeWithDetails {
+                            status: reqwest::StatusCode::from_u16(self.status).unwrap(),
+                            body: "provider body and https://private.invalid?api_key=secret must stay private".into(),
+                            headers: Box::new(headers),
+                        }).into());
+                }
+                Ok(StreamingCompletionResponse::stream(
+                    "test",
+                    Box::pin(futures_util::stream::iter(vec![
+                        Ok(Raw::Message("recovered".into())),
+                        Ok(Raw::FinalResponse(StreamFinal::new(
+                            "test",
+                            Default::default(),
+                        ))),
+                    ])),
+                ))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn transient_requests_retry_identical_context_with_attempt_and_run_budgets() {
+        for (failures, status, rounds, expected_calls, expected_state, expected_error) in [
+            (1, 503, 20, 2, "completed", None),
+            (
+                usize::MAX,
+                503,
+                20,
+                3,
+                "paused",
+                Some("model_provider_http_503"),
+            ),
+            (
+                usize::MAX,
+                401,
+                20,
+                1,
+                "paused",
+                Some("model_provider_http_401"),
+            ),
+            (usize::MAX, 503, 1, 1, "paused", Some("model_round_budget")),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let store = Arc::new(Store::open(&temp.path().join("data/retry.db")).unwrap());
+            let scope = store.agent("owner", "desktop", Some("session")).unwrap();
+            let host = AgentHost::new(store.clone(), tokio::runtime::Handle::current());
+            let model = Arc::new(FlakyModel {
+                requests: Mutex::new(vec![]),
+                failures,
+                status,
+                retry_after: None,
+            });
+            host.submit(
+                scope.clone(),
+                "request",
+                "hello",
+                json!({}),
+                false,
+                "phone",
+                || {
+                    let mut run = snapshot(model.clone(), Arc::new(Backend::default()), false);
+                    run.max_rounds = rounds;
+                    Ok(run)
+                },
+            )
+            .unwrap();
+            let outcome = settle(&host, &scope).await;
+            assert_eq!(outcome["state"], expected_state, "{outcome}");
+            assert_eq!(outcome["error"].as_str(), expected_error);
+            assert!(outcome["model_retry"].is_null());
+            let requests = model.requests.lock().unwrap();
+            assert_eq!(requests.len(), expected_calls);
+            assert!(requests.iter().all(|request| request == &requests[0]));
+            assert_eq!(
+                store
+                    .recent_events(&scope)
+                    .unwrap()
+                    .iter()
+                    .filter(|item| item.kind == "user")
+                    .count(),
+                1
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn retry_after_cannot_outlive_run_budget_and_backoff_can_be_cancelled() {
+        for seconds in [1, 30] {
+            let temp = tempfile::tempdir().unwrap();
+            let store = Arc::new(Store::open(&temp.path().join("data/retry-cancel.db")).unwrap());
+            let scope = store.agent("owner", "desktop", Some("session")).unwrap();
+            let host = AgentHost::new(store, tokio::runtime::Handle::current());
+            let model = Arc::new(FlakyModel {
+                requests: Mutex::new(vec![]),
+                failures: usize::MAX,
+                status: 429,
+                retry_after: Some("10"),
+            });
+            host.submit(
+                scope.clone(),
+                "request",
+                "hello",
+                json!({}),
+                false,
+                "phone",
+                || {
+                    let mut run = snapshot(model.clone(), Arc::new(Backend::default()), false);
+                    run.max_seconds = seconds;
+                    Ok(run)
+                },
+            )
+            .unwrap();
+            if seconds == 30 {
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    loop {
+                        let state = host.state(&scope).unwrap();
+                        if !state["model_retry"].is_null() {
+                            assert_eq!(state["state"], "running");
+                            assert_eq!(state["model_retry"]["attempt"], 2);
+                            assert_eq!(state["model_retry"]["delay_ms"], 10000);
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                })
+                .await
+                .unwrap();
+                host.cancel(&scope).unwrap();
+            }
+            let outcome = tokio::time::timeout(Duration::from_secs(2), settle(&host, &scope))
+                .await
+                .unwrap();
+            assert_eq!(
+                outcome["state"],
+                if seconds == 1 { "paused" } else { "cancelled" }
+            );
+            assert!(outcome["model_retry"].is_null());
+            assert_eq!(model.requests.lock().unwrap().len(), 1);
+        }
+    }
+
+    #[derive(Default)]
+    struct EffectBackend(AtomicU32);
+    impl TerminalBackend for EffectBackend {
+        fn authorize(&self, _write: bool) -> BackendFuture<'_, ()> {
+            Box::pin(async { Ok(()) })
+        }
+        fn invoke<'a>(
+            &'a self,
+            _context: ToolContext,
+            _name: &'a str,
+            _args: Value,
+        ) -> BackendFuture<'a, ToolOutput> {
+            Box::pin(async move {
+                self.0.fetch_add(1, Ordering::AcqRel);
+                Ok(ToolOutput::value(json!({"accepted":true})))
+            })
+        }
+    }
+
+    struct InterruptedModel {
+        calls: AtomicU32,
+        finish: Option<rig_core::completion::FinishReason>,
+    }
+    impl Model for InterruptedModel {
+        fn stream(
+            &self,
+            _request: rig_core::completion::CompletionRequest,
+        ) -> BackendFuture<'_, StreamingCompletionResponse> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::AcqRel);
+                let mut chunks = vec![
+                    Ok(Raw::Message("已显示的部分回复。".into())),
+                    Ok(Raw::ToolCall(RawStreamingToolCall::new(
+                        "call",
+                        "run_command".into(),
+                        json!({"command":"echo once"}),
+                    ))),
+                ];
+                if let Some(reason) = &self.finish {
+                    chunks.push(Ok(Raw::FinalResponse(
+                        StreamFinal::new("test", Default::default())
+                            .with_finish_reason(reason.clone()),
+                    )));
+                }
+                Ok(StreamingCompletionResponse::stream(
+                    "test",
+                    Box::pin(futures_util::stream::iter(chunks)),
+                ))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn interrupted_reply_is_durable_without_a_final_answer_or_tool_side_effect() {
+        for finish in [None, Some(rig_core::completion::FinishReason::Length)] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("data/interrupted.db");
+            let store = Arc::new(Store::open(&path).unwrap());
+            let scope = store.agent("owner", "desktop", Some("session")).unwrap();
+            let host = AgentHost::new(store.clone(), tokio::runtime::Handle::current());
+            let model = Arc::new(InterruptedModel {
+                calls: AtomicU32::new(0),
+                finish,
+            });
+            let backend = Arc::new(EffectBackend::default());
+            host.submit(
+                scope.clone(),
+                "request",
+                "hello",
+                json!({}),
+                true,
+                "phone",
+                || Ok(snapshot(model.clone(), backend.clone(), true)),
+            )
+            .unwrap();
+            assert_eq!(settle(&host, &scope).await["state"], "paused");
+            assert_eq!(model.calls.load(Ordering::Acquire), 1);
+            assert_eq!(backend.0.load(Ordering::Acquire), 0);
+            assert!(store.pending_actions(&scope).unwrap().is_empty());
+            let events = store.recent_events(&scope).unwrap();
+            let reply = events
+                .iter()
+                .find(|item| item.value["source"] == "model_interrupted")
+                .unwrap();
+            assert_eq!(reply.kind, "interaction");
+            assert_eq!(reply.value["text"], "已显示的部分回复。");
+            assert_eq!(reply.value["interrupted"], true);
+            assert_eq!(reply.value["state"], "interrupted");
+            assert!(reply.value.get("partial").is_none());
+            assert!(events.iter().all(|item| item.kind != "assistant"));
+            let reply_id = reply.id.clone();
+            drop(host);
+            drop(store);
+            let reopened = Store::open(&path).unwrap();
+            assert!(
+                reopened
+                    .recent_events(&scope)
+                    .unwrap()
+                    .iter()
+                    .any(|item| item.id == reply_id && item.value["interrupted"] == true)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn retrying_a_later_model_request_does_not_repeat_a_completed_tool() {
+        struct ToolThenRetry(AtomicU32);
+        impl Model for ToolThenRetry {
+            fn stream(
+                &self,
+                _request: rig_core::completion::CompletionRequest,
+            ) -> BackendFuture<'_, StreamingCompletionResponse> {
+                Box::pin(async move {
+                    let attempt = self.0.fetch_add(1, Ordering::AcqRel);
+                    if attempt == 1 {
+                        return Err(rig_core::completion::CompletionError::HttpError(
+                            rig_core::http_client::Error::InvalidStatusCode(
+                                reqwest::StatusCode::SERVICE_UNAVAILABLE,
+                            ),
+                        )
+                        .into());
+                    }
+                    let part = if attempt == 0 {
+                        Raw::ToolCall(RawStreamingToolCall::new(
+                            "effect",
+                            "run_command".into(),
+                            json!({"command":"echo once"}),
+                        ))
+                    } else {
+                        Raw::Message("done".into())
+                    };
+                    Ok(StreamingCompletionResponse::stream(
+                        "test",
+                        Box::pin(futures_util::stream::iter(vec![
+                            Ok(part),
+                            Ok(Raw::FinalResponse(StreamFinal::new(
+                                "test",
+                                Default::default(),
+                            ))),
+                        ])),
+                    ))
+                })
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(&temp.path().join("data/effect.db")).unwrap());
+        let scope = store.agent("owner", "desktop", Some("session")).unwrap();
+        store.set_permissions(&scope, 0, None, Some(true)).unwrap();
+        let host = AgentHost::new(store, tokio::runtime::Handle::current());
+        let model = Arc::new(ToolThenRetry(AtomicU32::new(0)));
+        let backend = Arc::new(EffectBackend::default());
+        host.submit(
+            scope.clone(),
+            "request",
+            "echo once",
+            json!({}),
+            true,
+            "phone",
+            || Ok(snapshot(model.clone(), backend.clone(), true)),
+        )
+        .unwrap();
+        let outcome = settle(&host, &scope).await;
+        assert_eq!(outcome["state"], "completed", "{outcome}");
+        assert_eq!(model.0.load(Ordering::Acquire), 3);
+        assert_eq!(backend.0.load(Ordering::Acquire), 1);
+    }
+
+    #[tokio::test]
+    async fn long_complete_replies_exceeding_legacy_event_and_checkpoint_limits_survive_restart() {
+        struct LongReply(String);
+        impl Model for LongReply {
+            fn stream(
+                &self,
+                _request: rig_core::completion::CompletionRequest,
+            ) -> BackendFuture<'_, StreamingCompletionResponse> {
+                Box::pin(async move {
+                    Ok(StreamingCompletionResponse::stream(
+                        "test",
+                        Box::pin(futures_util::stream::iter(vec![
+                            Ok(Raw::Message(self.0.clone())),
+                            Ok(Raw::FinalResponse(StreamFinal::new(
+                                "test",
+                                Default::default(),
+                            ))),
+                        ])),
+                    ))
+                })
+            }
+        }
+        for repeats in [5000, 200000] {
+            let text = "长回复".repeat(repeats);
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("data/long-reply.db");
+            let store = Arc::new(Store::open(&path).unwrap());
+            let scope = store.agent("owner", "desktop", Some("session")).unwrap();
+            let host = AgentHost::new(store.clone(), tokio::runtime::Handle::current());
+            host.submit(
+                scope.clone(),
+                "request",
+                "long reply",
+                json!({}),
+                false,
+                "phone",
+                || {
+                    let mut run = snapshot(
+                        Arc::new(LongReply(text.clone())),
+                        Arc::new(Backend::default()),
+                        false,
+                    );
+                    run.context_window = 4_000_000;
+                    run.builder.settings.max_tokens = 1_500_000;
+                    Ok(run)
+                },
+            )
+            .unwrap();
+            let outcome = settle(&host, &scope).await;
+            assert_eq!(outcome["state"], "completed", "{outcome}");
+            assert_eq!(
+                store
+                    .recent_events(&scope)
+                    .unwrap()
+                    .iter()
+                    .find(|event| event.kind == "assistant")
+                    .unwrap()
+                    .value["text"],
+                text
+            );
+            drop(host);
+            drop(store);
+            let reopened = Store::open(&path).unwrap();
+            assert_eq!(
+                reopened.latest_run(&scope).unwrap().unwrap()["state"],
+                "completed"
+            );
+            assert_eq!(
+                reopened
+                    .recent_events(&scope)
+                    .unwrap()
+                    .iter()
+                    .find(|event| event.kind == "assistant")
+                    .unwrap()
+                    .value["text"],
+                text
+            );
+            assert!(reopened.projection(&scope).unwrap().is_some());
+        }
     }
 
     #[derive(Default)]
@@ -3683,7 +4175,7 @@ mod runtime_contracts {
             .unwrap()
             .value;
         assert_eq!(outcome["state"], "paused");
-        assert_eq!(outcome["error"], "fixture_model_failure");
+        assert_eq!(outcome["error"], "model_request_failed");
         assert_eq!(outcome["result_available"], false);
         assert_eq!(outcome["done"], true);
         let (next, _) = fixture.start(Duration::from_millis(10));
@@ -3698,7 +4190,7 @@ mod runtime_contracts {
             .unwrap()
             .value;
         assert_eq!(old["state"], "paused");
-        assert_eq!(old["error"], "fixture_model_failure");
+        assert_eq!(old["error"], "model_request_failed");
         assert_eq!(old["result_available"], false);
     }
 

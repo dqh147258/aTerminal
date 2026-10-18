@@ -571,6 +571,7 @@ mod toolset_tests {
                 queue: VecDeque::new(),
                 live: String::new(),
                 error: None,
+                model_retry: None,
             }),
             execution_gate: Arc::new(Mutex::new(true)),
         });
